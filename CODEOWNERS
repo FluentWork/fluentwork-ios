@@ -1,0 +1,12 @@
+* @FluentWork/core
+
+/CLAUDE.md @FluentWork/core @FluentWork/ios
+/AGENTS.md @FluentWork/core @FluentWork/ios
+/.github/ @FluentWork/core @FluentWork/ios
+/App/ @FluentWork/ios
+/Modules/ @FluentWork/ios
+/Shared/ @FluentWork/ios
+/Services/ @FluentWork/ios
+/Resources/ @FluentWork/ios
+/Tests/ @FluentWork/ios
+/Scripts/ @FluentWork/ios
