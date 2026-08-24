@@ -1,0 +1,36 @@
+{
+  "include": [
+    ".github/workflows/**/*.yml",
+    ".github/workflows/**/*.yaml",
+    "App/**/*.swift",
+    "Features/**/*.swift",
+    "Services/**/*.swift",
+    "Shared/**/*.swift",
+    "Package.swift"
+  ],
+  "exclude": [
+    "Tests/**"
+  ],
+  "rules": [
+    {
+      "path": ".github/workflows/**/*.{yml,yaml}",
+      "rule": "Review GitHub Actions for least-privilege permissions, correct cache usage, safe secret handling, and whether CI steps match the actual Swift package build and test surface."
+    },
+    {
+      "path": "Package.swift",
+      "rule": "Review Swift package configuration for target boundaries, platform compatibility, dependency scope, test target wiring, and whether package settings match the repository's intended runtime and CI baseline."
+    },
+    {
+      "path": "App/**/*.swift",
+      "rule": "Review app-layer Swift code for state ownership, main-thread and MainActor correctness, dependency injection clarity, and whether lifecycle code can cause hidden side effects or brittle startup behavior."
+    },
+    {
+      "path": "Services/**/*.swift",
+      "rule": "Review service-layer Swift code for async cancellation behavior, timeout and retry policy, error mapping, optional handling, and whether networking or IO boundaries leak implementation details into callers."
+    },
+    {
+      "path": "Shared/**/*.swift",
+      "rule": "Review shared Swift code for force unwraps, unsafe optional assumptions, value semantics, thread-safety expectations, and whether public APIs make invalid states hard to express."
+    }
+  ]
+}
