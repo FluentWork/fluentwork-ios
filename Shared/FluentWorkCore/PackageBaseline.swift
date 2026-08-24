@@ -6,4 +6,8 @@ public enum PackageBaseline {
     public static func greeting(for name: String) -> String {
         "Hello, \(name)."
     }
+
+    public static func verificationForceUnwrap(_ value: String?) -> String {
+        value!
+    }
 }
