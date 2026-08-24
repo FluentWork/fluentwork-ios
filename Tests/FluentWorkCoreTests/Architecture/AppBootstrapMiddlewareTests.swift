@@ -69,3 +69,43 @@ private struct FailingBootstrapClient: BootstrapClientProtocol {
     #expect(store.state.bootstrapStatus == .failed)
     #expect(store.state.lastErrorMessage == "bootstrap failed for test")
 }
+
+@MainActor
+@Test func repeatedAppLaunchDoesNotRestartBootstrapWhileLoading() async {
+    actor Probe {
+        private(set) var loadCount = 0
+
+        func markLoad() {
+            loadCount += 1
+        }
+    }
+
+    struct SlowBootstrapClient: BootstrapClientProtocol {
+        let probe: Probe
+
+        func loadBootstrap() async throws -> BootstrapSnapshot {
+            await probe.markLoad()
+            try await Task.sleep(nanoseconds: 100_000_000)
+            return BootstrapSnapshot(
+                featureFlags: .firstWave,
+                preferredSurface: .speakingRoom
+            )
+        }
+    }
+
+    Container.shared.reset()
+    defer { Container.shared.reset() }
+
+    let probe = Probe()
+    Container.shared.bootstrapClient.register {
+        SlowBootstrapClient(probe: probe)
+    }
+
+    let store = AppStoreFactory.make()
+    store.dispatch(.lifecycle(.appLaunched))
+    store.dispatch(.lifecycle(.appLaunched))
+
+    try? await Task.sleep(nanoseconds: 20_000_000)
+    #expect(store.state.bootstrapStatus == .loading)
+    #expect(await probe.loadCount == 1)
+}

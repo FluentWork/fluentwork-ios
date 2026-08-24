@@ -54,6 +54,7 @@ let package = Package(
                 "FluentWorkFeatureFlags",
                 "FluentWorkPluginSupport",
                 "TGReduxKit",
+                .product(name: "FactoryKit", package: "Factory"),
             ],
             path: "Tests/FluentWorkCoreTests"
         ),
