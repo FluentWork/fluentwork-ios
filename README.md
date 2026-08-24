@@ -58,9 +58,11 @@ This repository currently includes:
 - `CLAUDE.md`
 - `AGENTS.md`
 - `CODEOWNERS`
+- `Package.swift`
 - `.github/workflows/agent-config-check.yml`
 - `.github/workflows/ios-ci.yml`
 - `.github/workflows/opencode-review.yml`
+- executable Swift package baseline
 - initial directory skeleton
 
 ## Agent Tooling
