@@ -11,6 +11,24 @@ public enum NetworkClientError: Error, Equatable, Sendable {
     case requestFailed(String)
 }
 
+private final class RequestCancellationBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancellable: Cancellable?
+
+    func set(_ cancellable: Cancellable) {
+        lock.lock()
+        self.cancellable = cancellable
+        lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        let cancellable = self.cancellable
+        lock.unlock()
+        cancellable?.cancel()
+    }
+}
+
 public final class MoyaNetworkClient: @unchecked Sendable, NetworkClientProtocol {
     private let provider: MoyaProvider<MultiTarget>
 
@@ -19,18 +37,26 @@ public final class MoyaNetworkClient: @unchecked Sendable, NetworkClientProtocol
     }
 
     public func requestData(for target: any FluentWorkTargetType) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
-            provider.request(MultiTarget(target)) { result in
-                switch result {
-                case let .success(response):
-                    continuation.resume(returning: response.data)
+        let cancellationBox = RequestCancellationBox()
 
-                case let .failure(error):
-                    continuation.resume(
-                        throwing: NetworkClientError.requestFailed(error.localizedDescription)
-                    )
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let cancellable = provider.request(MultiTarget(target)) { result in
+                    switch result {
+                    case let .success(response):
+                        continuation.resume(returning: response.data)
+
+                    case let .failure(error):
+                        continuation.resume(
+                            throwing: NetworkClientError.requestFailed(error.localizedDescription)
+                        )
+                    }
                 }
+
+                cancellationBox.set(cancellable)
             }
+        } onCancel: {
+            cancellationBox.cancel()
         }
     }
 }

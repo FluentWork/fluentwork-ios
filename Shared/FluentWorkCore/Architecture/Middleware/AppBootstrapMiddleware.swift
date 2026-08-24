@@ -21,21 +21,26 @@ public func appBootstrapMiddleware(container: Container? = nil) -> Middleware<Ap
         next(action)
 
         guard case .lifecycle(.appLaunched) = action else { return }
+        guard store.state.bootstrapStatus != .loading else { return }
         let bootstrapClient = resolvedContainer.bootstrapClient()
         let pluginRegistry = resolvedContainer.featurePluginRegistry()
 
-        store.runTask(id: AppTaskID.bootstrap) {
-            await store.dispatch(.lifecycle(.bootstrapStarted))
+        store.dispatch(.lifecycle(.bootstrapStarted))
 
+        store.runTask(id: AppTaskID.bootstrap) {
             do {
                 let snapshot = try await bootstrapClient.loadBootstrap()
+                guard !Task.isCancelled else { return }
                 await store.dispatch(.lifecycle(.bootstrapSucceeded(snapshot)))
                 await store.dispatch(
                     .workspace(.setAvailableModules(
                         pluginRegistry.enabledPlugins(for: snapshot.featureFlags)
                     ))
                 )
+            } catch is CancellationError {
+                return
             } catch {
+                guard !Task.isCancelled else { return }
                 await store.dispatch(.lifecycle(.bootstrapFailed(appBootstrapErrorMessage(error))))
             }
         }
@@ -49,5 +54,5 @@ private func appBootstrapErrorMessage(_ error: any Error) -> String {
         return description
     }
 
-    return String(describing: error)
+    return "Bootstrap failed. Please try again."
 }

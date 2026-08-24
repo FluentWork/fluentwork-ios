@@ -50,9 +50,12 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
     case .sessionStartTapped:
         state.phase = .connecting
         state.liveTranscript = ""
+        state.lastBadge = nil
+        state.badgeHits = 0
         state.failureReason = nil
 
     case .socketReady:
+        guard state.phase != .failed else { return }
         state.phase = .waitingUser
 
     case let .userSpeechCaptured(transcript):
@@ -64,6 +67,7 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
         state.badgeHits += 1
 
     case .networkDowngraded:
+        guard state.phase != .failed else { return }
         state.phase = .degradedText
 
     case let .bootstrapReady(isReady):

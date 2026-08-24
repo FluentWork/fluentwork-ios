@@ -1,5 +1,4 @@
 import FluentWorkFeatureFlags
-import Foundation
 
 public struct FeaturePluginDescriptor: Equatable, Sendable, Identifiable {
     public let feature: AppFeatureFlag
@@ -15,6 +14,7 @@ public struct FeaturePluginDescriptor: Equatable, Sendable, Identifiable {
         moduleName: String,
         entryRoute: String
     ) {
+        precondition(!moduleName.isEmpty, "moduleName must not be empty")
         self.feature = feature
         self.moduleName = moduleName
         self.entryRoute = entryRoute
