@@ -18,7 +18,7 @@
 3. `TGReduxKit`、`Factory`、`Moya` 在本仓分别承担什么角色
 4. Feature Flag 如何从配置投影到业务状态
 5. 测试应该测哪些层，不测哪些层
-6. Swift 6 并发约束下，当前 `TGReduxKit` 的项目侧收口与库侧改进建议
+6. Swift 6 并发约束下，`TGReduxKit` 已把 `Reducer` 对齐到 `@MainActor`
 
 ---
 
@@ -270,54 +270,28 @@
 
 ---
 
-## 十、Swift 6 并发与 TGReduxKit 建议
+## 十、Swift 6 并发与 TGReduxKit
 
-### 1. 当前项目侧处理是可接受的
+### 1. 库侧已对齐（4.0.0）
 
-当前 `Store` 已经是 `@MainActor` 隔离，`Middleware` 也是 `@MainActor`。
+从 `TGReduxKit` `3.0.0` 起，`Reducer` 正式收口为 `@MainActor`，并与 `Store`、`Middleware` 对齐。`4.0.0` 继续保持该契约，同时：
 
-在这个前提下，把项目里的 reducer 常量收口到 `@MainActor` 作用域，是合理且一致的短期方案。
+1. 新增 `StoreType`，统一 View 层 `state` / `dispatch` / `binding`
+2. `runTask` / `debounce` / `throttle` 等异步能力仅保留在 root `Store`
+3. `TestStore` 断言失败改为抛出 `TestStoreAssertionError`，不再 `fatalError`
+4. 导航相关 API 已拆到独立包 `TGNavigationStack`（本仓当前未接入）
 
-### 2. 更好的库侧修复方向
+### 2. 项目侧约定
 
-建议和 `TGReduxKit` 作者沟通以下改动：
+1. 模块级 reducer 常量继续标注 `@MainActor`，与库契约一致
+2. 异步副作用只在 root store 的 middleware / 协调层启动
+3. Feature View 可依赖 `Store` 或 `ScopedStore`；需要任务生命周期时回到 root store
 
-1. 把 `Reducer` 类型别名收敛为 `@MainActor`
-
-```swift
-public typealias Reducer<State, Action> = @MainActor (inout State, Action) -> Void
-```
-
-2. 确认 `combineReducers` / `pullback` 等组合函数在该语义下继续成立
-3. 在 README 或迁移说明中明确：
-   - `Store`
-   - `Middleware`
-   - `Reducer`
-   三者默认运行在 MainActor
-
-### 3. 为什么更推荐改库，而不是只在项目里补注解
-
-因为当前库的公开契约里：
-
-1. `Store` 是 `@MainActor`
-2. `Middleware` 是 `@MainActor`
-3. `Reducer` 却还是普通闭包
-
-这会让 app 侧重复承担并发语义补丁，长期会出现：
-
-1. 每个 reducer 都手写一次 `@MainActor`
-2. 新接入项目的人误以为 reducer 可以安全跨 actor 传递
-3. Swift 6 严格并发下继续出现相同诊断
-
-### 4. 不建议的方向
+### 3. 不建议的方向
 
 1. 在项目里到处补 `@unchecked Sendable`
 2. 用 `nonisolated(unsafe)` 压告警
-3. 让 reducer 保持非隔离，同时把状态修改放到不可见的线程约定里
-
-一句话：
-
-> **如果 TGReduxKit 的 Store 模型本来就是 UI 主线程驱动，那么把 Reducer 契约也对齐到 MainActor，会比让每个业务仓自己补注解更干净。**
+3. 让 `ScopedStore` 自行管理 `runTask` 生命周期
 
 ---
 
@@ -328,4 +302,4 @@ public typealias Reducer<State, Action> = @MainActor (inout State, Action) -> Vo
 3. 插件化在本仓表示“能力注册 + 开关过滤”，不是动态加载
 4. Feature Flag 必须同步投影到业务状态
 5. reducer 只管同步演进，副作用统一走 middleware
-6. Swift 6 并发下，短期项目侧用 `@MainActor` reducer，长期建议推动 `TGReduxKit` 库侧对齐
+6. Swift 6 并发下，`TGReduxKit` 的 `Store` / `Middleware` / `Reducer` 均按 `@MainActor` 使用
