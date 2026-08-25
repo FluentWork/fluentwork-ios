@@ -2,7 +2,7 @@ name: opencode-review
 
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review]
   workflow_dispatch:
 
 concurrency:
@@ -51,3 +51,7 @@ jobs:
           sticky_summary: 'true'
           incremental: 'true'
           route_severity_below: medium
+
+      - name: Fail on critical/high OCR findings
+        if: steps.preflight.outputs.enabled == 'true'
+        run: bash ./Scripts/ocr-fail-on-high.sh /tmp/ocr-result.json
