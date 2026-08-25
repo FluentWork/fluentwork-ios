@@ -11,6 +11,7 @@ public enum AppTaskID {
 public func makeAppMiddlewares(container: Container? = nil) -> [Middleware<AppState, AppAction>] {
     let resolvedContainer = container ?? Container.shared
     return [
+        speechSessionMiddleware(container: resolvedContainer),
         appBootstrapMiddleware(container: resolvedContainer),
         appNetworkMonitorMiddleware(container: resolvedContainer),
     ]

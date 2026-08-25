@@ -192,10 +192,10 @@ struct HostRootView: View {
 
                 HStack {
                     Button("Start") {
-                        store.dispatch(.speakingRoom(.sessionStartTapped))
+                        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
                     }
                     Button("Socket Ready") {
-                        store.dispatch(.speakingRoom(.socketReady))
+                        store.dispatch(.speakingRoom(.session(.socketReady)))
                     }
                     Button("Badge Hit") {
                         store.dispatch(.speakingRoom(.badgeHit("表达自然")))

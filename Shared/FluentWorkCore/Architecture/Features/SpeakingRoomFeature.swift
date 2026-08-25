@@ -1,79 +1,82 @@
 import TGReduxKit
 
-public enum SpeakingRoomPhase: String, Equatable, Sendable {
-    case idle
-    case connecting
-    case waitingUser
-    case processing
-    case degradedText
-    case failed
-}
-
 public struct SpeakingRoomState: Equatable, Sendable, State {
-    public var phase: SpeakingRoomPhase
+    public var session: SpeechSessionState
     public var liveTranscript: String
     public var isBootstrapReady: Bool
     public var lastBadge: String?
     public var badgeHits: Int
-    public var failureReason: String?
+
+    public var phase: SpeechSessionPhase { session.phase }
+    public var failureReason: String? { session.failureReason }
 
     public init(
-        phase: SpeakingRoomPhase = .idle,
+        session: SpeechSessionState = .initial,
+        liveTranscript: String = "",
+        isBootstrapReady: Bool = false,
+        lastBadge: String? = nil,
+        badgeHits: Int = 0
+    ) {
+        self.session = session
+        self.liveTranscript = liveTranscript
+        self.isBootstrapReady = isBootstrapReady
+        self.lastBadge = lastBadge
+        self.badgeHits = badgeHits
+    }
+
+    /// Test / Host helper mirroring the previous phase-centric initializer.
+    public init(
+        phase: SpeechSessionPhase,
         liveTranscript: String = "",
         isBootstrapReady: Bool = false,
         lastBadge: String? = nil,
         badgeHits: Int = 0,
         failureReason: String? = nil
     ) {
-        self.phase = phase
-        self.liveTranscript = liveTranscript
-        self.isBootstrapReady = isBootstrapReady
-        self.lastBadge = lastBadge
-        self.badgeHits = badgeHits
-        self.failureReason = failureReason
+        self.init(
+            session: SpeechSessionState(phase: phase, failureReason: failureReason),
+            liveTranscript: liveTranscript,
+            isBootstrapReady: isBootstrapReady,
+            lastBadge: lastBadge,
+            badgeHits: badgeHits
+        )
     }
 }
 
 public enum SpeakingRoomAction: Equatable, Sendable, Action {
-    case sessionStartTapped
-    case socketReady
-    case userSpeechCaptured(String)
+    /// Domain event for the pure SpeechSession machine (Middleware-owned).
+    case session(SpeechSessionEvent)
+    /// State snapshot applied after Middleware runs the machine.
+    case applySession(SpeechSessionState)
+    /// Display-only — must not enter SpeechSessionMachine (§2.2 badgeHit).
     case badgeHit(String)
-    case networkDowngraded
     case bootstrapReady(Bool)
-    case failed(String)
+    /// Local transcript overlay text; does not drive the session phase machine.
+    case userSpeechCaptured(String)
 }
 
 public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> = { state, action in
     switch action {
-    case .sessionStartTapped:
-        state.phase = .connecting
-        state.liveTranscript = ""
-        state.lastBadge = nil
-        state.badgeHits = 0
-        state.failureReason = nil
+    case .session:
+        // Interpreted by `speechSessionMiddleware`; reducer ignores raw events.
+        break
 
-    case .socketReady:
-        guard state.phase != .failed else { return }
-        state.phase = .waitingUser
-
-    case let .userSpeechCaptured(transcript):
-        state.phase = .processing
-        state.liveTranscript = transcript
+    case let .applySession(session):
+        state.session = session
+        if session.phase == .connecting {
+            state.liveTranscript = ""
+            state.lastBadge = nil
+            state.badgeHits = 0
+        }
 
     case let .badgeHit(badge):
         state.lastBadge = badge
         state.badgeHits += 1
 
-    case .networkDowngraded:
-        guard state.phase != .failed else { return }
-        state.phase = .degradedText
-
     case let .bootstrapReady(isReady):
         state.isBootstrapReady = isReady
 
-    case let .failed(message):
-        state.phase = .failed
-        state.failureReason = message
+    case let .userSpeechCaptured(transcript):
+        state.liveTranscript = transcript
     }
 }

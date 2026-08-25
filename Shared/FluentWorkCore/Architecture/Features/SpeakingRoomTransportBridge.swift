@@ -6,13 +6,13 @@ extension SpeakingRoomAction {
     public init?(_ transportAction: SpeakingRoomTransportAction) {
         switch transportAction {
         case .socketReady:
-            self = .socketReady
+            self = .session(.socketReady)
         case let .badgeHit(badge):
             self = .badgeHit(badge)
         case let .failed(message):
-            self = .failed(message)
+            self = .session(.failed(message))
         case .networkDowngraded:
-            self = .networkDowngraded
+            self = .session(.networkLost)
         }
     }
 }
