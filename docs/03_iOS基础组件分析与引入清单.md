@@ -55,7 +55,7 @@ C0 基座（根 Store / DI / Feature Flag / 插件注册 / Moya 接缝）已经�
 | H. 时间 / UUID | 自建可注入协议 | `FluentWorkCore/Dependencies/` | foundation |
 | I. 环境配置 | 自建 | `FluentWorkCore` | 可随 Core 或 foundation |
 
-**白名单**：meta 6.3 需补 `TGNavigationStack`、`TGFeatureFlag`。Pulse / SwiftLint 口径不变；Pulse 仍暂缓。
+**白名单**：技术方案 6.3（meta V3.4）已含 TGReduxKit / Factory / TGNavigationStack / TGFeatureFlag / Moya / SwiftLint / Pulse。Pulse / SwiftLint 口径不变；Pulse 仍暂缓。
 
 ### 外迁三阶段
 
