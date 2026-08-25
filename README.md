@@ -45,7 +45,7 @@ Scripts/
 - snapshot tests
 - simulator smoke run
 - agent entry file validation
-- OpenCodeReview merge gate: `high`/`critical` findings fail the review job and block merge; `medium`/`low` do not
+- local OpenCodeReview pre-commit gate: `high`/`critical` findings fail the commit; `medium`/`low` do not
 
 ## Upstream Source of Truth
 
@@ -61,14 +61,15 @@ This repository currently includes:
 - `Package.swift`
 - `.github/workflows/agent-config-check.yml`
 - `.github/workflows/ios-ci.yml`
-- `.github/workflows/opencode-review.yml`
+- `.githooks/pre-commit` + `Scripts/setup-git-hooks.sh` (local OCR gate)
 - executable Swift package baseline
 - initial directory skeleton
 
 ## Agent Tooling
 
-- `gstack` can be used locally for `/review`, `/qa`, and later release-oriented workflows
-- local OpenCodeReview CLI (`ocr`) can be used for pre-PR review against `.opencodereview/rule.json`
-- after `ocr review`, run `./Scripts/ocr-export-review.sh` to save findings under `.opencodereview/reviews/` (see `latest.md`)
+- `gstack` can be used locally for deeper `/review`, `/qa`, and later release-oriented workflows
+- OpenCodeReview CLI (`ocr`) is the **commit gate**: enable hooks once with `./Scripts/setup-git-hooks.sh`
+- pre-commit runs `./Scripts/ocr-local-review.sh` (uses `.opencodereview/rule.json` + `ocr-fail-on-high.sh`)
+- after a review, optionally run `./Scripts/ocr-export-review.sh` to save findings under `.opencodereview/reviews/` (see `latest.md`)
 - Matt Pocock style skills may be used as helpers under FluentWork shared governance
-- OpenCodeReview on PRs: `Scripts/ocr-fail-on-high.sh` fails the job when any `high`/`critical` finding exists (`medium`/`low` allowed)
+- GitHub CI no longer runs OpenCodeReview; keep review local before commit
