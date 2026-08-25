@@ -29,8 +29,9 @@ Shared topics:
 1. Read current iOS and product docs before editing.
 2. Keep changes scoped to the active module.
 3. Do not bypass review, CI, or owner approval requirements.
-4. Do not perform destructive git operations without explicit approval.
-5. Call out any impact on state, audio, or release behavior.
+4. OpenCodeReview `high` / `critical` findings must be fixed before merge; absence of `high`/`critical` allows merge (`medium`/`low` may remain as follow-ups).
+5. Do not perform destructive git operations without explicit approval.
+6. Call out any impact on state, audio, or release behavior.
 
 ## High-Risk Paths
 
