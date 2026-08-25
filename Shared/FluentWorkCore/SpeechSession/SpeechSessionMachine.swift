@@ -57,10 +57,12 @@ public enum SpeechSessionMachine {
             state.phase = .aiSpeaking
 
         case (.degradedText, .textMessageSent):
-            break
+            // User text → POST /messages (middleware interprets `.sendTextMessage`).
+            effects.append(.sendTextMessage)
 
         case (.degradedText, .textReplyReceived):
-            effects.append(.sendTextMessage)
+            // AI reply is display-only; transcript/UI updates stay outside this machine.
+            break
 
         case (_, .networkDegraded) where isActive(state.phase):
             state.phase = .degradedText
@@ -87,8 +89,15 @@ public enum SpeechSessionMachine {
             effects.append(.stopPlayback)
 
         case (_, .systemInterruptEnded) where state.suspendedPhase != nil:
-            // Resume only from an active suspend; always land on waitingUser (§2.2).
-            state.phase = .waitingUser
+            // Voice-path suspend resumes to waitingUser (§2.2). Preserve
+            // connecting / degradedText so interrupt cannot skip handshake or
+            // promote out of text degrade.
+            switch state.suspendedPhase {
+            case .connecting, .degradedText:
+                state.phase = state.suspendedPhase!
+            default:
+                state.phase = .waitingUser
+            }
             state.suspendedPhase = nil
 
         case (_, .endTap) where state.phase != .idle && state.phase != .ended:

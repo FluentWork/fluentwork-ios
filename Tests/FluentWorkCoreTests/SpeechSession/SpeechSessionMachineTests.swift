@@ -95,6 +95,16 @@ import Testing
     #expect(resumeEffects.contains(.trackTransition(from: .recording, to: .waitingUser)))
 }
 
+@Test func systemInterruptFromDegradedTextPreservesDegradedText() {
+    var state = SpeechSessionState(phase: .degradedText)
+    _ = SpeechSessionMachine.reduce(&state, event: .interruptedBySystem)
+    #expect(state.suspendedPhase == .degradedText)
+
+    _ = SpeechSessionMachine.reduce(&state, event: .systemInterruptEnded)
+    #expect(state.phase == .degradedText)
+    #expect(state.suspendedPhase == nil)
+}
+
 @Test func systemInterruptEndedIsNoOpWithoutSuspend() {
     var state = SpeechSessionState(phase: .degradedText)
     let effects = SpeechSessionMachine.reduce(&state, event: .systemInterruptEnded)
@@ -175,9 +185,9 @@ import Testing
     var state = SpeechSessionState(phase: .degradedText)
     let sendEffects = SpeechSessionMachine.reduce(&state, event: .textMessageSent)
     #expect(state.phase == .degradedText)
-    #expect(sendEffects.isEmpty)
+    #expect(sendEffects.contains(.sendTextMessage))
 
     let replyEffects = SpeechSessionMachine.reduce(&state, event: .textReplyReceived)
     #expect(state.phase == .degradedText)
-    #expect(replyEffects.contains(.sendTextMessage))
+    #expect(replyEffects.isEmpty)
 }
