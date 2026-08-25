@@ -2,11 +2,11 @@ import FluentWorkFeatureFlags
 import FluentWorkPluginSupport
 import TGReduxKit
 
-@MainActor
 public let appReducer: Reducer<AppState, AppAction> = combineReducers(
     pullback(
         featureFlagsReducer,
         state: \.featureFlags,
+        action: AppAction.featureFlags,
         extract: {
             guard case let .featureFlags(action) = $0 else { return nil }
             return action
@@ -15,6 +15,7 @@ public let appReducer: Reducer<AppState, AppAction> = combineReducers(
     pullback(
         authReducer,
         state: \.auth,
+        action: AppAction.auth,
         extract: {
             guard case let .auth(action) = $0 else { return nil }
             return action
@@ -23,6 +24,7 @@ public let appReducer: Reducer<AppState, AppAction> = combineReducers(
     pullback(
         speakingRoomReducer,
         state: \.speakingRoom,
+        action: AppAction.speakingRoom,
         extract: {
             guard case let .speakingRoom(action) = $0 else { return nil }
             return action
@@ -31,6 +33,7 @@ public let appReducer: Reducer<AppState, AppAction> = combineReducers(
     pullback(
         workspaceReducer,
         state: \.workspace,
+        action: AppAction.workspace,
         extract: {
             guard case let .workspace(action) = $0 else { return nil }
             return action
@@ -39,10 +42,10 @@ public let appReducer: Reducer<AppState, AppAction> = combineReducers(
     appCrossCuttingReducer
 )
 
-@MainActor
 public let appCrossCuttingReducer: Reducer<AppState, AppAction> = { state, action in
     switch action {
     case .lifecycle(.appLaunched):
+        state.bootstrapStatus = .loading
         state.lastErrorMessage = nil
 
     case .lifecycle(.bootstrapStarted):

@@ -1,6 +1,5 @@
 import FactoryKit
 import Foundation
-import FluentWorkPluginSupport
 import TGReduxKit
 
 public enum AppTaskID {
@@ -18,32 +17,31 @@ public func appBootstrapMiddleware(container: Container? = nil) -> Middleware<Ap
     let resolvedContainer = container ?? Container.shared
 
     return { store, action, next in
-        next(action)
-
-        guard case .lifecycle(.appLaunched) = action else { return }
-        guard store.state.bootstrapStatus != .loading else { return }
-        let bootstrapClient = resolvedContainer.bootstrapClient()
-        let pluginRegistry = resolvedContainer.featurePluginRegistry()
-
-        store.dispatch(.lifecycle(.bootstrapStarted))
-
-        store.runTask(id: AppTaskID.bootstrap) {
-            do {
-                let snapshot = try await bootstrapClient.loadBootstrap()
-                guard !Task.isCancelled else { return }
-                await store.dispatch(.lifecycle(.bootstrapSucceeded(snapshot)))
-                await store.dispatch(
-                    .workspace(.setAvailableModules(
-                        pluginRegistry.enabledPlugins(for: snapshot.featureFlags)
-                    ))
-                )
-            } catch is CancellationError {
-                return
-            } catch {
-                guard !Task.isCancelled else { return }
-                await store.dispatch(.lifecycle(.bootstrapFailed(appBootstrapErrorMessage(error))))
-            }
+        guard case .lifecycle(.appLaunched) = action else {
+            return next(action)
         }
+        guard store.state.bootstrapStatus != .loading else {
+            return next(action)
+        }
+
+        let bootstrapClient = resolvedContainer.bootstrapClient()
+        let base = next(action)
+
+        return .merge(
+            base,
+            .task(id: AppTaskID.bootstrap) {
+                do {
+                    let snapshot = try await bootstrapClient.loadBootstrap()
+                    guard !Task.isCancelled else { return nil }
+                    return .lifecycle(.bootstrapSucceeded(snapshot))
+                } catch is CancellationError {
+                    return nil
+                } catch {
+                    guard !Task.isCancelled else { return nil }
+                    return .lifecycle(.bootstrapFailed(appBootstrapErrorMessage(error)))
+                }
+            }
+        )
     }
 }
 

@@ -1,4 +1,5 @@
 import FluentWorkFeatureFlags
+import TGReduxKit
 
 public enum BootstrapStatus: String, Equatable, Sendable {
     case idle
@@ -25,7 +26,7 @@ public struct BootstrapSnapshot: Equatable, Sendable {
     )
 }
 
-public struct AppState: Equatable, Sendable {
+public struct AppState: Equatable, Sendable, State {
     public var bootstrapStatus: BootstrapStatus
     public var lastErrorMessage: String?
     public var featureFlags: FeatureFlagsState
@@ -52,14 +53,14 @@ public struct AppState: Equatable, Sendable {
     public static let initial = AppState()
 }
 
-public enum LifecycleAction: Equatable, Sendable {
+public enum LifecycleAction: Equatable, Sendable, Action {
     case appLaunched
     case bootstrapStarted
     case bootstrapSucceeded(BootstrapSnapshot)
     case bootstrapFailed(String)
 }
 
-public enum AppAction: Equatable, Sendable {
+public enum AppAction: Equatable, Sendable, Action {
     case lifecycle(LifecycleAction)
     case featureFlags(FeatureFlagsAction)
     case auth(AuthAction)

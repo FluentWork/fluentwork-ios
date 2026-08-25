@@ -33,7 +33,7 @@ public struct FeatureFlagSnapshot: Equatable, Sendable {
     )
 }
 
-public struct FeatureFlagsState: Equatable, Sendable {
+public struct FeatureFlagsState: Equatable, Sendable, State {
     public var snapshot: FeatureFlagSnapshot
     public var localOverrides: [AppFeatureFlag: Bool]
     public var isRemoteLoaded: Bool
@@ -71,13 +71,12 @@ public struct FeatureFlagsState: Equatable, Sendable {
     }
 }
 
-public enum FeatureFlagsAction: Equatable, Sendable {
+public enum FeatureFlagsAction: Equatable, Sendable, Action {
     case applyRemoteSnapshot(FeatureFlagSnapshot)
     case setLocalOverride(flag: AppFeatureFlag, isEnabled: Bool)
     case clearLocalOverrides
 }
 
-@MainActor
 public let featureFlagsReducer: Reducer<FeatureFlagsState, FeatureFlagsAction> = { state, action in
     switch action {
     case let .applyRemoteSnapshot(snapshot):

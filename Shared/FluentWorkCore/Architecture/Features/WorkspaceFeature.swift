@@ -7,7 +7,7 @@ public enum WorkspaceSurface: String, Equatable, Sendable {
     case review
 }
 
-public struct WorkspaceState: Equatable, Sendable {
+public struct WorkspaceState: Equatable, Sendable, State {
     public var activeSurface: WorkspaceSurface
     public var highlightedBadge: String?
     public var badgeFeedCount: Int
@@ -29,14 +29,13 @@ public struct WorkspaceState: Equatable, Sendable {
     }
 }
 
-public enum WorkspaceAction: Equatable, Sendable {
+public enum WorkspaceAction: Equatable, Sendable, Action {
     case activate(WorkspaceSurface)
     case recordBadgeHit(String)
     case setBootstrapComplete(Bool)
     case setAvailableModules([FeaturePluginDescriptor])
 }
 
-@MainActor
 public let workspaceReducer: Reducer<WorkspaceState, WorkspaceAction> = { state, action in
     switch action {
     case let .activate(surface):

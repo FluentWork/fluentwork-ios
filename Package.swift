@@ -14,14 +14,16 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/tangzzz-fan/TGReduxKit.git", exact: "4.0.0"),
+        .package(url: "https://github.com/tangzzz-fan/TGReduxKit.git", exact: "5.0.0"),
         .package(url: "https://github.com/hmlongco/Factory.git", exact: "3.3.2"),
         .package(url: "https://github.com/Moya/Moya.git", exact: "15.0.3"),
     ],
     targets: [
         .target(
             name: "FluentWorkFeatureFlags",
-            dependencies: ["TGReduxKit"],
+            dependencies: [
+                .product(name: "TGReduxKit", package: "TGReduxKit"),
+            ],
             path: "Shared/FluentWorkFeatureFlags"
         ),
         .target(
@@ -39,7 +41,7 @@ let package = Package(
         .target(
             name: "FluentWorkCore",
             dependencies: [
-                "TGReduxKit",
+                .product(name: "TGReduxKit", package: "TGReduxKit"),
                 .product(name: "FactoryKit", package: "Factory"),
                 "FluentWorkFeatureFlags",
                 "FluentWorkPluginSupport",
@@ -53,7 +55,8 @@ let package = Package(
                 "FluentWorkCore",
                 "FluentWorkFeatureFlags",
                 "FluentWorkPluginSupport",
-                "TGReduxKit",
+                .product(name: "TGReduxKit", package: "TGReduxKit"),
+                .product(name: "TGReduxKitTesting", package: "TGReduxKit"),
                 .product(name: "FactoryKit", package: "Factory"),
             ],
             path: "Tests/FluentWorkCoreTests"
