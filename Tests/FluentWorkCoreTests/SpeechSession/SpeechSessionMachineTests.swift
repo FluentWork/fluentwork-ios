@@ -49,6 +49,15 @@ import Testing
     #expect(state.phase == .aiSpeaking)
 }
 
+@Test func networkDegradedEntersDegradedTextImmediately() {
+    var state = SpeechSessionState(phase: .waitingUser)
+    let effects = SpeechSessionMachine.reduce(&state, event: .networkDegraded)
+
+    #expect(state.phase == .degradedText)
+    #expect(state.isReconnecting == false)
+    #expect(effects.contains(.trackTransition(from: .waitingUser, to: .degradedText)))
+}
+
 @Test func networkLostStartsReconnectWindowWithoutLeavingPhase() {
     var state = SpeechSessionState(phase: .waitingUser)
     let effects = SpeechSessionMachine.reduce(&state, event: .networkLost)
@@ -70,13 +79,27 @@ import Testing
 @Test func systemInterruptSuspendsThenResumesToWaitingUser() {
     var state = SpeechSessionState(phase: .recording)
     let suspendEffects = SpeechSessionMachine.reduce(&state, event: .interruptedBySystem)
+    #expect(state.phase == .recording)
     #expect(state.suspendedPhase == .recording)
     #expect(suspendEffects.contains(.stopPlayback))
+
+    // Active events are ignored while suspended.
+    let ignored = SpeechSessionMachine.reduce(&state, event: .vadSpeechEnd)
+    #expect(state.phase == .recording)
+    #expect(state.suspendedPhase == .recording)
+    #expect(ignored.isEmpty)
 
     let resumeEffects = SpeechSessionMachine.reduce(&state, event: .systemInterruptEnded)
     #expect(state.phase == .waitingUser)
     #expect(state.suspendedPhase == nil)
     #expect(resumeEffects.contains(.trackTransition(from: .recording, to: .waitingUser)))
+}
+
+@Test func systemInterruptEndedIsNoOpWithoutSuspend() {
+    var state = SpeechSessionState(phase: .degradedText)
+    let effects = SpeechSessionMachine.reduce(&state, event: .systemInterruptEnded)
+    #expect(state.phase == .degradedText)
+    #expect(effects.isEmpty)
 }
 
 @Test func endTapEndsActiveSession() {

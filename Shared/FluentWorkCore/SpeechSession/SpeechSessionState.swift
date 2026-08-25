@@ -19,7 +19,8 @@ public enum SpeechSessionPhase: String, Equatable, Sendable {
 
 public struct SpeechSessionState: Equatable, Sendable {
     public var phase: SpeechSessionPhase
-    /// Phase captured when `interruptedBySystem` suspends the session.
+    /// Non-nil while system-interrupted: machine ignores active events until
+    /// `systemInterruptEnded` (or end/fail). Captures the phase at suspend time.
     public var suspendedPhase: SpeechSessionPhase?
     public var isReconnecting: Bool
     public var failureReason: String?

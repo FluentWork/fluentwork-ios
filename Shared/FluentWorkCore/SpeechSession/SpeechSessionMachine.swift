@@ -10,6 +10,17 @@ public enum SpeechSessionMachine {
         _ state: inout SpeechSessionState,
         event: SpeechSessionEvent
     ) -> [SpeechSessionSideEffect] {
+        // While system-interrupted, ignore active session events so VAD/audio/network
+        // cannot drive the machine under a stale live phase (§2.2 interruptedBySystem).
+        if state.suspendedPhase != nil {
+            switch event {
+            case .systemInterruptEnded, .endTap, .failed:
+                break
+            default:
+                return []
+            }
+        }
+
         let from = state.phase
         var effects: [SpeechSessionSideEffect] = []
 
@@ -51,6 +62,10 @@ public enum SpeechSessionMachine {
         case (.degradedText, .textReplyReceived):
             effects.append(.sendTextMessage)
 
+        case (_, .networkDegraded) where isActive(state.phase):
+            state.phase = .degradedText
+            state.isReconnecting = false
+
         case (_, .networkLost) where isActive(state.phase):
             state.isReconnecting = true
             effects.append(.startReconnectWindow)
@@ -67,23 +82,26 @@ public enum SpeechSessionMachine {
                 state.phase = .degradedText
             }
 
-        case (_, .interruptedBySystem) where isActive(state.phase):
+        case (_, .interruptedBySystem) where isActive(state.phase) && state.suspendedPhase == nil:
             state.suspendedPhase = state.phase
             effects.append(.stopPlayback)
 
         case (_, .systemInterruptEnded) where state.suspendedPhase != nil:
+            // Resume only from an active suspend; always land on waitingUser (§2.2).
             state.phase = .waitingUser
             state.suspendedPhase = nil
 
         case (_, .endTap) where state.phase != .idle && state.phase != .ended:
             state.phase = .ended
             state.isReconnecting = false
+            state.suspendedPhase = nil
             effects.append(.endSession)
 
         case (_, .failed(let message)) where state.phase != .ended:
             state.phase = .failed
             state.failureReason = message
             state.isReconnecting = false
+            state.suspendedPhase = nil
 
         // Idempotent: duplicate socketReady while connecting/reconnecting after first ready.
         case (.aiSpeaking, .socketReady), (.waitingUser, .socketReady), (.recording, .socketReady),
