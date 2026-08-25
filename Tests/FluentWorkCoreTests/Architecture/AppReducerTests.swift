@@ -1,12 +1,11 @@
 import FluentWorkFeatureFlags
 import FluentWorkPluginSupport
 import Testing
-import TGReduxKit
+import TGReduxKitTesting
 @testable import FluentWorkCore
 
-@MainActor
 @Test func bootstrapSuccessUpdatesGlobalStateAndFeatureScopes() throws {
-    let store = TestStore(initialState: .initial, reducer: appReducer)
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
     let snapshot = BootstrapSnapshot(
         featureFlags: .firstWave,
         preferredSurface: .speakingRoom
@@ -14,7 +13,8 @@ import TGReduxKit
 
     var expected = AppState.initial
     expected.bootstrapStatus = .loading
-    try store.send(.lifecycle(.bootstrapStarted), expect: expected)
+    store.send(.lifecycle(.bootstrapStarted))
+    try store.assert(equals: expected)
 
     expected.bootstrapStatus = .ready
     expected.workspace.isBootstrapComplete = true
@@ -34,12 +34,12 @@ import TGReduxKit
     expected.featureFlags.snapshot = .firstWave
     expected.featureFlags.isRemoteLoaded = true
     expected.speakingRoom.isBootstrapReady = true
-    try store.send(.lifecycle(.bootstrapSucceeded(snapshot)), expect: expected)
+    store.send(.lifecycle(.bootstrapSucceeded(snapshot)))
+    try store.assert(equals: expected)
 }
 
-@MainActor
 @Test func speakingRoomBadgeHitFeedsWorkspaceProjection() throws {
-    let store = TestStore(initialState: .initial, reducer: appReducer)
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
 
     var expected = AppState.initial
     expected.speakingRoom.lastBadge = "表达自然"
@@ -47,32 +47,27 @@ import TGReduxKit
     expected.workspace.highlightedBadge = "表达自然"
     expected.workspace.badgeFeedCount = 1
 
-    try store.send(.speakingRoom(.badgeHit("表达自然")), expect: expected)
+    store.send(.speakingRoom(.badgeHit("表达自然")))
+    try store.assert(equals: expected)
 }
 
-@MainActor
 @Test func guestIdentityCanPromoteToRegisteredWithoutLosingFlow() throws {
-    let store = TestStore(initialState: .initial, reducer: appReducer)
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
 
     var expected = AppState.initial
     expected.auth.mode = .guest
     expected.auth.currentUserID = "guest-1"
     expected.auth.pendingMergeDeviceID = "device-1"
-    try store.send(
-        .auth(.signedInAsGuest(userID: "guest-1", deviceID: "device-1")),
-        expect: expected
-    )
+    store.send(.auth(.signedInAsGuest(userID: "guest-1", deviceID: "device-1")))
+    try store.assert(equals: expected)
 
     expected.auth.mode = .registered
     expected.auth.currentUserID = "user-42"
     expected.auth.pendingMergeDeviceID = nil
-    try store.send(
-        .auth(.mergedIntoRegistered(userID: "user-42", deviceID: "device-1")),
-        expect: expected
-    )
+    store.send(.auth(.mergedIntoRegistered(userID: "user-42", deviceID: "device-1")))
+    try store.assert(equals: expected)
 }
 
-@MainActor
 @Test func featureFlagsCanDisableSpeakingRoomViaLocalOverride() throws {
     let initial = AppState(
         featureFlags: FeatureFlagsState(snapshot: .firstWave, isRemoteLoaded: true),
@@ -90,15 +85,12 @@ import TGReduxKit
             entryRoute: "/review"
         ),
     ]
-    try store.send(
-        .featureFlags(.setLocalOverride(flag: .speakingRoom, isEnabled: false)),
-        expect: expected
-    )
+    store.send(.featureFlags(.setLocalOverride(flag: .speakingRoom, isEnabled: false)))
+    try store.assert(equals: expected)
 }
 
-@MainActor
 @Test func workspaceCanReceivePluginizedEntryModules() throws {
-    let store = TestStore(initialState: .initial, reducer: appReducer)
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
     let modules = [
         FeaturePluginDescriptor(
             feature: .speakingRoom,
@@ -109,10 +101,10 @@ import TGReduxKit
 
     var expected = AppState.initial
     expected.workspace.availableModules = modules
-    try store.send(.workspace(.setAvailableModules(modules)), expect: expected)
+    store.send(.workspace(.setAvailableModules(modules)))
+    try store.assert(equals: expected)
 }
 
-@MainActor
 @Test func sessionStartResetsBadgeStateForNewRun() throws {
     let initial = AppState(
         speakingRoom: SpeakingRoomState(
@@ -133,10 +125,10 @@ import TGReduxKit
     expected.speakingRoom.badgeHits = 0
     expected.speakingRoom.failureReason = nil
 
-    try store.send(.speakingRoom(.sessionStartTapped), expect: expected)
+    store.send(.speakingRoom(.sessionStartTapped))
+    try store.assert(equals: expected)
 }
 
-@MainActor
 @Test func failedSpeakingRoomIgnoresLateSocketEvents() throws {
     let initial = AppState(
         speakingRoom: SpeakingRoomState(
@@ -147,6 +139,17 @@ import TGReduxKit
     )
     let store = TestStore(initialState: initial, reducer: appReducer)
 
-    try store.send(.speakingRoom(.socketReady), expect: initial)
-    try store.send(.speakingRoom(.networkDowngraded), expect: initial)
+    store.send(.speakingRoom(.socketReady))
+    try store.assert(equals: initial)
+    store.send(.speakingRoom(.networkDowngraded))
+    try store.assert(equals: initial)
+}
+
+@Test func appLaunchedSetsBootstrapLoading() throws {
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+
+    var expected = AppState.initial
+    expected.bootstrapStatus = .loading
+    store.send(.lifecycle(.appLaunched))
+    try store.assert(equals: expected)
 }

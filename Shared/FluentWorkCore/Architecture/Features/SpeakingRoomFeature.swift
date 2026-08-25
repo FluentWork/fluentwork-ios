@@ -9,7 +9,7 @@ public enum SpeakingRoomPhase: String, Equatable, Sendable {
     case failed
 }
 
-public struct SpeakingRoomState: Equatable, Sendable {
+public struct SpeakingRoomState: Equatable, Sendable, State {
     public var phase: SpeakingRoomPhase
     public var liveTranscript: String
     public var isBootstrapReady: Bool
@@ -34,7 +34,7 @@ public struct SpeakingRoomState: Equatable, Sendable {
     }
 }
 
-public enum SpeakingRoomAction: Equatable, Sendable {
+public enum SpeakingRoomAction: Equatable, Sendable, Action {
     case sessionStartTapped
     case socketReady
     case userSpeechCaptured(String)
@@ -44,7 +44,6 @@ public enum SpeakingRoomAction: Equatable, Sendable {
     case failed(String)
 }
 
-@MainActor
 public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> = { state, action in
     switch action {
     case .sessionStartTapped:
