@@ -1,7 +1,10 @@
 import FactoryKit
+import FluentWorkDiagnostics
+import FluentWorkFeatureFlags
 import FluentWorkNetworking
 import FluentWorkPluginSupport
 import Foundation
+import TGFeatureFlag
 
 public protocol BootstrapClientProtocol: Sendable {
     func loadBootstrap() async throws -> BootstrapSnapshot
@@ -36,6 +39,29 @@ public struct StaticBootstrapClient: BootstrapClientProtocol {
 
     public func loadBootstrap() async throws -> BootstrapSnapshot {
         snapshot
+    }
+}
+
+/// Loads flags via TGFeatureFlag `FeatureFlagResolver`, then maps into Redux domain snapshot.
+public struct ResolverBackedBootstrapClient: BootstrapClientProtocol {
+    public let resolver: FeatureFlagResolver
+    public let preferredSurface: WorkspaceSurface
+
+    public init(
+        resolver: FeatureFlagResolver = FeatureFlagResolverFactory.makeFirstWaveResolver(),
+        preferredSurface: WorkspaceSurface = .speakingRoom
+    ) {
+        self.resolver = resolver
+        self.preferredSurface = preferredSurface
+    }
+
+    public func loadBootstrap() async throws -> BootstrapSnapshot {
+        _ = await resolver.refresh()
+        let remote = resolver.snapshot(for: AppFeatureFlag.allCases)
+        return BootstrapSnapshot(
+            featureFlags: FeatureFlagSnapshotMapper.map(remote),
+            preferredSurface: preferredSurface
+        )
     }
 }
 
@@ -74,8 +100,14 @@ public final class PlaceholderSpeechSessionClient: SpeechSessionClientProtocol, 
 }
 
 public extension Container {
+    var featureFlagResolver: Factory<FeatureFlagResolver> {
+        self { FeatureFlagResolverFactory.makeFirstWaveResolver() }.singleton
+    }
+
     var bootstrapClient: Factory<BootstrapClientProtocol> {
-        self { StaticBootstrapClient() }.singleton
+        self {
+            ResolverBackedBootstrapClient(resolver: self.featureFlagResolver())
+        }.singleton
     }
 
     var socketTransport: Factory<SocketTransportProtocol> {
@@ -90,6 +122,10 @@ public extension Container {
         self { self.networkPluginFactory().makeNetworkClient() }.singleton
     }
 
+    var networkMonitor: Factory<NetworkMonitorProtocol> {
+        self { NWPathNetworkMonitor() }.singleton
+    }
+
     var audioEngine: Factory<AudioEngineProtocol> {
         self { PlaceholderAudioEngine() }.shared
     }
@@ -100,5 +136,29 @@ public extension Container {
 
     var featurePluginRegistry: Factory<FeaturePluginRegistryProtocol> {
         self { StaticFeaturePluginRegistry() }.singleton
+    }
+
+    var logger: Factory<LoggingProtocol> {
+        self { OSLogLogger() }.singleton
+    }
+
+    var tracker: Factory<TrackerClientProtocol> {
+        self { ConsoleTracker() }.singleton
+    }
+
+    var secureStorage: Factory<SecureStorageProtocol> {
+        self { KeychainSecureStorage() }.singleton
+    }
+
+    var clock: Factory<ClockProtocol> {
+        self { SystemClock() }.singleton
+    }
+
+    var idGenerator: Factory<IDGeneratorProtocol> {
+        self { SystemIDGenerator() }.singleton
+    }
+
+    var appEnvironment: Factory<AppEnvironment> {
+        self { AppEnvironment.current }.singleton
     }
 }

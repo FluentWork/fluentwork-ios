@@ -1,15 +1,18 @@
 import FactoryKit
+import FluentWorkNetworking
 import Foundation
 import TGReduxKit
 
 public enum AppTaskID {
     public static let bootstrap: CancellationID = "app.bootstrap"
+    public static let networkMonitor: CancellationID = "app.networkMonitor"
 }
 
 public func makeAppMiddlewares(container: Container? = nil) -> [Middleware<AppState, AppAction>] {
     let resolvedContainer = container ?? Container.shared
     return [
         appBootstrapMiddleware(container: resolvedContainer),
+        appNetworkMonitorMiddleware(container: resolvedContainer),
     ]
 }
 
@@ -42,6 +45,48 @@ public func appBootstrapMiddleware(container: Container? = nil) -> Middleware<Ap
                 }
             }
         )
+    }
+}
+
+public func appNetworkMonitorMiddleware(container: Container? = nil) -> Middleware<AppState, AppAction> {
+    let resolvedContainer = container ?? Container.shared
+
+    return { store, action, next in
+        guard case .lifecycle(.appLaunched) = action else {
+            return next(action)
+        }
+
+        let monitor = resolvedContainer.networkMonitor()
+        let initial = monitor.currentSnapshot()
+        let base = next(action)
+        let dispatchBox = MainActorDispatchBox(dispatch: { store.dispatch($0) })
+
+        return .merge(
+            base,
+            .task {
+                .network(.connectivityChanged(initial))
+            },
+            .task(id: AppTaskID.networkMonitor) {
+                for await snapshot in monitor.connectivityUpdates() {
+                    guard !Task.isCancelled else { return nil }
+                    await dispatchBox.dispatch(.network(.connectivityChanged(snapshot)))
+                }
+                return nil
+            }
+        )
+    }
+}
+
+/// Bridges `@MainActor` store dispatch into a `@Sendable` Effect task.
+private final class MainActorDispatchBox: @unchecked Sendable {
+    private let dispatch: @MainActor (AppAction) -> Void
+
+    init(dispatch: @escaping @MainActor (AppAction) -> Void) {
+        self.dispatch = dispatch
+    }
+
+    func dispatch(_ action: AppAction) async {
+        await dispatch(action)
     }
 }
 

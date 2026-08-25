@@ -7,8 +7,18 @@ public protocol NetworkClientProtocol: Sendable {
     func requestData(for target: any FluentWorkTargetType) async throws -> Data
 }
 
-public enum NetworkClientError: Error, Equatable, Sendable {
-    case requestFailed(String)
+/// Normalized API / transport errors for FluentWork networking.
+public enum APIError: Error, Equatable, Sendable {
+    case network(description: String)
+    case decoding(description: String)
+    case backend(code: String, message: String)
+    case cancelled
+    case unknown(description: String)
+
+    /// User-facing copy placeholder (filled with C10 empty/error catalog).
+    public var userFacingMessage: String? {
+        nil
+    }
 }
 
 private final class RequestCancellationBox: @unchecked Sendable {
@@ -47,9 +57,7 @@ public final class MoyaNetworkClient: @unchecked Sendable, NetworkClientProtocol
                         continuation.resume(returning: response.data)
 
                     case let .failure(error):
-                        continuation.resume(
-                            throwing: NetworkClientError.requestFailed(error.localizedDescription)
-                        )
+                        continuation.resume(throwing: Self.mapMoyaError(error))
                     }
                 }
 
@@ -57,6 +65,28 @@ public final class MoyaNetworkClient: @unchecked Sendable, NetworkClientProtocol
             }
         } onCancel: {
             cancellationBox.cancel()
+        }
+    }
+
+    private static func mapMoyaError(_ error: MoyaError) -> APIError {
+        switch error {
+        case .underlying(let underlying, _):
+            if underlying is CancellationError {
+                return .cancelled
+            }
+            return .network(description: underlying.localizedDescription)
+
+        case .objectMapping, .encodableMapping, .jsonMapping, .imageMapping, .stringMapping:
+            return .decoding(description: error.localizedDescription)
+
+        case .statusCode(let response):
+            return .backend(
+                code: "http_\(response.statusCode)",
+                message: HTTPURLResponse.localizedString(forStatusCode: response.statusCode)
+            )
+
+        default:
+            return .unknown(description: error.localizedDescription)
         }
     }
 }

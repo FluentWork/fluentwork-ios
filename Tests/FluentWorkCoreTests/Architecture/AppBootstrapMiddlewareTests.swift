@@ -1,7 +1,9 @@
 import Foundation
 import FactoryKit
 import FluentWorkFeatureFlags
+import FluentWorkNetworking
 import Testing
+import TGReduxKit
 @testable import FluentWorkCore
 
 private struct MockBootstrapClient: BootstrapClientProtocol {
@@ -23,26 +25,53 @@ private struct FailingBootstrapClient: BootstrapClientProtocol {
 }
 
 @MainActor
-@Test func appLaunchMiddlewareUsesInjectedBootstrapClient() async {
-    Container.shared.reset()
-    defer { Container.shared.reset() }
+private func makeIsolatedContainer(
+    bootstrapClient: any BootstrapClientProtocol
+) -> Container {
+    let container = Container()
+    container.networkMonitor.register {
+        StubNetworkMonitor(snapshot: .connected)
+    }
+    container.bootstrapClient.register { bootstrapClient }
+    return container
+}
 
-    Container.shared.bootstrapClient.register {
-        MockBootstrapClient(
+@MainActor
+private func waitForBootstrap(
+    _ store: Store<AppState, AppAction>,
+    timeoutNanoseconds: UInt64 = 2_000_000_000
+) async {
+    let step: UInt64 = 20_000_000
+    var waited: UInt64 = 0
+    while waited < timeoutNanoseconds {
+        switch store.state.bootstrapStatus {
+        case .ready, .failed:
+            return
+        case .idle, .loading:
+            try? await Task.sleep(nanoseconds: step)
+            waited += step
+        }
+    }
+}
+
+@MainActor
+@Test func appLaunchMiddlewareUsesInjectedBootstrapClient() async {
+    let container = makeIsolatedContainer(
+        bootstrapClient: MockBootstrapClient(
             snapshot: BootstrapSnapshot(
                 featureFlags: .firstWave,
                 preferredSurface: .speakingRoom
             )
         )
-    }
+    )
 
-    let store = AppStoreFactory.make()
+    let store = AppStoreFactory.make(container: container)
     let featureFlags = store.featureFlagsScope()
     let speakingRoom = store.speakingRoomScope()
     let workspace = store.workspaceScope()
 
     store.dispatch(.lifecycle(.appLaunched))
-    try? await Task.sleep(nanoseconds: 50_000_000)
+    await waitForBootstrap(store)
 
     #expect(store.state.bootstrapStatus == .ready)
     #expect(featureFlags.state.isRemoteLoaded)
@@ -51,20 +80,16 @@ private struct FailingBootstrapClient: BootstrapClientProtocol {
     #expect(workspace.state.isBootstrapComplete)
     #expect(workspace.state.availableModules.map(\.moduleName) == ["SpeakingRoom", "Review"])
     #expect(speakingRoom.state.isBootstrapReady)
+    #expect(store.state.network.isConnected)
 }
 
 @MainActor
 @Test func appLaunchMiddlewareSurfacesBootstrapFailure() async {
-    Container.shared.reset()
-    defer { Container.shared.reset() }
+    let container = makeIsolatedContainer(bootstrapClient: FailingBootstrapClient())
+    let store = AppStoreFactory.make(container: container)
 
-    Container.shared.bootstrapClient.register {
-        FailingBootstrapClient()
-    }
-
-    let store = AppStoreFactory.make()
     store.dispatch(.lifecycle(.appLaunched))
-    try? await Task.sleep(nanoseconds: 50_000_000)
+    await waitForBootstrap(store)
 
     #expect(store.state.bootstrapStatus == .failed)
     #expect(store.state.lastErrorMessage == "bootstrap failed for test")
@@ -85,7 +110,7 @@ private struct FailingBootstrapClient: BootstrapClientProtocol {
 
         func loadBootstrap() async throws -> BootstrapSnapshot {
             await probe.markLoad()
-            try await Task.sleep(nanoseconds: 100_000_000)
+            try await Task.sleep(nanoseconds: 150_000_000)
             return BootstrapSnapshot(
                 featureFlags: .firstWave,
                 preferredSurface: .speakingRoom
@@ -93,19 +118,16 @@ private struct FailingBootstrapClient: BootstrapClientProtocol {
         }
     }
 
-    Container.shared.reset()
-    defer { Container.shared.reset() }
-
     let probe = Probe()
-    Container.shared.bootstrapClient.register {
-        SlowBootstrapClient(probe: probe)
-    }
+    let container = makeIsolatedContainer(
+        bootstrapClient: SlowBootstrapClient(probe: probe)
+    )
+    let store = AppStoreFactory.make(container: container)
 
-    let store = AppStoreFactory.make()
     store.dispatch(.lifecycle(.appLaunched))
     store.dispatch(.lifecycle(.appLaunched))
 
-    try? await Task.sleep(nanoseconds: 20_000_000)
+    try? await Task.sleep(nanoseconds: 40_000_000)
     #expect(store.state.bootstrapStatus == .loading)
     #expect(await probe.loadCount == 1)
 }

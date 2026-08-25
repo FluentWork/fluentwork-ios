@@ -33,6 +33,8 @@ public struct AppState: Equatable, Sendable, State {
     public var auth: AuthState
     public var speakingRoom: SpeakingRoomState
     public var workspace: WorkspaceState
+    public var network: NetworkConnectivityState
+    public var navigation: AppNavigationState
 
     public init(
         bootstrapStatus: BootstrapStatus = .idle,
@@ -40,7 +42,9 @@ public struct AppState: Equatable, Sendable, State {
         featureFlags: FeatureFlagsState = FeatureFlagsState(),
         auth: AuthState = AuthState(),
         speakingRoom: SpeakingRoomState = SpeakingRoomState(),
-        workspace: WorkspaceState = WorkspaceState()
+        workspace: WorkspaceState = WorkspaceState(),
+        network: NetworkConnectivityState = NetworkConnectivityState(),
+        navigation: AppNavigationState = AppNavigationState()
     ) {
         self.bootstrapStatus = bootstrapStatus
         self.lastErrorMessage = lastErrorMessage
@@ -48,6 +52,8 @@ public struct AppState: Equatable, Sendable, State {
         self.auth = auth
         self.speakingRoom = speakingRoom
         self.workspace = workspace
+        self.network = network
+        self.navigation = navigation
     }
 
     public static let initial = AppState()
@@ -66,4 +72,6 @@ public enum AppAction: Equatable, Sendable, Action {
     case auth(AuthAction)
     case speakingRoom(SpeakingRoomAction)
     case workspace(WorkspaceAction)
+    case network(NetworkConnectivityAction)
+    case navigation(AppNavigationAction)
 }

@@ -1,0 +1,51 @@
+import Foundation
+
+public enum AppEnvironmentKind: String, Sendable, Equatable {
+    case development
+    case local
+    case production
+}
+
+public struct AppEnvironment: Equatable, Sendable {
+    public var kind: AppEnvironmentKind
+    public var apiBaseURL: URL
+    public var wssBaseURL: URL
+    public var minimumLogLevelIsDebug: Bool
+
+    public init(
+        kind: AppEnvironmentKind,
+        apiBaseURL: URL,
+        wssBaseURL: URL,
+        minimumLogLevelIsDebug: Bool
+    ) {
+        self.kind = kind
+        self.apiBaseURL = apiBaseURL
+        self.wssBaseURL = wssBaseURL
+        self.minimumLogLevelIsDebug = minimumLogLevelIsDebug
+    }
+
+    public static let development = AppEnvironment(
+        kind: .development,
+        apiBaseURL: URL(string: "https://dev-api.fluentwork.local")!,
+        wssBaseURL: URL(string: "wss://dev-api.fluentwork.local")!,
+        minimumLogLevelIsDebug: true
+    )
+
+    public static let local = AppEnvironment(
+        kind: .local,
+        apiBaseURL: URL(string: "http://127.0.0.1:8080")!,
+        wssBaseURL: URL(string: "ws://127.0.0.1:8080")!,
+        minimumLogLevelIsDebug: true
+    )
+
+    #if DEBUG
+    public static let current: AppEnvironment = .local
+    #else
+    public static let current: AppEnvironment = AppEnvironment(
+        kind: .production,
+        apiBaseURL: URL(string: "https://api.fluentwork.app")!,
+        wssBaseURL: URL(string: "wss://api.fluentwork.app")!,
+        minimumLogLevelIsDebug: false
+    )
+    #endif
+}

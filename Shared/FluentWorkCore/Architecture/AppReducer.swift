@@ -39,6 +39,24 @@ public let appReducer: Reducer<AppState, AppAction> = combineReducers(
             return action
         }
     ),
+    pullback(
+        networkConnectivityReducer,
+        state: \.network,
+        action: AppAction.network,
+        extract: {
+            guard case let .network(action) = $0 else { return nil }
+            return action
+        }
+    ),
+    pullback(
+        appNavigationReducer,
+        state: \.navigation,
+        action: AppAction.navigation,
+        extract: {
+            guard case let .navigation(action) = $0 else { return nil }
+            return action
+        }
+    ),
     appCrossCuttingReducer
 )
 

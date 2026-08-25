@@ -1,5 +1,5 @@
 {
-  "originHash" : "e689d58bd2d8fe28a345fec57be97a9c91caec3f7c02b8e537ab95c032b149f9",
+  "originHash" : "5239595a06443d219854986262b74e43561a10bc738f91fd45e6bd9ead5ad7d2",
   "pins" : [
     {
       "identity" : "alamofire",
@@ -22,28 +22,28 @@
     {
       "identity" : "moya",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Moya/Moya.git",
+      "location" : "https://github.com/tangzzz-fan/Moya.git",
       "state" : {
-        "revision" : "c263811c1f3dbf002be9bd83107f7cdc38992b26",
-        "version" : "15.0.3"
+        "branch" : "master",
+        "revision" : "e340f5df1be89da50d9520f5c8a1ecdf7c901795"
       }
     },
     {
-      "identity" : "reactiveswift",
+      "identity" : "tgfeatureflag",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ReactiveCocoa/ReactiveSwift.git",
+      "location" : "https://github.com/tangzzz-fan/TGFeatureFlag.git",
       "state" : {
-        "revision" : "c43bae3dac73fdd3cb906bd5a1914686ca71ed3c",
-        "version" : "6.7.0"
+        "revision" : "d1c474aa8ea75475e35925c1e448612ecf0fab7a",
+        "version" : "0.5.0"
       }
     },
     {
-      "identity" : "rxswift",
+      "identity" : "tgnavigationstack",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ReactiveX/RxSwift.git",
+      "location" : "https://github.com/tangzzz-fan/TGNavigationStack.git",
       "state" : {
-        "revision" : "132aea4f236ccadc51590b38af0357a331d51fa2",
-        "version" : "6.10.2"
+        "revision" : "af3d90f7e40f360a6e2fabf00d4b787073c5236a",
+        "version" : "1.1.0"
       }
     },
     {

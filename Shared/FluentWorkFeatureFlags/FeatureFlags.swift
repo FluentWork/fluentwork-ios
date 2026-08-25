@@ -1,6 +1,7 @@
+import TGFeatureFlag
 import TGReduxKit
 
-public enum AppFeatureFlag: String, CaseIterable, Codable, Hashable, Sendable {
+public enum AppFeatureFlag: String, CaseIterable, Codable, Hashable, Sendable, FeatureFlagKey {
     case speakingRoom
     case workspaceReview
     case degradedTextMode
@@ -9,8 +10,17 @@ public enum AppFeatureFlag: String, CaseIterable, Codable, Hashable, Sendable {
     case corpus
     case topicSuggestions
     case pronunciationReview
+
+    public var defaultValue: FeatureFlagValue {
+        .bool(false)
+    }
+
+    public var description: String {
+        rawValue
+    }
 }
 
+/// Domain snapshot used by Redux `FeatureFlagsState` (Store is SoT).
 public struct FeatureFlagSnapshot: Equatable, Sendable {
     public var enabledFlags: Set<AppFeatureFlag>
 
@@ -88,5 +98,30 @@ public let featureFlagsReducer: Reducer<FeatureFlagsState, FeatureFlagsAction> =
 
     case .clearLocalOverrides:
         state.localOverrides.removeAll()
+    }
+}
+
+/// Maps a cold TGFeatureFlag snapshot into the Redux domain snapshot.
+public enum FeatureFlagSnapshotMapper {
+    public static func map(_ remote: TGFeatureFlag.FeatureFlagSnapshot) -> FeatureFlagSnapshot {
+        var enabledFlags = Set<AppFeatureFlag>()
+        for flag in AppFeatureFlag.allCases where remote.isEnabled(flag) {
+            enabledFlags.insert(flag)
+        }
+        return FeatureFlagSnapshot(enabledFlags: enabledFlags)
+    }
+}
+
+/// Builds a resolver seeded with first-wave local defaults (Debug can override later).
+public enum FeatureFlagResolverFactory {
+    public static func makeFirstWaveResolver() -> FeatureFlagResolver {
+        let resolver = FeatureFlagResolver()
+        let enabled = FeatureFlagSnapshot.firstWave.enabledFlags.map { $0 as any FeatureFlagKey }
+        resolver.register(provider: DebugProvider(), priority: .highest)
+        resolver.register(
+            provider: LocalProvider(enabledFeatures: enabled),
+            priority: .lowest
+        )
+        return resolver
     }
 }
