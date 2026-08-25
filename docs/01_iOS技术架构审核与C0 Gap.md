@@ -41,7 +41,7 @@
 1. `AudioEngineProtocol` 正式接口文件
 2. `SpeechSession` 正式状态机接口文件
 3. 基于 Moya 的真实 API target 定义
-4. `SocketTransport` 正式实现
+4. ~~`SocketTransport` 正式实现~~（I3 已落帧编解码 / 丢帧 / URLSession 传输）
 5. 说的房间 UI 与 feature 组装
 
 ---

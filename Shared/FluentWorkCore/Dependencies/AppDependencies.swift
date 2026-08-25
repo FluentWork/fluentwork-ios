@@ -10,11 +10,6 @@ public protocol BootstrapClientProtocol: Sendable {
     func loadBootstrap() async throws -> BootstrapSnapshot
 }
 
-public protocol SocketTransportProtocol: Sendable {
-    func connect(sessionID: String, ticket: String) async throws
-    func disconnect() async
-}
-
 public protocol AudioEngineProtocol: Sendable {
     func startCapture() async throws
     func stopCapture() async
@@ -73,14 +68,6 @@ public struct DefaultNetworkPluginFactory: NetworkPluginFactoryProtocol {
     }
 }
 
-public final class PlaceholderSocketTransport: SocketTransportProtocol, Sendable {
-    public init() {}
-
-    public func connect(sessionID: String, ticket: String) async throws {}
-
-    public func disconnect() async {}
-}
-
 public final class PlaceholderAudioEngine: AudioEngineProtocol, Sendable {
     public init() {}
 
@@ -111,7 +98,8 @@ public extension Container {
     }
 
     var socketTransport: Factory<SocketTransportProtocol> {
-        self { PlaceholderSocketTransport() }.singleton
+        // Factory erase-to-protocol; actor is created once per container scope.
+        self { URLSessionSocketTransport() as SocketTransportProtocol }.singleton
     }
 
     var networkPluginFactory: Factory<NetworkPluginFactoryProtocol> {
