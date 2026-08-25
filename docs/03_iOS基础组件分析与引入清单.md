@@ -90,7 +90,7 @@ Logger → API 错误归一化 → 网络监测 → 安全存储 → 时间/UUID
 ## 五、本批明确不做
 
 1. 说的房间 / 回顾页正式 UI（I5 / I6）  
-2. `SocketTransport` / `APIClient` 正式实现（I3 / I4）  
+2. `APIClient` 正式实现（I4）；`SocketTransport` 已在 I3 落地  
 3. 真实埋点上报、Pulse、SwiftData、快照测试基建  
 4. 把 `@Observable FeatureFlagService` 当业务真源（本仓只用 Resolver → `applyRemoteSnapshot`）  
 
