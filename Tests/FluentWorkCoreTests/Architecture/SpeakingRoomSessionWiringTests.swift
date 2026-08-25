@@ -39,7 +39,7 @@ import TGReduxKitTesting
 
     store.send(.speakingRoom(.session(.socketReady)))
     try store.assert(equals: initial)
-    store.send(.speakingRoom(.session(.networkLost)))
+    store.send(.speakingRoom(.session(.networkDegraded)))
     try store.assert(equals: initial)
 }
 

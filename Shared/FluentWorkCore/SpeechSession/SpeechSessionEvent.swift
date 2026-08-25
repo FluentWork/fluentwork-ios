@@ -13,6 +13,9 @@ public enum SpeechSessionEvent: Equatable, Sendable {
     case vadSpeechEnd
     case holdEnd
     case aiFirstAudioChunk
+    /// Soft degrade (e.g. transport already left the voice path) → immediate `degradedText`.
+    case networkDegraded
+    /// Hard disconnect → 3s reconnect window; timeout → `degradedText` (§2.2).
     case networkLost
     case reconnectTimedOut
     case reconnectSucceeded
