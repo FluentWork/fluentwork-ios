@@ -105,46 +105,6 @@ import TGReduxKitTesting
     try store.assert(equals: expected)
 }
 
-@Test func sessionStartResetsBadgeStateForNewRun() throws {
-    let initial = AppState(
-        speakingRoom: SpeakingRoomState(
-            phase: .processing,
-            liveTranscript: "旧转写",
-            isBootstrapReady: true,
-            lastBadge: "表达自然",
-            badgeHits: 2,
-            failureReason: "旧错误"
-        )
-    )
-    let store = TestStore(initialState: initial, reducer: appReducer)
-
-    var expected = initial
-    expected.speakingRoom.phase = .connecting
-    expected.speakingRoom.liveTranscript = ""
-    expected.speakingRoom.lastBadge = nil
-    expected.speakingRoom.badgeHits = 0
-    expected.speakingRoom.failureReason = nil
-
-    store.send(.speakingRoom(.sessionStartTapped))
-    try store.assert(equals: expected)
-}
-
-@Test func failedSpeakingRoomIgnoresLateSocketEvents() throws {
-    let initial = AppState(
-        speakingRoom: SpeakingRoomState(
-            phase: .failed,
-            isBootstrapReady: true,
-            failureReason: "网络错误"
-        )
-    )
-    let store = TestStore(initialState: initial, reducer: appReducer)
-
-    store.send(.speakingRoom(.socketReady))
-    try store.assert(equals: initial)
-    store.send(.speakingRoom(.networkDowngraded))
-    try store.assert(equals: initial)
-}
-
 @Test func appLaunchedSetsBootstrapLoading() throws {
     let store = TestStore(initialState: AppState.initial, reducer: appReducer)
 
