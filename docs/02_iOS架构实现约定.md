@@ -272,9 +272,9 @@
 
 ## 十、Swift 6 并发与 TGReduxKit
 
-### 1. 库侧契约（5.0.0）
+### 1. 库侧契约（5.0）
 
-`TGReduxKit` `5.0` 定稿为「纯 Reducer + Middleware→Effect」：
+`TGReduxKit` `5.0` 定稿为「纯 Reducer + Middleware→Effect」（本仓以 `from: "5.0.1"` 跟随 5.x 补丁演进）：
 
 1. `Reducer` 是 `@Sendable (inout State, Action) -> Void`，不返回副作用
 2. `Middleware` 返回声明式 `Effect`；由 root `Store` 解释执行与取消

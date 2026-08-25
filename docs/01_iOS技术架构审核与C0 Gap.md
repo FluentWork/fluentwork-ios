@@ -58,7 +58,7 @@
 
 对照技术设计文档第八章 `C0`，本轮已经补齐的关键项有：
 
-1. **TGReduxKit（exact 5.0.0）接入**
+1. **TGReduxKit（`from: "5.0.1"`，跟随 5.x 演进）接入**
 2. **Factory（exact 3.3.2）接入**
 3. **Moya（exact 15.0.3）网络实现落点**
 4. **Feature Flag 独立模块**

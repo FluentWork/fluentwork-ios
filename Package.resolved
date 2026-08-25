@@ -1,5 +1,5 @@
 {
-  "originHash" : "9a43add10629f46e3c4554484111dde38634e265540acb4b52822ad8fbc05c50",
+  "originHash" : "e689d58bd2d8fe28a345fec57be97a9c91caec3f7c02b8e537ab95c032b149f9",
   "pins" : [
     {
       "identity" : "alamofire",
@@ -51,8 +51,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/tangzzz-fan/TGReduxKit.git",
       "state" : {
-        "revision" : "eac67412bb491d8545347fc2911e328bec685947",
-        "version" : "5.0.0"
+        "revision" : "4201637c430fdc67a02c6fb8404900021b06d351",
+        "version" : "5.0.1"
       }
     }
   ],
