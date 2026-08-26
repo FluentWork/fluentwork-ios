@@ -19,6 +19,8 @@ public protocol AudioEngineProtocol: Sendable {
 public protocol SpeechSessionClientProtocol: Sendable {
     func startSession() async throws
     func submitTranscript(_ text: String) async
+    func sendDegradedTextMessage(_ text: String) async throws
+    func endSession() async
 }
 
 public protocol NetworkPluginFactoryProtocol: Sendable {
@@ -84,6 +86,10 @@ public final class PlaceholderSpeechSessionClient: SpeechSessionClientProtocol, 
     public func startSession() async throws {}
 
     public func submitTranscript(_ text: String) async {}
+
+    public func sendDegradedTextMessage(_ text: String) async throws {}
+
+    public func endSession() async {}
 }
 
 public extension Container {
@@ -110,6 +116,24 @@ public extension Container {
         self { self.networkPluginFactory().makeNetworkClient() }.singleton
     }
 
+    var sessionAPIClient: Factory<SessionAPIClientProtocol> {
+        self {
+            SessionAPIClient(
+                network: self.networkClient(),
+                baseURL: self.appEnvironment().apiBaseURL
+            )
+        }.singleton
+    }
+
+    var authTokenStore: Factory<AuthTokenStoreProtocol> {
+        self {
+            SecureAuthTokenStore(
+                storage: self.secureStorage(),
+                idGenerator: self.idGenerator()
+            )
+        }.singleton
+    }
+
     var networkMonitor: Factory<NetworkMonitorProtocol> {
         self { NWPathNetworkMonitor() }.singleton
     }
@@ -119,7 +143,13 @@ public extension Container {
     }
 
     var speechSessionClient: Factory<SpeechSessionClientProtocol> {
-        self { PlaceholderSpeechSessionClient() }.shared
+        self {
+            DefaultSpeechSessionClient(
+                api: self.sessionAPIClient(),
+                tokens: self.authTokenStore(),
+                transport: self.socketTransport()
+            )
+        }.shared
     }
 
     var featurePluginRegistry: Factory<FeaturePluginRegistryProtocol> {

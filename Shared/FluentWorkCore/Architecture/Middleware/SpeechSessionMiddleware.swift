@@ -73,12 +73,18 @@ private func interpretSpeechSessionSideEffect(
 
     case .endSession:
         return .fireAndForget {
-            // Session teardown is completed once I4 wires real session APIs.
+            await speechClient.endSession()
         }
 
     case .sendTextMessage:
-        return .fireAndForget {
-            // Degraded-text POST /messages lands with I4.
+        return .task {
+            do {
+                // Text body is owned by UI later; keep wiring with empty payload for now.
+                try await speechClient.sendDegradedTextMessage("")
+                return nil
+            } catch {
+                return .speakingRoom(.session(.failed(error.localizedDescription)))
+            }
         }
 
     case let .trackTransition(from, to):
