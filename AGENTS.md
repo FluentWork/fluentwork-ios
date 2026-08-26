@@ -29,7 +29,7 @@ Shared topics:
 1. Read current iOS and product docs before editing.
 2. Keep changes scoped to the active module.
 3. Do not bypass review, CI, or owner approval requirements.
-4. Before each commit, local OpenCodeReview must pass: fix any `high` / `critical` findings (see `Scripts/ocr-local-review.sh`); `medium` / `low` may remain as follow-ups.
+4. Before opening or merging a PR, run **gstack `/review`** on the branch diff; fix must-fix findings (see `fluentwork-meta/agents/shared/review-gate.md`).
 5. Do not perform destructive git operations without explicit approval.
 6. Call out any impact on state, audio, or release behavior.
 
@@ -42,10 +42,10 @@ Shared topics:
 
 ## Local Review Gate
 
-1. One-time per clone: `./Scripts/setup-git-hooks.sh` (sets `core.hooksPath=.githooks`).
-2. Pre-commit runs `Scripts/ocr-local-review.sh` (OCR CLI + `ocr-fail-on-high.sh`).
-3. Emergency bypass only: `SKIP_OCR=1`, and justify in the commit/PR body.
-4. Optional archive: `./Scripts/ocr-export-review.sh` after a review.
+1. Preferred: **gstack `/review`** (Cursor skill) before PR open/merge.
+2. OpenCodeReview pre-commit gate is **paused** (`Scripts/ocr-local-review.sh` exits 0 with a reminder).
+3. Optional one-time hooks: `./Scripts/setup-git-hooks.sh` (sets `core.hooksPath=.githooks`).
+4. Optional manual OCR only: `FORCE_OCR=1 ./Scripts/ocr-local-review.sh`.
 
 ## CI Boundary
 
