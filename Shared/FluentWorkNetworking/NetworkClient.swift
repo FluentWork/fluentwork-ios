@@ -8,7 +8,7 @@ public protocol NetworkClientProtocol: Sendable {
 }
 
 /// Normalized API / transport errors for FluentWork networking.
-public enum APIError: Error, Equatable, Sendable {
+public enum APIError: Error, Equatable, Sendable, LocalizedError {
     case network(description: String)
     case decoding(description: String)
     case backend(code: String, message: String)
@@ -18,6 +18,17 @@ public enum APIError: Error, Equatable, Sendable {
     /// User-facing copy placeholder (filled with C10 empty/error catalog).
     public var userFacingMessage: String? {
         nil
+    }
+
+    public var errorDescription: String? {
+        switch self {
+        case let .network(description), let .decoding(description), let .unknown(description):
+            return description
+        case let .backend(_, message):
+            return message
+        case .cancelled:
+            return "Cancelled"
+        }
     }
 }
 
@@ -54,7 +65,11 @@ public final class MoyaNetworkClient: @unchecked Sendable, NetworkClientProtocol
                 let cancellable = provider.request(MultiTarget(target)) { result in
                     switch result {
                     case let .success(response):
-                        continuation.resume(returning: response.data)
+                        do {
+                            continuation.resume(returning: try Self.validate(response))
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
 
                     case let .failure(error):
                         continuation.resume(throwing: Self.mapMoyaError(error))
@@ -66,6 +81,27 @@ public final class MoyaNetworkClient: @unchecked Sendable, NetworkClientProtocol
         } onCancel: {
             cancellationBox.cancel()
         }
+    }
+
+    private static func validate(_ response: Response) throws -> Data {
+        guard (200..<300).contains(response.statusCode) else {
+            throw mapHTTPError(response)
+        }
+        return response.data
+    }
+
+    public static func mapHTTPError(statusCode: Int, data: Data) -> APIError {
+        if let body = try? JSONDecoder().decode(APIErrorBody.self, from: data) {
+            return .backend(code: body.code, message: body.message)
+        }
+        return .backend(
+            code: "http_\(statusCode)",
+            message: HTTPURLResponse.localizedString(forStatusCode: statusCode)
+        )
+    }
+
+    private static func mapHTTPError(_ response: Response) -> APIError {
+        mapHTTPError(statusCode: response.statusCode, data: response.data)
     }
 
     private static func mapMoyaError(_ error: MoyaError) -> APIError {
@@ -80,10 +116,7 @@ public final class MoyaNetworkClient: @unchecked Sendable, NetworkClientProtocol
             return .decoding(description: error.localizedDescription)
 
         case .statusCode(let response):
-            return .backend(
-                code: "http_\(response.statusCode)",
-                message: HTTPURLResponse.localizedString(forStatusCode: response.statusCode)
-            )
+            return mapHTTPError(response)
 
         default:
             return .unknown(description: error.localizedDescription)
