@@ -80,7 +80,7 @@ private func interpretSpeechSessionSideEffect(
         return .task {
             do {
                 // Text body is owned by UI later; keep wiring with empty payload for now.
-                try await speechClient.sendDegradedTextMessage("")
+                _ = try await speechClient.sendDegradedTextMessage("")
                 return nil
             } catch {
                 return .speakingRoom(.session(.failed(error.localizedDescription)))
