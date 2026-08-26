@@ -26,14 +26,14 @@ public struct AppEnvironment: Equatable, Sendable {
 
     public static let development = AppEnvironment(
         kind: .development,
-        apiBaseURL: URL(string: "https://dev-api.fluentwork.local")!,
+        apiBaseURL: URL(string: "https://dev-api.fluentwork.local/api/v1")!,
         wssBaseURL: URL(string: "wss://dev-api.fluentwork.local")!,
         minimumLogLevelIsDebug: true
     )
 
     public static let local = AppEnvironment(
         kind: .local,
-        apiBaseURL: URL(string: "http://127.0.0.1:8080")!,
+        apiBaseURL: URL(string: "http://127.0.0.1:8080/api/v1")!,
         wssBaseURL: URL(string: "ws://127.0.0.1:8080")!,
         minimumLogLevelIsDebug: true
     )
@@ -43,7 +43,7 @@ public struct AppEnvironment: Equatable, Sendable {
     #else
     public static let current: AppEnvironment = AppEnvironment(
         kind: .production,
-        apiBaseURL: URL(string: "https://api.fluentwork.app")!,
+        apiBaseURL: URL(string: "https://api.fluentwork.app/api/v1")!,
         wssBaseURL: URL(string: "wss://api.fluentwork.app")!,
         minimumLogLevelIsDebug: false
     )
