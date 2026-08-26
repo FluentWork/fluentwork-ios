@@ -11,8 +11,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
         sceneType: String? = nil
     )
     case getSessionReview(sessionID: String, accessToken: String)
-    /// Wiring point until backend B7 / OpenAPI documents `POST /sessions/{id}/messages`.
-    case sendSessionMessage(sessionID: String, accessToken: String, text: String)
+    case sendSessionMessage(sessionID: String, accessToken: String, text: String, channel: String = "text")
 
     public var baseURL: URL {
         // Overridden by SessionAPIClient via AbsoluteURL target wrapper — unused.
@@ -29,7 +28,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
             return "/sessions"
         case let .getSessionReview(sessionID, _):
             return "/sessions/\(sessionID)/review"
-        case let .sendSessionMessage(sessionID, _, _):
+        case let .sendSessionMessage(sessionID, _, _, _):
             return "/sessions/\(sessionID)/messages"
         }
     }
@@ -69,9 +68,9 @@ public enum FluentWorkAPI: FluentWorkTargetType {
             return .requestParameters(parameters: parameters, encoding: JSONEncoding.default)
         case .getSessionReview:
             return .requestPlain
-        case let .sendSessionMessage(_, _, text):
+        case let .sendSessionMessage(_, _, text, channel):
             return .requestParameters(
-                parameters: ["text": text],
+                parameters: ["text": text, "channel": channel],
                 encoding: JSONEncoding.default
             )
         }
@@ -92,7 +91,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
         case let .mergeGuestAccount(_, token),
              let .createSession(token, _, _),
              let .getSessionReview(_, token),
-             let .sendSessionMessage(_, token, _):
+             let .sendSessionMessage(_, token, _, _):
             return token
         }
     }

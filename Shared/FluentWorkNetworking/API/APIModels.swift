@@ -165,3 +165,35 @@ public struct ReviewPollResponse: Codable, Equatable, Sendable {
         }
     }
 }
+
+public struct PostMessageRequest: Codable, Equatable, Sendable {
+    public var text: String
+    /// Must be `"text"` for degrade path; empty/other → backend CONFLICT while voice preferred.
+    public var channel: String
+
+    public init(text: String, channel: String = "text") {
+        self.text = text
+        self.channel = channel
+    }
+}
+
+public struct PostMessageResponse: Codable, Equatable, Sendable {
+    public var sessionID: String
+    public var reply: String
+    public var channel: String
+    public var generator: String
+
+    public init(sessionID: String, reply: String, channel: String, generator: String) {
+        self.sessionID = sessionID
+        self.reply = reply
+        self.channel = channel
+        self.generator = generator
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case sessionID = "session_id"
+        case reply
+        case channel
+        case generator
+    }
+}
