@@ -45,7 +45,11 @@ Scripts/
 - snapshot tests
 - simulator smoke run
 - agent entry file validation
+<<<<<<< Updated upstream
 - local OpenCodeReview pre-commit gate: `high`/`critical` findings fail the commit; `medium`/`low` do not
+=======
+- pre-commit gstack `/review` attestation (`GSTACK_REVIEWED=1`); CI does not run code review
+>>>>>>> Stashed changes
 
 ## Upstream Source of Truth
 
@@ -61,15 +65,28 @@ This repository currently includes:
 - `Package.swift`
 - `.github/workflows/agent-config-check.yml`
 - `.github/workflows/ios-ci.yml`
+<<<<<<< Updated upstream
 - `.githooks/pre-commit` + `Scripts/setup-git-hooks.sh` (local OCR gate)
+=======
+- `.githooks/pre-commit` + `Scripts/setup-git-hooks.sh` + `Scripts/gstack-review-gate.sh`
+>>>>>>> Stashed changes
 - executable Swift package baseline
 - initial directory skeleton
 
 ## Agent Tooling
 
+<<<<<<< Updated upstream
 - `gstack` can be used locally for deeper `/review`, `/qa`, and later release-oriented workflows
 - OpenCodeReview CLI (`ocr`) is the **commit gate**: enable hooks once with `./Scripts/setup-git-hooks.sh`
 - pre-commit runs `./Scripts/ocr-local-review.sh` (uses `.opencodereview/rule.json` + `ocr-fail-on-high.sh`)
 - after a review, optionally run `./Scripts/ocr-export-review.sh` to save findings under `.opencodereview/reviews/` (see `latest.md`)
 - Matt Pocock style skills may be used as helpers under FluentWork shared governance
 - GitHub CI no longer runs OpenCodeReview; keep review local before commit
+=======
+- **gstack `/review`** before commit, then `GSTACK_REVIEWED=1 git commit ...`
+- emergency bypass: `SKIP_GSTACK_REVIEW=1` (justify in commit/PR)
+- `gstack` `/qa` and later release-oriented workflows remain available
+- OCR scripts optional/manual only; not part of default pre-commit
+- Matt Pocock style skills may be used as helpers under FluentWork shared governance
+- GitHub CI does not run code review
+>>>>>>> Stashed changes

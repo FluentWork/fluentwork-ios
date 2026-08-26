@@ -42,11 +42,19 @@ Shared topics:
 
 ## Local Review Gate
 
+<<<<<<< Updated upstream
 1. One-time per clone: `./Scripts/setup-git-hooks.sh` (sets `core.hooksPath=.githooks`).
 2. Pre-commit runs `Scripts/ocr-local-review.sh` (OCR CLI + `ocr-fail-on-high.sh`).
 3. Emergency bypass only: `SKIP_OCR=1`, and justify in the commit/PR body.
 4. Optional archive: `./Scripts/ocr-export-review.sh` after a review.
+=======
+1. Required before commit: run **gstack `/review`**, then `GSTACK_REVIEWED=1 git commit ...`.
+2. pre-commit → `Scripts/gstack-review-gate.sh` (attestation; skill cannot run in bash).
+3. One-time hooks: `./Scripts/setup-git-hooks.sh` (sets `core.hooksPath=.githooks`).
+4. Emergency bypass: `SKIP_GSTACK_REVIEW=1` (justify in commit/PR body).
+5. OCR scripts are optional/manual only; not part of the default gate.
+>>>>>>> Stashed changes
 
 ## CI Boundary
 
-CI validates build, tests, and configuration. CI does not run OpenCodeReview or a full interactive skills runtime.
+CI validates build, tests, and configuration. CI does not run code review or a full interactive skills runtime.
