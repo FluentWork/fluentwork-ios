@@ -43,12 +43,6 @@ This file only adds iOS-specific constraints.
 
 ## Tooling Integrations
 
-<<<<<<< Updated upstream
-1. `gstack` may be used locally for review and QA assistance.
-2. Matt Pocock style skills may be used as helpers under FluentWork shared policy.
-3. Local OpenCodeReview runs on pre-commit (`Scripts/ocr-local-review.sh`): any `high`/`critical` finding blocks the commit until fixed; no `high`/`critical` means the commit may proceed (see `fluentwork-meta/agents/shared/review-gate.md`).
-=======
 1. **gstack `/review`** is required before commit; pre-commit expects `GSTACK_REVIEWED=1` (see `fluentwork-meta/agents/shared/review-gate.md`).
 2. Matt Pocock style skills may be used as helpers under FluentWork shared policy.
 3. CI does not run code review. OCR scripts are optional/manual only.
->>>>>>> Stashed changes
