@@ -11,8 +11,13 @@ public protocol SessionAPIClientProtocol: Sendable {
         sceneType: String?
     ) async throws -> CreateSessionResponse
     func getSessionReview(sessionID: String, accessToken: String) async throws -> ReviewPollResponse
-    /// Text-degrade wiring point; throws until backend B7 lands.
-    func sendSessionMessage(sessionID: String, accessToken: String, text: String) async throws
+    /// Degraded-text path: `POST /sessions/{id}/messages` with `channel: text` (B7).
+    func sendSessionMessage(
+        sessionID: String,
+        accessToken: String,
+        text: String,
+        channel: String
+    ) async throws -> PostMessageResponse
 }
 
 public final class SessionAPIClient: SessionAPIClientProtocol, Sendable {
@@ -66,15 +71,17 @@ public final class SessionAPIClient: SessionAPIClientProtocol, Sendable {
     public func sendSessionMessage(
         sessionID: String,
         accessToken: String,
-        text: String
-    ) async throws {
-        // Endpoint not in OpenAPI yet (B7). Keep the call site wired and fail closed.
-        _ = sessionID
-        _ = accessToken
-        _ = text
-        throw APIError.backend(
-            code: "messages_not_implemented",
-            message: "POST /sessions/{id}/messages is not available until backend B7."
+        text: String,
+        channel: String = "text"
+    ) async throws -> PostMessageResponse {
+        try await decode(
+            PostMessageResponse.self,
+            .sendSessionMessage(
+                sessionID: sessionID,
+                accessToken: accessToken,
+                text: text,
+                channel: channel
+            )
         )
     }
 

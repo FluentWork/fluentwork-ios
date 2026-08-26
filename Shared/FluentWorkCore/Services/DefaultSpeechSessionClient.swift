@@ -66,13 +66,14 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         try? await transport.send(control: .interrupt)
     }
 
-    public func sendDegradedTextMessage(_ text: String) async throws {
+    public func sendDegradedTextMessage(_ text: String) async throws -> PostMessageResponse {
         let accessToken = try await requireAccessToken()
         let sessionID = try requireActiveSessionID()
-        try await api.sendSessionMessage(
+        return try await api.sendSessionMessage(
             sessionID: sessionID,
             accessToken: accessToken,
-            text: text
+            text: text,
+            channel: "text"
         )
     }
 

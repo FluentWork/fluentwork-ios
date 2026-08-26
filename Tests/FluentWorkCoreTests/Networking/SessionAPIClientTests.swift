@@ -78,22 +78,35 @@ import Testing
     #expect(poll.sessionID == "s-1")
 }
 
-@Test func sessionAPIClientMessagesEndpointIsWiredButUnavailable() async {
+@Test func sessionAPIClientPostsDegradedTextMessage() async throws {
+    let replyJSON = Data(
+        """
+        {"session_id":"s-1","reply":"stub hi","channel":"text","generator":"stub-text-v1"}
+        """.utf8
+    )
     let client = SessionAPIClient(
-        network: StubNetworkClient { _ in Data() },
+        network: StubNetworkClient { target in
+            #expect(target.path == "/sessions/s-1/messages")
+            #expect(target.headers?["Authorization"] == "Bearer t")
+            if case let .requestParameters(parameters, _) = target.task {
+                #expect(parameters["text"] as? String == "hi")
+                #expect(parameters["channel"] as? String == "text")
+            } else {
+                Issue.record("expected JSON body parameters")
+            }
+            return replyJSON
+        },
         baseURL: URL(string: "http://127.0.0.1:8080/api/v1")!
     )
-    do {
-        try await client.sendSessionMessage(sessionID: "s-1", accessToken: "t", text: "hi")
-        Issue.record("expected messages_not_implemented")
-    } catch let error as APIError {
-        #expect(error == .backend(
-            code: "messages_not_implemented",
-            message: "POST /sessions/{id}/messages is not available until backend B7."
-        ))
-    } catch {
-        Issue.record("unexpected error \(error)")
-    }
+    let reply = try await client.sendSessionMessage(
+        sessionID: "s-1",
+        accessToken: "t",
+        text: "hi",
+        channel: "text"
+    )
+    #expect(reply.reply == "stub hi")
+    #expect(reply.generator == "stub-text-v1")
+    #expect(reply.channel == "text")
 }
 
 @Test func sessionAPIClientMergesGuestAccount() async throws {
