@@ -37,6 +37,14 @@ Scripts/
 - shared agent policy comes from `fluentwork-meta`
 - external helpers such as gstack and Matt Pocock style skills are allowed, but repo rules win on conflicts
 
+## First-wave simulator smoke
+
+```bash
+./Scripts/smoke-iphone17pro.sh
+```
+
+Boots `iPhone 17 Pro`, builds/launches `FluentWorkHost`, and runs launch → bootstrap → speaking-room/review navigation tests. See `docs/06_第一波iPhone17Pro_Smoke_Runbook.md`.
+
 ## CI Goals
 
 - build validation
