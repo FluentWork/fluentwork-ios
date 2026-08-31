@@ -43,6 +43,6 @@ This file only adds iOS-specific constraints.
 
 ## Tooling Integrations
 
-1. **gstack `/review`** is required before commit; pre-commit expects `GSTACK_REVIEWED=1` (see `fluentwork-meta/agents/shared/review-gate.md`).
+1. The interactive gstack review skill is required before commit. In this environment the correct manual invocation is usually **`/review`**; if skill prefixes are enabled, use **`/gstack-review`**. pre-commit expects `GSTACK_REVIEWED=1` (see `fluentwork-meta/agents/shared/review-gate.md`).
 2. Matt Pocock style skills may be used as helpers under FluentWork shared policy.
 3. CI does not run code review. OCR scripts are optional/manual only.
