@@ -12,6 +12,32 @@ public enum FluentWorkAPI: FluentWorkTargetType {
     )
     case getSessionReview(sessionID: String, accessToken: String)
     case sendSessionMessage(sessionID: String, accessToken: String, text: String, channel: String = "text")
+    case listCorpusBlocks(
+        accessToken: String,
+        scene: String? = nil,
+        function: String? = nil,
+        keyword: String? = nil,
+        cursor: String? = nil,
+        limit: Int? = nil,
+        favoriteOnly: Bool = false
+    )
+    case batchAcceptCorpusBlocks(
+        accessToken: String,
+        sourceSessionID: String,
+        blocks: [CorpusBatchAcceptBlockRequest]
+    )
+    case updateCorpusBlock(
+        accessToken: String,
+        blockID: String,
+        request: UpdateCorpusBlockRequest
+    )
+    case deleteCorpusBlock(accessToken: String, blockID: String)
+    case favoriteCorpusBlock(
+        accessToken: String,
+        blockID: String,
+        isFavorite: Bool,
+        pinned: Bool
+    )
 
     public var baseURL: URL {
         // Overridden by SessionAPIClient via AbsoluteURL target wrapper — unused.
@@ -30,14 +56,32 @@ public enum FluentWorkAPI: FluentWorkTargetType {
             return "/sessions/\(sessionID)/review"
         case let .sendSessionMessage(sessionID, _, _, _):
             return "/sessions/\(sessionID)/messages"
+        case .listCorpusBlocks:
+            return "/corpus/blocks"
+        case .batchAcceptCorpusBlocks:
+            return "/corpus/blocks/batch-accept"
+        case let .updateCorpusBlock(_, blockID, _),
+             let .deleteCorpusBlock(_, blockID):
+            return "/corpus/blocks/\(blockID)"
+        case let .favoriteCorpusBlock(_, blockID, _, _):
+            return "/corpus/blocks/\(blockID)/favorite"
         }
     }
 
     public var method: Moya.Method {
         switch self {
-        case .getSessionReview:
+        case .getSessionReview, .listCorpusBlocks:
             return .get
-        case .issueGuest, .mergeGuestAccount, .createSession, .sendSessionMessage:
+        case .deleteCorpusBlock:
+            return .delete
+        case .updateCorpusBlock:
+            return .put
+        case .issueGuest,
+             .mergeGuestAccount,
+             .createSession,
+             .sendSessionMessage,
+             .batchAcceptCorpusBlocks,
+             .favoriteCorpusBlock:
             return .post
         }
     }
@@ -73,6 +117,48 @@ public enum FluentWorkAPI: FluentWorkTargetType {
                 parameters: ["text": text, "channel": channel],
                 encoding: JSONEncoding.default
             )
+        case let .listCorpusBlocks(_, scene, function, keyword, cursor, limit, favoriteOnly):
+            var parameters: [String: Any] = [:]
+            if let scene, !scene.isEmpty {
+                parameters["scene"] = scene
+            }
+            if let function, !function.isEmpty {
+                parameters["func"] = function
+            }
+            if let keyword, !keyword.isEmpty {
+                parameters["kw"] = keyword
+            }
+            if let cursor, !cursor.isEmpty {
+                parameters["cursor"] = cursor
+            }
+            if let limit {
+                parameters["limit"] = limit
+            }
+            if favoriteOnly {
+                parameters["favorite_only"] = true
+            }
+            if parameters.isEmpty {
+                return .requestPlain
+            }
+            return .requestParameters(parameters: parameters, encoding: URLEncoding.queryString)
+        case let .batchAcceptCorpusBlocks(_, sourceSessionID, blocks):
+            return .requestJSONEncodable(
+                CorpusBatchAcceptRequest(
+                    sourceSessionID: sourceSessionID,
+                    blocks: blocks
+                )
+            )
+        case let .updateCorpusBlock(_, _, request):
+            return .requestJSONEncodable(request)
+        case .deleteCorpusBlock:
+            return .requestPlain
+        case let .favoriteCorpusBlock(_, _, isFavorite, pinned):
+            return .requestJSONEncodable(
+                FavoriteCorpusBlockRequest(
+                    isFavorite: isFavorite,
+                    pinned: pinned
+                )
+            )
         }
     }
 
@@ -91,7 +177,12 @@ public enum FluentWorkAPI: FluentWorkTargetType {
         case let .mergeGuestAccount(_, token),
              let .createSession(token, _, _),
              let .getSessionReview(_, token),
-             let .sendSessionMessage(_, token, _, _):
+             let .sendSessionMessage(_, token, _, _),
+             let .listCorpusBlocks(token, _, _, _, _, _, _),
+             let .batchAcceptCorpusBlocks(token, _, _),
+             let .updateCorpusBlock(token, _, _),
+             let .deleteCorpusBlock(token, _),
+             let .favoriteCorpusBlock(token, _, _, _):
             return token
         }
     }

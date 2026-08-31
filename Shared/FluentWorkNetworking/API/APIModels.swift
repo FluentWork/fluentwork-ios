@@ -349,3 +349,155 @@ public struct PostMessageResponse: Codable, Equatable, Sendable {
         case generator
     }
 }
+
+public struct PhraseBlock: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var intentZH: String
+    public var expressionEN: String
+    public var anchorUserSaid: String
+    public var sceneTag: String
+    public var functionTag: String
+    public var state: String
+    public var successStreak: Int
+    public var nextDueAt: String
+    public var easeFactor: Double
+    public var realUseCount: Int
+    public var isFavorite: Bool
+    public var pinnedAt: String?
+    public var sourceSessionID: String?
+    public var createdAt: String
+    public var updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case intentZH = "intent_zh"
+        case expressionEN = "expression_en"
+        case anchorUserSaid = "anchor_user_said"
+        case sceneTag = "scene_tag"
+        case functionTag = "function_tag"
+        case state
+        case successStreak = "success_streak"
+        case nextDueAt = "next_due_at"
+        case easeFactor = "ease_factor"
+        case realUseCount = "real_use_count"
+        case isFavorite = "is_favorite"
+        case pinnedAt = "pinned_at"
+        case sourceSessionID = "source_session_id"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+public struct ListPhraseBlocksResponse: Codable, Equatable, Sendable {
+    public var items: [PhraseBlock]
+    public var nextCursor: String?
+
+    enum CodingKeys: String, CodingKey {
+        case items
+        case nextCursor = "next_cursor"
+    }
+}
+
+public struct CorpusBatchAcceptBlockRequest: Codable, Equatable, Sendable {
+    public var intentZH: String
+    public var expressionEN: String
+    public var anchorUserSaid: String
+    public var sceneTag: String
+    public var functionTag: String
+
+    public init(
+        intentZH: String,
+        expressionEN: String,
+        anchorUserSaid: String,
+        sceneTag: String,
+        functionTag: String
+    ) {
+        self.intentZH = intentZH
+        self.expressionEN = expressionEN
+        self.anchorUserSaid = anchorUserSaid
+        self.sceneTag = sceneTag
+        self.functionTag = functionTag
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case intentZH = "intent_zh"
+        case expressionEN = "expression_en"
+        case anchorUserSaid = "anchor_user_said"
+        case sceneTag = "scene_tag"
+        case functionTag = "function_tag"
+    }
+}
+
+public struct CorpusBatchAcceptRequest: Codable, Equatable, Sendable {
+    public var sourceSessionID: String
+    public var blocks: [CorpusBatchAcceptBlockRequest]
+
+    public init(sourceSessionID: String, blocks: [CorpusBatchAcceptBlockRequest]) {
+        self.sourceSessionID = sourceSessionID
+        self.blocks = blocks
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case sourceSessionID = "source_session_id"
+        case blocks
+    }
+}
+
+public struct BatchAcceptBlocksResponse: Codable, Equatable, Sendable {
+    public var acceptedCount: Int
+    public var items: [PhraseBlock]
+
+    enum CodingKeys: String, CodingKey {
+        case acceptedCount = "accepted_count"
+        case items
+    }
+}
+
+public struct UpdateCorpusBlockRequest: Codable, Equatable, Sendable {
+    public var intentZH: String
+    public var expressionEN: String
+    public var anchorUserSaid: String
+    public var sceneTag: String
+    public var functionTag: String
+
+    public init(
+        intentZH: String,
+        expressionEN: String,
+        anchorUserSaid: String,
+        sceneTag: String,
+        functionTag: String
+    ) {
+        self.intentZH = intentZH
+        self.expressionEN = expressionEN
+        self.anchorUserSaid = anchorUserSaid
+        self.sceneTag = sceneTag
+        self.functionTag = functionTag
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case intentZH = "intent_zh"
+        case expressionEN = "expression_en"
+        case anchorUserSaid = "anchor_user_said"
+        case sceneTag = "scene_tag"
+        case functionTag = "function_tag"
+    }
+}
+
+public struct FavoriteCorpusBlockRequest: Codable, Equatable, Sendable {
+    public var isFavorite: Bool
+    public var pinned: Bool
+
+    public init(isFavorite: Bool, pinned: Bool) {
+        self.isFavorite = isFavorite
+        self.pinned = pinned
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case isFavorite = "is_favorite"
+        case pinned
+    }
+}
+
+public struct DeleteCorpusBlockResponse: Codable, Equatable, Sendable {
+    public var deleted: Bool
+}

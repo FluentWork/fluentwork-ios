@@ -55,6 +55,9 @@ struct HostRootView: View {
                     let targetSessionID = store.state.review.sessionID ?? sessionID
                     guard let targetSessionID, !targetSessionID.isEmpty else { return }
                     store.dispatch(.review(.loadRequested(sessionID: targetSessionID)))
+                },
+                onAcceptRefineCard: { cardID in
+                    store.dispatch(.review(.acceptRefineCardTapped(cardID: cardID)))
                 }
             )
         }
@@ -94,7 +97,9 @@ struct HostRootView: View {
                 id: $0.id,
                 intentZH: $0.intentZH,
                 expressionEN: $0.expressionEN,
-                anchorUserSaid: $0.anchorUserSaid
+                anchorUserSaid: $0.anchorUserSaid,
+                isAccepting: state.acceptingRefineCardIDs.contains($0.id),
+                isAccepted: state.acceptedRefineCardIDs.contains($0.id)
             )
         } ?? []
 
@@ -104,6 +109,7 @@ struct HostRootView: View {
             transcript: transcript,
             dualColumn: dualColumn,
             refineCards: refineCards,
+            refineErrorMessage: state.acceptErrorMessage,
             errorMessage: state.lastErrorMessage
         )
     }
