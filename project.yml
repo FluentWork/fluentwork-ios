@@ -33,3 +33,5 @@ targets:
     dependencies:
       - package: FluentWorkIOS
         product: FluentWorkCore
+      - package: FluentWorkIOS
+        product: FluentWorkUI
