@@ -180,6 +180,15 @@ public extension Container {
         }.singleton
     }
 
+    var dailyReadAPIClient: Factory<DailyReadAPIClientProtocol> {
+        self {
+            DailyReadAPIClient(
+                network: self.networkClient(),
+                baseURL: self.appEnvironment().apiBaseURL
+            )
+        }.singleton
+    }
+
     var authTokenStore: Factory<AuthTokenStoreProtocol> {
         self {
             SecureAuthTokenStore(
@@ -235,6 +244,25 @@ public extension Container {
                 sessionAPI: self.sessionAPIClient(),
                 tokens: self.authTokenStore()
             )
+        }.shared
+    }
+
+    var dailyReadClient: Factory<DailyReadClientProtocol> {
+        self {
+            DefaultDailyReadClient(
+                api: self.dailyReadAPIClient(),
+                sessionAPI: self.sessionAPIClient(),
+                tokens: self.authTokenStore()
+            )
+        }.shared
+    }
+
+    var dailyReadAudioPlayer: Factory<DailyReadAudioPlayerProtocol> {
+        self {
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                return StubDailyReadAudioPlayer()
+            }
+            return DailyReadAudioPlayer()
         }.shared
     }
 

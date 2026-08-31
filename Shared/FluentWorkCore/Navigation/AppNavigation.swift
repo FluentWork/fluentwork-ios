@@ -12,6 +12,7 @@ public enum AppTab: String, CaseIterable, Codable, Hashable, Sendable {
 public enum AppRoute: TGRoute, Codable {
     case speakingRoom(sessionID: String?)
     case review(sessionID: String?)
+    case dailyRead(sessionID: String?)
 
     /// Stable path shared with `FeaturePluginDescriptor.entryRoute`.
     public var entryRoute: String {
@@ -20,6 +21,8 @@ public enum AppRoute: TGRoute, Codable {
             return "/speaking-room"
         case .review:
             return "/review"
+        case .dailyRead:
+            return "/daily-read"
         }
     }
 
@@ -30,6 +33,8 @@ public enum AppRoute: TGRoute, Codable {
             self = .speakingRoom(sessionID: sessionID)
         case "/review":
             self = .review(sessionID: sessionID)
+        case "/daily-read":
+            self = .dailyRead(sessionID: sessionID)
         default:
             return nil
         }

@@ -39,6 +39,7 @@ public struct FeatureFlagSnapshot: Equatable, Sendable {
             .speakingRoom,
             .workspaceReview,
             .degradedTextMode,
+            .dailyRead,
         ]
     )
 }

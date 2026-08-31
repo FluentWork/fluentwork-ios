@@ -104,12 +104,18 @@ public enum DailyReadAction: Equatable, Sendable, Action {
   case loadFailed(String)
   /// User tapped play / resume.
   case playTapped
+  /// Audio playback successfully started.
+  case audioPlaybackStarted
   /// User tapped pause.
   case pauseTapped
+  /// Audio paused after a pause action.
+  case audioPaused
   /// Audio finished playing naturally.
   case audioFinished
   /// Audio loading failed.
   case audioFailed(String)
+  /// Audio duration loaded from player.
+  case audioDurationLoaded(Double)
   /// Playback time updated by timer.
   case playbackTimeUpdated(Double)
   /// User started follow-read recording.
@@ -170,14 +176,24 @@ public let dailyReadReducer: Reducer<DailyReadState, DailyReadAction> = { state,
     state.lastErrorMessage = message
 
   case .playTapped:
+    guard state.dailyRead?.audioURL?.isEmpty == false else {
+      // No audio URL — stay in current phase; player has nothing to play.
+      break
+    }
     if state.audioPhase == .idle || state.audioPhase == .paused {
       state.audioPhase = .loading
     }
+
+  case .audioPlaybackStarted:
+    state.audioPhase = .playing
 
   case .pauseTapped:
     if state.audioPhase == .playing {
       state.audioPhase = .paused
     }
+
+  case .audioPaused:
+    state.audioPhase = .paused
 
   case .audioFinished:
     state.audioPhase = .idle
@@ -186,6 +202,9 @@ public let dailyReadReducer: Reducer<DailyReadState, DailyReadAction> = { state,
   case .audioFailed(let message):
     state.audioPhase = .idle
     state.lastErrorMessage = message
+
+  case .audioDurationLoaded(let duration):
+    state.audioDuration = duration
 
   case .playbackTimeUpdated(let time):
     state.audioPlaybackTime = time
