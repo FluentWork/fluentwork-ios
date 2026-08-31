@@ -69,7 +69,14 @@ import TGReduxKitTesting
         }
 
         func startSession() async throws {}
+        func sendSpeechBoundary(started: Bool) async throws {}
+        func sendAudioPCM(_ data: Data) async throws {}
         func submitTranscript(_ text: String) async {}
+        func transportEvents() -> AsyncStream<SocketTransportEvent> {
+            AsyncStream { continuation in
+                continuation.finish()
+            }
+        }
         func pollReview(sessionID: String) async throws -> ReviewPollResponse { poll }
         func sendDegradedTextMessage(_ text: String) async throws -> PostMessageResponse {
             PostMessageResponse(sessionID: sessionIDFallback, reply: "", channel: "text", generator: "stub")

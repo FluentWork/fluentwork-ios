@@ -33,20 +33,27 @@ public enum APIError: Error, Equatable, Sendable, LocalizedError {
 }
 
 private final class RequestCancellationBox: @unchecked Sendable {
-    private let lock = NSLock()
+    private let queue = DispatchQueue(label: "com.fluentwork.request-cancellation")
     private var cancellable: Cancellable?
+    private var isCancelled = false
 
     func set(_ cancellable: Cancellable) {
-        lock.lock()
-        self.cancellable = cancellable
-        lock.unlock()
+        queue.sync {
+            guard !isCancelled else {
+                cancellable.cancel()
+                return
+            }
+            self.cancellable = cancellable
+        }
     }
 
     func cancel() {
-        lock.lock()
-        let cancellable = self.cancellable
-        lock.unlock()
-        cancellable?.cancel()
+        queue.sync {
+            isCancelled = true
+            let current = cancellable
+            cancellable = nil
+            current?.cancel()
+        }
     }
 }
 
@@ -107,7 +114,10 @@ public final class MoyaNetworkClient: @unchecked Sendable, NetworkClientProtocol
     private static func mapMoyaError(_ error: MoyaError) -> APIError {
         switch error {
         case .underlying(let underlying, _):
-            if underlying is CancellationError {
+            let nsError = underlying as NSError
+            if underlying is CancellationError ||
+                (nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled)
+            {
                 return .cancelled
             }
             return .network(description: underlying.localizedDescription)

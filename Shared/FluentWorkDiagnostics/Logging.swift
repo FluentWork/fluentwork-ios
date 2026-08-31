@@ -54,15 +54,15 @@ public final class CapturingLogger: LoggingProtocol, @unchecked Sendable {
         public let message: String
     }
 
-    private let lock = NSLock()
-    private var _entries: [Entry] = []
+    private let queue = DispatchQueue(label: "com.fluentwork.capturing-logger")
+    private var storage: [Entry] = []
 
     public init() {}
 
     public var entries: [Entry] {
-        lock.lock()
-        defer { lock.unlock() }
-        return _entries
+        queue.sync {
+            storage
+        }
     }
 
     public func debug(_ message: String, domain: LogDomain) {
@@ -78,8 +78,8 @@ public final class CapturingLogger: LoggingProtocol, @unchecked Sendable {
     }
 
     private func append(_ entry: Entry) {
-        lock.lock()
-        _entries.append(entry)
-        lock.unlock()
+        queue.sync {
+            storage.append(entry)
+        }
     }
 }

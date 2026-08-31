@@ -2,20 +2,15 @@ import FactoryKit
 import FluentWorkNetworking
 import Foundation
 
-private final class ActiveSessionBox: @unchecked Sendable {
-    private let lock = NSLock()
+private actor ActiveSessionBox {
     private var sessionID: String?
 
     func get() -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-        return sessionID
+        sessionID
     }
 
     func set(_ sessionID: String?) {
-        lock.lock()
         self.sessionID = sessionID
-        lock.unlock()
     }
 }
 
@@ -51,11 +46,16 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
             )
         }
 
-        activeSession.set(created.sessionID)
+        await activeSession.set(created.sessionID)
         try await transport.connect(
             url: wssURL,
             sessionID: created.sessionID,
             ticket: created.ticket
+        )
+        try await transport.send(
+            control: .sessionStart(
+                .init(scene: "demo")
+            )
         )
     }
 
@@ -66,9 +66,21 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         try? await transport.send(control: .interrupt)
     }
 
+    public func sendSpeechBoundary(started: Bool) async throws {
+        try await transport.send(control: started ? .userSpeechStart : .userSpeechEnd)
+    }
+
+    public func sendAudioPCM(_ data: Data) async throws {
+        try await transport.send(audio: data)
+    }
+
+    public func transportEvents() -> AsyncStream<SocketTransportEvent> {
+        transport.events
+    }
+
     public func sendDegradedTextMessage(_ text: String) async throws -> PostMessageResponse {
         let accessToken = try await requireAccessToken()
-        let sessionID = try requireActiveSessionID()
+        let sessionID = try await requireActiveSessionID()
         return try await api.sendSessionMessage(
             sessionID: sessionID,
             accessToken: accessToken,
@@ -90,7 +102,7 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
 
     public func endSession() async {
         await transport.disconnect()
-        activeSession.set(nil)
+        await activeSession.set(nil)
     }
 
     private func ensureAccessToken(deviceID: String) async throws -> String {
@@ -107,8 +119,8 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         return try await ensureAccessToken(deviceID: deviceID)
     }
 
-    private func requireActiveSessionID() throws -> String {
-        guard let sessionID = activeSession.get(), !sessionID.isEmpty else {
+    private func requireActiveSessionID() async throws -> String {
+        guard let sessionID = await activeSession.get(), !sessionID.isEmpty else {
             throw APIError.backend(
                 code: "no_active_session",
                 message: "No active speaking-room session."

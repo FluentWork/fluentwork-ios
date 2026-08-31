@@ -9,16 +9,28 @@ import TGFeatureFlag
 public protocol BootstrapClientProtocol: Sendable {
     func loadBootstrap() async throws -> BootstrapSnapshot
 }
+public enum AudioEngineEvent: Equatable, Sendable {
+    case speechStarted
+    case speechEnded
+    case pcmChunk(Data)
+    case failed(String)
+}
+
 
 public protocol AudioEngineProtocol: Sendable {
     func startCapture() async throws
+    func events() -> AsyncStream<AudioEngineEvent>
     func stopCapture() async
+    func play(frame: WSAudioFrame) async
     func interruptNow() async
 }
 
 public protocol SpeechSessionClientProtocol: Sendable {
     func startSession() async throws
+    func sendSpeechBoundary(started: Bool) async throws
+    func sendAudioPCM(_ data: Data) async throws
     func submitTranscript(_ text: String) async
+    func transportEvents() -> AsyncStream<SocketTransportEvent>
     func pollReview(sessionID: String) async throws -> ReviewPollResponse
     func sendDegradedTextMessage(_ text: String) async throws -> PostMessageResponse
     func endSession() async
@@ -72,11 +84,23 @@ public struct DefaultNetworkPluginFactory: NetworkPluginFactoryProtocol {
 }
 
 public final class PlaceholderAudioEngine: AudioEngineProtocol, Sendable {
-    public init() {}
+    private nonisolated let stream: AsyncStream<AudioEngineEvent>
+
+    public init() {
+        self.stream = AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
 
     public func startCapture() async throws {}
 
     public func stopCapture() async {}
+
+    public func events() -> AsyncStream<AudioEngineEvent> {
+        stream
+    }
+
+    public func play(frame: WSAudioFrame) async {}
 
     public func interruptNow() async {}
 }
@@ -87,6 +111,16 @@ public final class PlaceholderSpeechSessionClient: SpeechSessionClientProtocol, 
     public func startSession() async throws {}
 
     public func submitTranscript(_ text: String) async {}
+
+    public func sendSpeechBoundary(started: Bool) async throws {}
+
+    public func sendAudioPCM(_ data: Data) async throws {}
+
+    public func transportEvents() -> AsyncStream<SocketTransportEvent> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
 
     public func pollReview(sessionID: String) async throws -> ReviewPollResponse {
         ReviewPollResponse(sessionID: sessionID, status: .pending, review: nil)
@@ -172,7 +206,16 @@ public extension Container {
     }
 
     var audioEngine: Factory<AudioEngineProtocol> {
-        self { PlaceholderAudioEngine() }.shared
+        self {
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                return PlaceholderAudioEngine()
+            }
+            #if canImport(AVFoundation)
+            return LiveAudioEngine()
+            #else
+            return PlaceholderAudioEngine()
+            #endif
+        }.shared
     }
 
     var speechSessionClient: Factory<SpeechSessionClientProtocol> {

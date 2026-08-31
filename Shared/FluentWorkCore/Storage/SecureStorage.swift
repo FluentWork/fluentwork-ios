@@ -72,26 +72,26 @@ public struct KeychainSecureStorage: SecureStorageProtocol {
 }
 
 public final class InMemorySecureStorage: SecureStorageProtocol, @unchecked Sendable {
-    private let lock = NSLock()
+    private let queue = DispatchQueue(label: "com.fluentwork.secure-storage")
     private var storage: [String: Data] = [:]
 
     public init() {}
 
     public func read(key: String) throws -> Data? {
-        lock.lock()
-        defer { lock.unlock() }
-        return storage[key]
+        queue.sync {
+            storage[key]
+        }
     }
 
     public func write(_ data: Data, key: String) throws {
-        lock.lock()
-        storage[key] = data
-        lock.unlock()
+        queue.sync {
+            storage[key] = data
+        }
     }
 
     public func delete(key: String) throws {
-        lock.lock()
-        storage.removeValue(forKey: key)
-        lock.unlock()
+        _ = queue.sync {
+            storage.removeValue(forKey: key)
+        }
     }
 }

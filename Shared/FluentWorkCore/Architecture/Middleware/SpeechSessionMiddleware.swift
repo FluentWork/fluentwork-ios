@@ -1,10 +1,13 @@
 import FactoryKit
 import FluentWorkDiagnostics
+import FluentWorkNetworking
 import Foundation
 import TGReduxKit
 
 public enum SpeechSessionTaskID {
     public static let reconnectWindow: CancellationID = "speechSession.reconnectWindow"
+    public static let transportEvents: CancellationID = "speechSession.transportEvents"
+    public static let audioEngineEvents: CancellationID = "speechSession.audioEngineEvents"
 }
 
 /// Owns SpeechSessionMachine invocation + SideEffect interpretation.
@@ -44,18 +47,78 @@ private func interpretSpeechSessionSideEffect(
 
     switch effect {
     case .createSession:
-        return .task {
-            do {
-                try await speechClient.startSession()
-            } catch {
-                return .speakingRoom(.session(.failed(error.localizedDescription)))
+        return .merge(
+            .task {
+                do {
+                    try await speechClient.startSession()
+                    try await audioEngine.startCapture()
+                } catch {
+                    return .speakingRoom(.session(.failed(error.localizedDescription)))
+                }
+                return nil
+            },
+            .task(id: SpeechSessionTaskID.transportEvents) {
+                for await event in speechClient.transportEvents() {
+                    if Task.isCancelled { return nil }
+
+                    switch event {
+                    case let .audio(frame):
+                        await audioEngine.play(frame: frame)
+
+                    default:
+                        guard let mapped = SocketTransportEventMapper.speakingRoomAction(for: event),
+                              let action = SpeakingRoomAction(mapped)
+                        else {
+                            continue
+                        }
+                        await dispatchBox.dispatch(.speakingRoom(action))
+                    }
+                }
+                return nil
+            },
+            .task(id: SpeechSessionTaskID.audioEngineEvents) {
+                for await event in audioEngine.events() {
+                    if Task.isCancelled { return nil }
+
+                    switch event {
+                    case .speechStarted:
+                        do {
+                            try await speechClient.sendSpeechBoundary(started: true)
+                            await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechStart)))
+                        } catch {
+                            await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
+                            return nil
+                        }
+
+                    case .speechEnded:
+                        do {
+                            try await speechClient.sendSpeechBoundary(started: false)
+                            await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechEnd)))
+                        } catch {
+                            await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
+                            return nil
+                        }
+
+                    case let .pcmChunk(data):
+                        do {
+                            try await speechClient.sendAudioPCM(data)
+                        } catch {
+                            await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
+                            return nil
+                        }
+
+                    case let .failed(message):
+                        await dispatchBox.dispatch(.speakingRoom(.session(.failed(message))))
+                        return nil
+                    }
+                }
+                return nil
             }
-            return nil
-        }
+        )
 
     case .sendInterrupt:
         return .fireAndForget {
-            try? await speechClient.submitTranscript("__interrupt__")
+            await speechClient.submitTranscript("__interrupt__")
         }
 
     case .stopPlayback:
@@ -72,9 +135,14 @@ private func interpretSpeechSessionSideEffect(
         }
 
     case .endSession:
-        return .fireAndForget {
-            await speechClient.endSession()
-        }
+        return .merge(
+            .cancel(id: SpeechSessionTaskID.transportEvents),
+            .cancel(id: SpeechSessionTaskID.audioEngineEvents),
+            .fireAndForget {
+                await audioEngine.stopCapture()
+                await speechClient.endSession()
+            }
+        )
 
     case .sendTextMessage:
         return .task {

@@ -25,20 +25,20 @@ public final class CapturingTracker: TrackerClientProtocol, @unchecked Sendable 
         }
     }
 
-    private let lock = NSLock()
-    private var _events: [Event] = []
+    private let queue = DispatchQueue(label: "com.fluentwork.capturing-tracker")
+    private var storage: [Event] = []
 
     public init() {}
 
     public var events: [Event] {
-        lock.lock()
-        defer { lock.unlock() }
-        return _events
+        queue.sync {
+            storage
+        }
     }
 
     public func track(event: String, properties: [String: String]) {
-        lock.lock()
-        _events.append(Event(name: event, properties: properties))
-        lock.unlock()
+        queue.sync {
+            storage.append(Event(name: event, properties: properties))
+        }
     }
 }

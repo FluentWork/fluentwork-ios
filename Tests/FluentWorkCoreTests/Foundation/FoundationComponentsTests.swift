@@ -7,6 +7,29 @@ import Testing
 import TGReduxKitTesting
 @testable import FluentWorkCore
 
+@available(iOS 17, macOS 14, *)
+@Test func audioSpeechActivityTrackerEmitsSpeechStartAndEnd() {
+    var tracker = AudioSpeechActivityTracker()
+    let clock = ContinuousClock()
+    let start = clock.now
+
+    #expect(tracker.register(energy: 0.02, at: start) == .speechStarted)
+    #expect(tracker.register(energy: 0.02, at: start + .milliseconds(50)) == nil)
+    #expect(tracker.register(energy: 0.0, at: start + .milliseconds(200)) == nil)
+    #expect(tracker.register(energy: 0.0, at: start + .milliseconds(400)) == .speechEnded)
+}
+
+@available(iOS 17, macOS 14, *)
+@Test func audioSpeechActivityTrackerResetOnlyEmitsWhenActive() {
+    var tracker = AudioSpeechActivityTracker()
+    let now = ContinuousClock().now
+
+    #expect(tracker.reset() == nil)
+    _ = tracker.register(energy: 0.02, at: now)
+    #expect(tracker.reset() == .speechEnded)
+    #expect(tracker.reset() == nil)
+}
+
 @Test func capturingLoggerRecordsEntriesByDomain() {
     let logger = CapturingLogger()
     logger.info("hello", domain: .api)
@@ -32,6 +55,102 @@ import TGReduxKitTesting
     #expect(try storage.read(key: "session.ticket") == payload)
     try storage.delete(key: "session.ticket")
     #expect(try storage.read(key: "session.ticket") == nil)
+}
+
+@Test func capturingLoggerSupportsConcurrentWrites() async {
+    let logger = CapturingLogger()
+
+    await withTaskGroup(of: Void.self) { group in
+        for index in 0..<64 {
+            group.addTask {
+                logger.info("entry-\(index)", domain: .session)
+            }
+        }
+    }
+
+    #expect(logger.entries.count == 64)
+}
+
+@Test func capturingTrackerSupportsConcurrentWrites() async {
+    let tracker = CapturingTracker()
+
+    await withTaskGroup(of: Void.self) { group in
+        for index in 0..<64 {
+            group.addTask {
+                tracker.track(event: "event-\(index)", properties: ["idx": "\(index)"])
+            }
+        }
+    }
+
+    #expect(tracker.events.count == 64)
+}
+
+@Test func inMemorySecureStorageSupportsConcurrentWrites() async throws {
+    let storage = InMemorySecureStorage()
+
+    try await withThrowingTaskGroup(of: Void.self) { group in
+        for index in 0..<64 {
+            group.addTask {
+                try storage.write(Data("value-\(index)".utf8), key: "key-\(index)")
+            }
+        }
+        try await group.waitForAll()
+    }
+
+    for index in 0..<64 {
+        #expect(try storage.read(key: "key-\(index)") == Data("value-\(index)".utf8))
+    }
+}
+
+@Test func stubNetworkMonitorBroadcastsUpdatesToAllSubscribers() async {
+    let monitor = StubNetworkMonitor(snapshot: .disconnected)
+    let streamA = monitor.connectivityUpdates()
+    let streamB = monitor.connectivityUpdates()
+
+    let consumerA = Task { () async -> [NetworkPathSnapshot] in
+        var iterator = streamA.makeAsyncIterator()
+        var snapshots: [NetworkPathSnapshot] = []
+        if let first = await iterator.next() {
+            snapshots.append(first)
+        }
+        if let second = await iterator.next() {
+            snapshots.append(second)
+        }
+        return snapshots
+    }
+    let consumerB = Task { () async -> [NetworkPathSnapshot] in
+        var iterator = streamB.makeAsyncIterator()
+        var snapshots: [NetworkPathSnapshot] = []
+        if let first = await iterator.next() {
+            snapshots.append(first)
+        }
+        if let second = await iterator.next() {
+            snapshots.append(second)
+        }
+        return snapshots
+    }
+
+    let updated = NetworkPathSnapshot(isConnected: true, isExpensive: true, isConstrained: false)
+    monitor.emit(updated)
+
+    #expect(await consumerA.value == [.disconnected, updated])
+    #expect(await consumerB.value == [.disconnected, updated])
+    #expect(monitor.currentSnapshot() == updated)
+}
+
+@Test func stubNetworkMonitorRemovesTerminatedSubscriber() async {
+    let monitor = StubNetworkMonitor(snapshot: .connected)
+    do {
+        let stream = monitor.connectivityUpdates()
+        var iterator = stream.makeAsyncIterator()
+        _ = await iterator.next()
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        #expect(monitor.subscriberCountForTesting() == 1)
+    }
+
+    try? await Task.sleep(nanoseconds: 20_000_000)
+
+    #expect(monitor.subscriberCountForTesting() == 0)
 }
 
 @Test func inMemoryCorpusCacheStoreRoundTripsSnapshot() async throws {

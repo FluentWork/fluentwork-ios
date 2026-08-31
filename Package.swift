@@ -81,6 +81,7 @@ let package = Package(
                 "FluentWorkDiagnostics",
                 "FluentWorkNetworking",
                 "FluentWorkUI",
+                .product(name: "Moya", package: "Moya"),
                 .product(name: "TGReduxKit", package: "TGReduxKit"),
                 .product(name: "TGReduxKitTesting", package: "TGReduxKit"),
                 .product(name: "TGNavigationStack", package: "TGNavigationStack"),
