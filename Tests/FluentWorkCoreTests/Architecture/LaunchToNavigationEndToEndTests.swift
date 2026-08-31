@@ -43,16 +43,18 @@ private func waitForBootstrap(
 @Test func appRouteBridgesPluginEntryRoutes() {
     #expect(AppRoute.speakingRoom(sessionID: nil).entryRoute == "/speaking-room")
     #expect(AppRoute.review(sessionID: "r1").entryRoute == "/review")
+    #expect(AppRoute.dailyRead(sessionID: nil).entryRoute == "/daily-read")
     #expect(AppRoute(entryRoute: "/speaking-room") == .speakingRoom(sessionID: nil))
     #expect(AppRoute(entryRoute: "/review", sessionID: "abc") == .review(sessionID: "abc"))
-    #expect(AppRoute(entryRoute: "/daily-read") == nil)
+    #expect(AppRoute(entryRoute: "/daily-read", sessionID: nil) == .dailyRead(sessionID: nil))
+    #expect(AppRoute(entryRoute: "/drill") == nil)
 }
 
 @Test func pluginCatalogEntryRoutesAlignWithAppRoute() {
     let catalog = FeaturePluginCatalog.firstWave
     for descriptor in catalog {
         switch descriptor.feature {
-        case .speakingRoom, .workspaceReview:
+        case .speakingRoom, .workspaceReview, .dailyRead:
             #expect(AppRoute(entryRoute: descriptor.entryRoute) != nil)
         default:
             #expect(AppRoute(entryRoute: descriptor.entryRoute) == nil)
@@ -78,7 +80,7 @@ private func waitForBootstrap(
     #expect(store.state.speakingRoom.isBootstrapReady)
     #expect(store.state.network.isConnected)
     #expect(
-        store.state.workspace.availableModules.map(\.moduleName) == ["SpeakingRoom", "Review"]
+        store.state.workspace.availableModules.map(\.moduleName) == ["SpeakingRoom", "Review", "DailyRead"]
     )
 
     let speakingEntry = store.state.workspace.availableModules.first {

@@ -12,6 +12,11 @@ public enum AppTaskID {
     public static let corpusLoadMore: CancellationID = "corpus.load-more"
     public static let corpusReplayOutbox: CancellationID = "corpus.replay-outbox"
     public static let corpusMergeRebuild: CancellationID = "corpus.merge-rebuild"
+    public static let dailyReadLoad: CancellationID = "daily-read.load"
+    public static let dailyReadPoll: CancellationID = "daily-read.poll"
+    public static let dailyReadFollowRead: CancellationID = "daily-read.follow-read"
+    public static let dailyReadAudio: CancellationID = "daily-read.audio"
+    public static let dailyReadAudioObserver: CancellationID = "daily-read.audio-observer"
 
     public static func reviewAccept(cardID: String) -> CancellationID {
         CancellationID("review.accept.\(cardID)")
@@ -23,6 +28,8 @@ public func makeAppMiddlewares(container: Container? = nil) -> [Middleware<AppSt
     return [
         corpusMiddleware(container: resolvedContainer),
         reviewMiddleware(container: resolvedContainer),
+        dailyReadMiddleware(container: resolvedContainer),
+        dailyReadAudioObserver(container: resolvedContainer),
         speechSessionMiddleware(container: resolvedContainer),
         appBootstrapMiddleware(container: resolvedContainer),
         appNetworkMonitorMiddleware(container: resolvedContainer),

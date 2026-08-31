@@ -15,6 +15,10 @@ struct HostRootView: View {
         store.state.featureFlags.isEnabled(.workspaceReview)
     }
 
+    private var dailyReadFlagEnabled: Bool {
+        store.state.featureFlags.isEnabled(.dailyRead)
+    }
+
     var body: some View {
         AppRootTabView(
             navigation: store.state.navigation,
@@ -82,6 +86,30 @@ struct HostRootView: View {
                     store.dispatch(.review(.acceptRefineCardTapped(cardID: cardID)))
                 }
             )
+        case let .dailyRead(sessionID):
+            DailyReadRootView(
+                model: makeDailyReadViewModel(from: store.state.dailyRead, isOffline: !store.state.network.isConnected),
+                onAppear: {
+                    store.dispatch(.dailyRead(.loadTriggered))
+                },
+                onRetry: {
+                    store.dispatch(.dailyRead(.clear))
+                    store.dispatch(.dailyRead(.loadTriggered))
+                },
+                onPlayTapped: {
+                    store.dispatch(.dailyRead(.playTapped))
+                },
+                onPauseTapped: {
+                    store.dispatch(.dailyRead(.pauseTapped))
+                },
+                onFollowReadStarted: {
+                    store.dispatch(.dailyRead(.followReadRecordingStarted))
+                },
+                onFollowReadSubmitted: {
+                    store.dispatch(.dailyRead(.followReadSubmitted))
+                }
+            )
+            .onAppear { _ = sessionID }
         }
     }
 
@@ -176,6 +204,86 @@ struct HostRootView: View {
         )
     }
 
+    private func makeDailyReadViewModel(
+        from state: DailyReadState,
+        isOffline: Bool
+    ) -> DailyReadViewModel {
+        let phase: DailyReadViewPhase
+        switch state.phase {
+        case .idle:
+            phase = .idle
+        case .generating:
+            phase = .loading
+        case .ready:
+            phase = .ready
+        case .fallbackPreset:
+            phase = .fallbackPreset
+        case .failed:
+            phase = .failed
+        }
+
+        let article: DailyReadArticle? = state.dailyRead.map {
+            DailyReadArticle(
+                id: $0.id,
+                title: $0.title,
+                body: $0.body,
+                hasAudio: ($0.audioURL?.isEmpty == false),
+                sourceBlockCount: $0.usedBlockIDs.count,
+                estimatedReadingSeconds: estimatedReadingSeconds(for: $0.body)
+            )
+        }
+
+        let audioPhase: DailyReadAudioViewPhase
+        switch state.audioPhase {
+        case .idle: audioPhase = .idle
+        case .loading: audioPhase = .loading
+        case .playing: audioPhase = .playing
+        case .paused: audioPhase = .paused
+        }
+
+        let followReadPhase: FollowReadViewPhase
+        switch state.followReadPhase {
+        case .idle: followReadPhase = .idle
+        case .recording: followReadPhase = .recording
+        case .submitting: followReadPhase = .submitting
+        case .recorded: followReadPhase = .recorded
+        case let .failed(message): followReadPhase = .failed(message)
+        }
+
+        return DailyReadViewModel(
+            phase: phase,
+            article: article,
+            fallbackBody: state.fallbackBody,
+            genDate: state.genDate,
+            audioPhase: audioPhase,
+            audioPlaybackTime: state.audioPlaybackTime,
+            audioDuration: state.audioDuration,
+            followReadPhase: followReadPhase,
+            hasFollowRead: state.hasFollowRead,
+            isOffline: isOffline,
+            errorMessage: state.lastErrorMessage
+        )
+    }
+
+    private func estimatedReadingSeconds(for body: String) -> Int {
+        // Approximate: average English reading speed ~200 words per minute.
+        let words = body
+            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+            .count
+        let seconds = Int((Double(words) / 200.0) * 60.0)
+        return max(seconds, 30)
+    }
+
+    private func followReadPhaseLabel(_ phase: FollowReadPhase) -> String {
+        switch phase {
+        case .idle: return "idle"
+        case .recording: return "recording"
+        case .submitting: return "submitting"
+        case .recorded: return "recorded"
+        case let .failed(message): return "failed(\(message))"
+        }
+    }
+
     private var debugRootList: some View {
         List {
             Section("Bootstrap") {
@@ -219,6 +327,15 @@ struct HostRootView: View {
                 }
                 .disabled(!workspaceReviewFlagEnabled)
 
+                Button("Present Daily Read") {
+                    store.dispatch(
+                        .navigation(
+                            .workbench(.present(.dailyRead(sessionID: nil), style: .fullScreenCover))
+                        )
+                    )
+                }
+                .disabled(!dailyReadFlagEnabled)
+
                 Button("切到语料库 Tab") {
                     store.dispatch(.navigation(.selectTab(.corpus)))
                 }
@@ -227,6 +344,7 @@ struct HostRootView: View {
             Section("Feature Flags") {
                 LabeledContent("Speaking Room", value: speakingRoomFlagEnabled ? "on" : "off")
                 LabeledContent("Workspace Review", value: workspaceReviewFlagEnabled ? "on" : "off")
+                LabeledContent("Daily Read", value: dailyReadFlagEnabled ? "on" : "off")
                 LabeledContent(
                     "Local Override Count",
                     value: "\(store.state.featureFlags.localOverrides.count)"
@@ -238,6 +356,17 @@ struct HostRootView: View {
                             .setLocalOverride(
                                 flag: .speakingRoom,
                                 isEnabled: !speakingRoomFlagEnabled
+                            )
+                        )
+                    )
+                }
+
+                Button(dailyReadFlagEnabled ? "Disable Daily Read" : "Enable Daily Read") {
+                    store.dispatch(
+                        .featureFlags(
+                            .setLocalOverride(
+                                flag: .dailyRead,
+                                isEnabled: !dailyReadFlagEnabled
                             )
                         )
                     )
@@ -327,6 +456,34 @@ struct HostRootView: View {
 
                     Button("Refresh") {
                         store.dispatch(.corpus(.refreshRequested))
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Section("Daily Read") {
+                LabeledContent("Phase", value: store.state.dailyRead.phase.rawValue)
+                LabeledContent("Has Article", value: store.state.dailyRead.dailyRead != nil ? "yes" : "no")
+                LabeledContent("Gen Date", value: store.state.dailyRead.genDate ?? "-")
+                LabeledContent("Audio Phase", value: store.state.dailyRead.audioPhase.rawValue)
+                LabeledContent(
+                    "Follow-Read Phase",
+                    value: followReadPhaseLabel(store.state.dailyRead.followReadPhase)
+                )
+                LabeledContent("Has Follow Read", value: store.state.dailyRead.hasFollowRead ? "yes" : "no")
+
+                if let message = store.state.dailyRead.lastErrorMessage {
+                    Text(message)
+                        .foregroundStyle(.red)
+                }
+
+                HStack {
+                    Button("Load Daily Read") {
+                        store.dispatch(.dailyRead(.loadTriggered))
+                    }
+
+                    Button("Clear") {
+                        store.dispatch(.dailyRead(.clear))
                     }
                 }
                 .buttonStyle(.bordered)
