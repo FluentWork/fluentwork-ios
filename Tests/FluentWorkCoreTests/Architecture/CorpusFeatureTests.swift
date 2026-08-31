@@ -68,6 +68,7 @@ import TGReduxKitTesting
     expected.isRefreshing = false
     expected.items = [updated, appended]
     expected.nextCursor = "cursor-2"
+    expected.syncCursor = "2026-08-31T10:20:00Z"
     store.send(.remoteLoadSucceeded(ListPhraseBlocksResponse(items: [updated, appended], nextCursor: "cursor-2"), append: true))
     try store.assert(equals: expected)
 }
@@ -92,6 +93,18 @@ import TGReduxKitTesting
             favoriteOnly: Bool
         ) async throws -> ListPhraseBlocksResponse {
             try await listHandler(cursor, limit, favoriteOnly)
+        }
+
+        func setFavorite(
+            blockID: String,
+            isFavorite: Bool,
+            pinned: Bool
+        ) async throws -> PhraseBlock {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+
+        func deleteBlock(blockID: String) async throws {
+            throw APIError.backend(code: "unexpected", message: "unused")
         }
 
         func batchAccept(
@@ -185,6 +198,18 @@ import TGReduxKitTesting
             return response
         }
 
+        func setFavorite(
+            blockID: String,
+            isFavorite: Bool,
+            pinned: Bool
+        ) async throws -> PhraseBlock {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+
+        func deleteBlock(blockID: String) async throws {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+
         func batchAccept(
             sourceSessionID: String,
             cards: [RefineCard]
@@ -225,6 +250,212 @@ import TGReduxKitTesting
     let updatedCache = try await cache.loadSnapshot(scope: "user-42")
     #expect(updatedCache?.items.map { $0.id } == ["b-1", "b-2"])
     #expect(updatedCache?.nextCursor == nil)
+}
+
+@MainActor
+@Test func corpusMiddlewareQueuesFavoriteOfflineThenReplaysWhenNetworkRestores() async throws {
+    actor RecordingCorpusClient: CorpusClientProtocol {
+        private(set) var favoriteCalls: [(String, Bool, Bool)] = []
+
+        func listBlocks(
+            cursor: String?,
+            limit: Int?,
+            favoriteOnly: Bool
+        ) async throws -> ListPhraseBlocksResponse {
+            ListPhraseBlocksResponse(items: [], nextCursor: nil)
+        }
+
+        func setFavorite(
+            blockID: String,
+            isFavorite: Bool,
+            pinned: Bool
+        ) async throws -> PhraseBlock {
+            favoriteCalls.append((blockID, isFavorite, pinned))
+            return makePhraseBlock(id: blockID, isFavorite: isFavorite)
+        }
+
+        func deleteBlock(blockID: String) async throws {}
+
+        func batchAccept(
+            sourceSessionID: String,
+            cards: [RefineCard]
+        ) async throws -> BatchAcceptBlocksResponse {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+    }
+
+    let cache = InMemoryCorpusCacheStore()
+    let outbox = InMemoryCorpusOutboxStore()
+    let syncStore = InMemoryCorpusSyncMetadataStore()
+    let client = RecordingCorpusClient()
+
+    let block = makePhraseBlock(id: "b-1", isFavorite: false)
+    try await cache.saveSnapshot(
+        CachedCorpusSnapshot(items: [block], nextCursor: nil),
+        scope: "guest-1"
+    )
+
+    let container = Container()
+    container.reset()
+    container.corpusCacheStore.register { cache }
+    container.corpusOutboxStore.register { outbox }
+    container.corpusSyncMetadataStore.register { syncStore }
+    container.corpusClient.register { client }
+
+    var initialState = AppState.initial
+    initialState.auth.mode = .guest
+    initialState.auth.currentUserID = "guest-1"
+    initialState.network.isConnected = false
+    initialState.corpus = CorpusState(phase: .ready, items: [block])
+
+    let store = AppStoreFactory.make(container: container, initialState: initialState)
+    store.dispatch(AppAction.corpus(.favoriteToggled(blockID: "b-1", isFavorite: true, pinned: true)))
+
+    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.corpus.outbox.count == 1
+    }
+    #expect(store.state.corpus.items.first?.isFavorite == true)
+    #expect((try await outbox.loadItems(scope: "guest-1")).count == 1)
+
+    store.dispatch(.network(.connectivityChanged(.connected)))
+
+    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.corpus.outbox.isEmpty
+    }
+    #expect(await client.favoriteCalls.count == 1)
+    #expect((try await outbox.loadItems(scope: "guest-1")).isEmpty)
+}
+
+@MainActor
+@Test func corpusMergeClearsGuestStateAndRebuildsForRegisteredUser() async throws {
+    actor RecordingCorpusClient: CorpusClientProtocol {
+        func listBlocks(
+            cursor: String?,
+            limit: Int?,
+            favoriteOnly: Bool
+        ) async throws -> ListPhraseBlocksResponse {
+            ListPhraseBlocksResponse(
+                items: [makePhraseBlock(id: "registered-1", isFavorite: true)],
+                nextCursor: "cursor-new"
+            )
+        }
+
+        func setFavorite(
+            blockID: String,
+            isFavorite: Bool,
+            pinned: Bool
+        ) async throws -> PhraseBlock {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+
+        func deleteBlock(blockID: String) async throws {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+
+        func batchAccept(
+            sourceSessionID: String,
+            cards: [RefineCard]
+        ) async throws -> BatchAcceptBlocksResponse {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+    }
+
+    let guestBlock = makePhraseBlock(id: "guest-1")
+    let cache = InMemoryCorpusCacheStore()
+    let outbox = InMemoryCorpusOutboxStore()
+    let syncStore = InMemoryCorpusSyncMetadataStore()
+    try await cache.saveSnapshot(
+        CachedCorpusSnapshot(items: [guestBlock], nextCursor: "cursor-guest"),
+        scope: "guest-1"
+    )
+    try await outbox.saveItems(
+        [
+            CorpusOutboxItem(
+                id: "op-1",
+                blockID: "guest-1",
+                operation: .favorite,
+                payload: .init(isFavorite: true, pinned: true),
+                retryCount: 0,
+                createdAt: "2026-08-31T10:00:00Z"
+            ),
+        ],
+        scope: "guest-1"
+    )
+    try await syncStore.save(
+        CorpusSyncMetadata(listCursor: "cursor-guest", syncCursor: "2026-08-31T10:00:00Z"),
+        scope: "guest-1"
+    )
+
+    let container = Container()
+    container.reset()
+    container.corpusCacheStore.register { cache }
+    container.corpusOutboxStore.register { outbox }
+    container.corpusSyncMetadataStore.register { syncStore }
+    container.corpusClient.register { RecordingCorpusClient() }
+
+    var initialState = AppState.initial
+    initialState.auth.mode = .guest
+    initialState.auth.currentUserID = "guest-1"
+    initialState.network.isConnected = true
+    initialState.corpus = CorpusState(
+        phase: .ready,
+        items: [guestBlock],
+        nextCursor: "cursor-guest",
+        syncCursor: "2026-08-31T10:00:00Z",
+        outbox: [
+            CorpusOutboxItem(
+                id: "op-1",
+                blockID: "guest-1",
+                operation: .favorite,
+                payload: .init(isFavorite: true, pinned: true),
+                retryCount: 0,
+                createdAt: "2026-08-31T10:00:00Z"
+            ),
+        ]
+    )
+
+    let store = AppStoreFactory.make(container: container, initialState: initialState)
+    store.dispatch(.auth(.mergedIntoRegistered(userID: "user-42", deviceID: "device-1")))
+
+    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.corpus.items.map { $0.id } == ["registered-1"]
+    }
+
+    #expect((try await cache.loadSnapshot(scope: "guest-1")) == nil)
+    #expect((try await outbox.loadItems(scope: "guest-1")).isEmpty)
+    #expect((try await syncStore.load(scope: "guest-1")) == nil)
+    #expect((try await cache.loadSnapshot(scope: "user-42"))?.items.map { $0.id } == ["registered-1"])
+}
+
+@Test func corpusReducerTracksOfflineOutboxIndicators() throws {
+    let block = makePhraseBlock(id: "b-1")
+    let store = TestStore(
+        initialState: CorpusState(phase: .ready, items: [block]),
+        reducer: corpusReducer
+    )
+
+    var expected = CorpusState(phase: .ready, items: [block])
+    expected.items[0].isFavorite = true
+    store.send(.favoriteToggled(blockID: "b-1", isFavorite: true, pinned: true))
+    try store.assert(equals: expected)
+
+    let item = CorpusOutboxItem(
+        id: "op-1",
+        blockID: "b-1",
+        operation: .favorite,
+        payload: .init(isFavorite: true, pinned: true),
+        retryCount: 0,
+        createdAt: "2026-08-31T10:00:00Z"
+    )
+    expected.outbox = [item]
+    expected.pendingIndicators = [.init(blockID: "b-1", operation: .favorite)]
+    store.send(.enqueueOutboxItem(item))
+    try store.assert(equals: expected)
+
+    expected.outbox = []
+    expected.pendingIndicators = []
+    store.send(.removeOutboxItem(id: "op-1"))
+    try store.assert(equals: expected)
 }
 
 @Test func authPromotionResetsCorpusState() throws {

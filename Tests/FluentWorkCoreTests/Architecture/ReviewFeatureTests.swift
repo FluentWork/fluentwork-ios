@@ -120,6 +120,18 @@ import TGReduxKitTesting
             throw APIError.backend(code: "unexpected", message: "unused")
         }
 
+        func setFavorite(
+            blockID: String,
+            isFavorite: Bool,
+            pinned: Bool
+        ) async throws -> PhraseBlock {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+
+        func deleteBlock(blockID: String) async throws {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+
         func batchAccept(
             sourceSessionID: String,
             cards: [RefineCard]
@@ -165,6 +177,18 @@ import TGReduxKitTesting
             limit: Int?,
             favoriteOnly: Bool
         ) async throws -> ListPhraseBlocksResponse {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+
+        func setFavorite(
+            blockID: String,
+            isFavorite: Bool,
+            pinned: Bool
+        ) async throws -> PhraseBlock {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+
+        func deleteBlock(blockID: String) async throws {
             throw APIError.backend(code: "unexpected", message: "unused")
         }
 

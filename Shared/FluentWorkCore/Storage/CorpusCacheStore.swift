@@ -27,7 +27,7 @@ public actor JSONCorpusCacheStore: CorpusCacheStoreProtocol {
         directoryURL: URL? = nil,
         fileManager: FileManager = .default
     ) {
-        self.directoryURL = directoryURL ?? defaultCorpusCacheDirectoryURL()
+        self.directoryURL = directoryURL ?? defaultCorpusStateDirectoryURL()
         self.fileManager = fileManager
     }
 
@@ -83,12 +83,4 @@ public actor InMemoryCorpusCacheStore: CorpusCacheStoreProtocol {
     public func clearSnapshot(scope: String) async throws {
         snapshots.removeValue(forKey: scope)
     }
-}
-
-private func defaultCorpusCacheDirectoryURL() -> URL {
-    let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-        ?? FileManager.default.temporaryDirectory
-    return root
-        .appendingPathComponent("FluentWork", isDirectory: true)
-        .appendingPathComponent("CorpusCache", isDirectory: true)
 }
