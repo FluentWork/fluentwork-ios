@@ -386,6 +386,42 @@ public struct PhraseBlock: Codable, Equatable, Sendable, Identifiable {
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
+
+    public init(
+        id: String,
+        intentZH: String,
+        expressionEN: String,
+        anchorUserSaid: String,
+        sceneTag: String,
+        functionTag: String,
+        state: String,
+        successStreak: Int,
+        nextDueAt: String,
+        easeFactor: Double,
+        realUseCount: Int,
+        isFavorite: Bool,
+        pinnedAt: String?,
+        sourceSessionID: String?,
+        createdAt: String,
+        updatedAt: String
+    ) {
+        self.id = id
+        self.intentZH = intentZH
+        self.expressionEN = expressionEN
+        self.anchorUserSaid = anchorUserSaid
+        self.sceneTag = sceneTag
+        self.functionTag = functionTag
+        self.state = state
+        self.successStreak = successStreak
+        self.nextDueAt = nextDueAt
+        self.easeFactor = easeFactor
+        self.realUseCount = realUseCount
+        self.isFavorite = isFavorite
+        self.pinnedAt = pinnedAt
+        self.sourceSessionID = sourceSessionID
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
 }
 
 public struct ListPhraseBlocksResponse: Codable, Equatable, Sendable {
@@ -395,6 +431,11 @@ public struct ListPhraseBlocksResponse: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case items
         case nextCursor = "next_cursor"
+    }
+
+    public init(items: [PhraseBlock], nextCursor: String?) {
+        self.items = items
+        self.nextCursor = nextCursor
     }
 }
 

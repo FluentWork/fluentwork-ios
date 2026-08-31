@@ -25,8 +25,24 @@ struct HostRootView: View {
                     .foregroundStyle(.secondary)
             },
             corpusRoot: {
-                Text("语料库（占位）")
-                    .foregroundStyle(.secondary)
+                CorpusRootView(
+                    model: makeCorpusViewModel(from: store.state.corpus),
+                    onAppear: {
+                        store.dispatch(.corpus(.appear))
+                    },
+                    onRefresh: {
+                        store.dispatch(.corpus(.refreshRequested))
+                    },
+                    onLoadMore: {
+                        store.dispatch(.corpus(.loadMoreRequested))
+                    },
+                    onSearchQueryChanged: { query in
+                        store.dispatch(.corpus(.searchQueryChanged(query)))
+                    },
+                    onFavoriteOnlyChanged: { favoriteOnly in
+                        store.dispatch(.corpus(.favoriteOnlyChanged(favoriteOnly)))
+                    }
+                )
             },
             destination: { route in
                 AnyView(routeDestination(route))
@@ -114,6 +130,41 @@ struct HostRootView: View {
         )
     }
 
+    private func makeCorpusViewModel(from state: CorpusState) -> CorpusViewModel {
+        let phase: CorpusViewPhase
+        switch state.phase {
+        case .idle:
+            phase = .idle
+        case .loading:
+            phase = .loading
+        case .ready:
+            phase = .ready
+        case .failed:
+            phase = .failed
+        }
+
+        return CorpusViewModel(
+            phase: phase,
+            rows: state.visibleItems.map {
+                CorpusRowViewData(
+                    id: $0.id,
+                    intentZH: $0.intentZH,
+                    expressionEN: $0.expressionEN,
+                    anchorUserSaid: $0.anchorUserSaid,
+                    sceneTag: $0.sceneTag,
+                    functionTag: $0.functionTag,
+                    isFavorite: $0.isFavorite,
+                    updatedAt: $0.updatedAt
+                )
+            },
+            searchQuery: state.searchQuery,
+            favoriteOnly: state.favoriteOnly,
+            isRefreshing: state.isRefreshing,
+            canLoadMore: state.nextCursor != nil,
+            errorMessage: state.lastErrorMessage
+        )
+    }
+
     private var debugRootList: some View {
         List {
             Section("Bootstrap") {
@@ -156,6 +207,10 @@ struct HostRootView: View {
                     )
                 }
                 .disabled(!workspaceReviewFlagEnabled)
+
+                Button("切到语料库 Tab") {
+                    store.dispatch(.navigation(.selectTab(.corpus)))
+                }
             }
 
             Section("Feature Flags") {
@@ -234,6 +289,30 @@ struct HostRootView: View {
                         store.dispatch(
                             .auth(.mergedIntoRegistered(userID: "user-42", deviceID: "device-1"))
                         )
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Section("Corpus") {
+                LabeledContent("Phase", value: store.state.corpus.phase.rawValue)
+                LabeledContent("Total Blocks", value: "\(store.state.corpus.items.count)")
+                LabeledContent("Visible Blocks", value: "\(store.state.corpus.visibleItems.count)")
+                LabeledContent("Refreshing", value: store.state.corpus.isRefreshing ? "yes" : "no")
+                LabeledContent("Next Cursor", value: store.state.corpus.nextCursor ?? "-")
+
+                if let message = store.state.corpus.lastErrorMessage {
+                    Text(message)
+                        .foregroundStyle(.red)
+                }
+
+                HStack {
+                    Button("Load Corpus") {
+                        store.dispatch(.corpus(.appear))
+                    }
+
+                    Button("Refresh") {
+                        store.dispatch(.corpus(.refreshRequested))
                     }
                 }
                 .buttonStyle(.bordered)

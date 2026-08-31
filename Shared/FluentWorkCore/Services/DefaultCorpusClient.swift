@@ -2,6 +2,11 @@ import FluentWorkNetworking
 import Foundation
 
 public protocol CorpusClientProtocol: Sendable {
+    func listBlocks(
+        cursor: String?,
+        limit: Int?,
+        favoriteOnly: Bool
+    ) async throws -> ListPhraseBlocksResponse
     func batchAccept(
         sourceSessionID: String,
         cards: [RefineCard]
@@ -21,6 +26,23 @@ public final class DefaultCorpusClient: CorpusClientProtocol, @unchecked Sendabl
         self.api = api
         self.sessionAPI = sessionAPI
         self.tokens = tokens
+    }
+
+    public func listBlocks(
+        cursor: String? = nil,
+        limit: Int? = nil,
+        favoriteOnly: Bool = false
+    ) async throws -> ListPhraseBlocksResponse {
+        let accessToken = try await requireAccessToken()
+        return try await api.listBlocks(
+            accessToken: accessToken,
+            scene: nil,
+            function: nil,
+            keyword: nil,
+            cursor: cursor,
+            limit: limit,
+            favoriteOnly: favoriteOnly
+        )
     }
 
     public func batchAccept(
