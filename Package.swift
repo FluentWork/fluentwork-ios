@@ -70,7 +70,10 @@ let package = Package(
                 "FluentWorkNetworking",
                 "FluentWorkDiagnostics",
             ],
-            path: "Shared/FluentWorkCore"
+            path: "Shared/FluentWorkCore",
+            resources: [
+                .process("Resources"),
+            ]
         ),
         .testTarget(
             name: "FluentWorkCoreTests",

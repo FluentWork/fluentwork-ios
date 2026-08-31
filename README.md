@@ -45,6 +45,9 @@ Scripts/
 
 Boots `iPhone 17 Pro`, builds/launches `FluentWorkHost`, and runs launch → bootstrap → speaking-room/review navigation tests. See `docs/06_第一波iPhone17Pro_Smoke_Runbook.md`.
 
+Shared schema mirrors are stored under `Shared/FluentWorkCore/Resources/Schemas/`
+and synced from `fluentwork-infra` with `./Scripts/sync-shared-schemas.sh`.
+
 ## CI Goals
 
 - build validation
