@@ -53,20 +53,20 @@ Boots `iPhone 17 Pro`, builds/launches `FluentWorkHost`, and runs launch → boo
 - snapshot tests
 - simulator smoke run
 - agent entry file validation
-- pre-commit gstack `/review` attestation (`GSTACK_REVIEWED=1`); CI does not run code review
+- pre-commit gstack review attestation (`GSTACK_REVIEWED=1`); CI does not run code review
 
 ## Local Pre-commit
 
 After `./Scripts/setup-git-hooks.sh`, local `pre-commit` runs:
 
-1. `gstack /review` attestation gate via `Scripts/gstack-review-gate.sh`
+1. gstack review attestation gate via `Scripts/gstack-review-gate.sh`
 2. `swift format` on staged `.swift` files
 3. `swiftlint` on staged `.swift` files
 
 Notes:
 
 - local global gstack skill root: `/Users/apple/.codex/skills/gstack`
-- the hook cannot execute the interactive review skill itself; it only enforces attestation with `GSTACK_REVIEWED=1`
+- the hook cannot execute the interactive review skill itself; run it manually in your AI session with **`/review`** or **`/gstack-review`** when skill prefixes are enabled, then attest with `GSTACK_REVIEWED=1`
 - emergency bypass remains `SKIP_GSTACK_REVIEW=1` and must be justified in commit/PR text
 
 ## Upstream Source of Truth
@@ -90,7 +90,7 @@ This repository currently includes:
 
 ## Agent Tooling
 
-- **gstack `/review`** before commit, then `GSTACK_REVIEWED=1 git commit ...`
+- before commit, run the interactive gstack review skill in your AI session: usually **`/review`**, or **`/gstack-review`** if skill prefixes are enabled; then `GSTACK_REVIEWED=1 git commit ...`
 - emergency bypass: `SKIP_GSTACK_REVIEW=1` (justify in commit/PR)
 - `gstack` `/qa` and later release-oriented workflows remain available
 - OCR scripts optional/manual only; not part of default pre-commit
