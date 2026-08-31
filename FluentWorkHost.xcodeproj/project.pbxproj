@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		10C2070D1B95E420EC88EEF8 /* FluentWorkUI in Frameworks */ = {isa = PBXBuildFile; productRef = 4EEC60DAAB60DCB43340097F /* FluentWorkUI */; };
 		5E26611E69871BD2B2654A9C /* FluentWorkCore in Frameworks */ = {isa = PBXBuildFile; productRef = 1549693FD4CA3B16888D0082 /* FluentWorkCore */; };
-                7D4E9A15B4C14239A1F25C10 /* FluentWorkUI in Frameworks */ = {isa = PBXBuildFile; productRef = 8AB3E2F061F84B92B1127F43 /* FluentWorkUI */; };
 		9EED61346CC5F6A1E9033BA9 /* FluentWorkHostApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F43D1C05162D9A9E8FCBF2F /* FluentWorkHostApp.swift */; };
 		CC5625540F36029DDCC13640 /* HostRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A84B0BE190F8DF585A3FDAD /* HostRootView.swift */; };
 /* End PBXBuildFile section */
@@ -26,7 +26,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				5E26611E69871BD2B2654A9C /* FluentWorkCore in Frameworks */,
-                                7D4E9A15B4C14239A1F25C10 /* FluentWorkUI in Frameworks */,
+				10C2070D1B95E420EC88EEF8 /* FluentWorkUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -92,7 +92,7 @@
 			name = FluentWorkHost;
 			packageProductDependencies = (
 				1549693FD4CA3B16888D0082 /* FluentWorkCore */,
-                                8AB3E2F061F84B92B1127F43 /* FluentWorkUI */,
+				4EEC60DAAB60DCB43340097F /* FluentWorkUI */,
 			);
 			productName = FluentWorkHost;
 			productReference = 2A2398228915080B3CDF244E /* FluentWorkHost.app */;
@@ -273,6 +273,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIBackgroundModes = audio;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -300,6 +301,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIBackgroundModes = audio;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -353,10 +355,10 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = FluentWorkCore;
 		};
-                8AB3E2F061F84B92B1127F43 /* FluentWorkUI */ = {
-                        isa = XCSwiftPackageProductDependency;
-                        productName = FluentWorkUI;
-                };
+		4EEC60DAAB60DCB43340097F /* FluentWorkUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = FluentWorkUI;
+		};
 /* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = F29BD8A8ED53F7C6BD5BCDE4 /* Project object */;

@@ -232,7 +232,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     private func configureAudioSessionIfNeeded() throws {
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
         try session.setPreferredSampleRate(16_000)
         try session.setPreferredIOBufferDuration(0.02)
         try session.setActive(true)
