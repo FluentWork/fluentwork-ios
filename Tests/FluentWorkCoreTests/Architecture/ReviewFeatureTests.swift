@@ -112,6 +112,14 @@ import TGReduxKitTesting
             self.handler = handler
         }
 
+        func listBlocks(
+            cursor: String?,
+            limit: Int?,
+            favoriteOnly: Bool
+        ) async throws -> ListPhraseBlocksResponse {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+
         func batchAccept(
             sourceSessionID: String,
             cards: [RefineCard]
@@ -152,6 +160,14 @@ import TGReduxKitTesting
     let card = try #require(payload.refineCards.first)
 
     final class FailingCorpusClient: CorpusClientProtocol, @unchecked Sendable {
+        func listBlocks(
+            cursor: String?,
+            limit: Int?,
+            favoriteOnly: Bool
+        ) async throws -> ListPhraseBlocksResponse {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+
         func batchAccept(
             sourceSessionID: String,
             cards: [RefineCard]

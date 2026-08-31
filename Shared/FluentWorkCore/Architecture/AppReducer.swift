@@ -40,6 +40,15 @@ public let appReducer: Reducer<AppState, AppAction> = combineReducers(
         }
     ),
     pullback(
+        corpusReducer,
+        state: \.corpus,
+        action: AppAction.corpus,
+        extract: {
+            guard case let .corpus(action) = $0 else { return nil }
+            return action
+        }
+    ),
+    pullback(
         workspaceReducer,
         state: \.workspace,
         action: AppAction.workspace,
@@ -102,6 +111,9 @@ public let appCrossCuttingReducer: Reducer<AppState, AppAction> = { state, actio
     case let .speakingRoom(.badgeHit(badge)):
         state.workspace.highlightedBadge = badge
         state.workspace.badgeFeedCount += 1
+
+    case .auth(.signedInAsGuest), .auth(.mergedIntoRegistered):
+        state.corpus = CorpusState()
 
     default:
         break

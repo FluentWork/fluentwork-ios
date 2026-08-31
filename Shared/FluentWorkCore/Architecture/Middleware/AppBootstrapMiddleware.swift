@@ -7,6 +7,9 @@ public enum AppTaskID {
     public static let bootstrap: CancellationID = "app.bootstrap"
     public static let networkMonitor: CancellationID = "app.networkMonitor"
     public static let reviewPoll: CancellationID = "review.poll"
+    public static let corpusHydrate: CancellationID = "corpus.hydrate"
+    public static let corpusRefresh: CancellationID = "corpus.refresh"
+    public static let corpusLoadMore: CancellationID = "corpus.load-more"
 
     public static func reviewAccept(cardID: String) -> CancellationID {
         CancellationID("review.accept.\(cardID)")
@@ -16,6 +19,7 @@ public enum AppTaskID {
 public func makeAppMiddlewares(container: Container? = nil) -> [Middleware<AppState, AppAction>] {
     let resolvedContainer = container ?? Container.shared
     return [
+        corpusMiddleware(container: resolvedContainer),
         reviewMiddleware(container: resolvedContainer),
         speechSessionMiddleware(container: resolvedContainer),
         appBootstrapMiddleware(container: resolvedContainer),
@@ -192,4 +196,129 @@ public func reviewMiddleware(container: Container? = nil) -> Middleware<AppState
             return next(action)
         }
     }
+}
+
+public func corpusMiddleware(container: Container? = nil) -> Middleware<AppState, AppAction> {
+    let resolvedContainer = container ?? Container.shared
+    let corpusClient = resolvedContainer.corpusClient()
+    let corpusCacheStore = resolvedContainer.corpusCacheStore()
+
+    return { store, action, next in
+        switch action {
+        case .corpus(.appear):
+            let scope = corpusCacheScope(for: store.state)
+            return .merge(
+                next(action),
+                .task(id: AppTaskID.corpusHydrate) {
+                    do {
+                        let snapshot = try await corpusCacheStore.loadSnapshot(scope: scope)
+                        guard !Task.isCancelled else { return nil }
+                        return .corpus(.hydrateFromCache(snapshot))
+                    } catch is CancellationError {
+                        return nil
+                    } catch {
+                        guard !Task.isCancelled else { return nil }
+                        return .corpus(.hydrateFromCache(nil))
+                    }
+                }
+            )
+
+        case .corpus(.hydrateFromCache):
+            return .merge(
+                next(action),
+                .task {
+                    .corpus(.refreshRequested)
+                }
+            )
+
+        case .corpus(.refreshRequested):
+            let scope = corpusCacheScope(for: store.state)
+            let base = next(action)
+            return .merge(
+                base,
+                .task(id: AppTaskID.corpusRefresh) {
+                    do {
+                        let response = try await corpusClient.listBlocks(
+                            cursor: nil,
+                            limit: 50,
+                            favoriteOnly: false
+                        )
+                        try await corpusCacheStore.saveSnapshot(
+                            CachedCorpusSnapshot(items: response.items, nextCursor: response.nextCursor),
+                            scope: scope
+                        )
+                        guard !Task.isCancelled else { return nil }
+                        return .corpus(.remoteLoadSucceeded(response, append: false))
+                    } catch is CancellationError {
+                        return nil
+                    } catch {
+                        guard !Task.isCancelled else { return nil }
+                        return .corpus(.remoteLoadFailed(error.localizedDescription))
+                    }
+                }
+            )
+
+        case .corpus(.loadMoreRequested):
+            guard !store.state.corpus.isRefreshing,
+                  let cursor = store.state.corpus.nextCursor,
+                  !cursor.isEmpty
+            else {
+                return next(action)
+            }
+            let scope = corpusCacheScope(for: store.state)
+            let currentItems = store.state.corpus.items
+            let base = next(action)
+            return .merge(
+                base,
+                .task {
+                    .corpus(.remoteLoadStarted)
+                },
+                .task(id: AppTaskID.corpusLoadMore) {
+                    do {
+                        let response = try await corpusClient.listBlocks(
+                            cursor: cursor,
+                            limit: 50,
+                            favoriteOnly: false
+                        )
+                        let merged = mergeCachedSnapshot(
+                            currentItems: currentItems,
+                            incoming: response.items
+                        )
+                        try await corpusCacheStore.saveSnapshot(
+                            CachedCorpusSnapshot(items: merged, nextCursor: response.nextCursor),
+                            scope: scope
+                        )
+                        guard !Task.isCancelled else { return nil }
+                        return .corpus(.remoteLoadSucceeded(response, append: true))
+                    } catch is CancellationError {
+                        return nil
+                    } catch {
+                        guard !Task.isCancelled else { return nil }
+                        return .corpus(.remoteLoadFailed(error.localizedDescription))
+                    }
+                }
+            )
+
+        default:
+            return next(action)
+        }
+    }
+}
+
+private func corpusCacheScope(for state: AppState) -> String {
+    state.auth.currentUserID ?? state.auth.mode.rawValue
+}
+
+private func mergeCachedSnapshot(currentItems: [PhraseBlock], incoming: [PhraseBlock]) -> [PhraseBlock] {
+    var mergedByID = Dictionary(uniqueKeysWithValues: currentItems.map { ($0.id, $0) })
+    for block in incoming {
+        mergedByID[block.id] = block
+    }
+
+    var ordered = currentItems.map(\.id)
+    for id in incoming.map(\.id) where !ordered.contains(id) {
+        ordered.append(id)
+    }
+
+    return ordered.compactMap { mergedByID[$0] }
 }

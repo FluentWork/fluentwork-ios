@@ -33,6 +33,7 @@ public struct AppState: Equatable, Sendable, State {
     public var auth: AuthState
     public var speakingRoom: SpeakingRoomState
     public var review: ReviewState
+    public var corpus: CorpusState
     public var workspace: WorkspaceState
     public var network: NetworkConnectivityState
     public var navigation: AppNavigationState
@@ -44,6 +45,7 @@ public struct AppState: Equatable, Sendable, State {
         auth: AuthState = AuthState(),
         speakingRoom: SpeakingRoomState = SpeakingRoomState(),
         review: ReviewState = ReviewState(),
+        corpus: CorpusState = CorpusState(),
         workspace: WorkspaceState = WorkspaceState(),
         network: NetworkConnectivityState = NetworkConnectivityState(),
         navigation: AppNavigationState = AppNavigationState()
@@ -54,6 +56,7 @@ public struct AppState: Equatable, Sendable, State {
         self.auth = auth
         self.speakingRoom = speakingRoom
         self.review = review
+        self.corpus = corpus
         self.workspace = workspace
         self.network = network
         self.navigation = navigation
@@ -75,6 +78,7 @@ public enum AppAction: Equatable, Sendable, Action {
     case auth(AuthAction)
     case speakingRoom(SpeakingRoomAction)
     case review(ReviewAction)
+    case corpus(CorpusAction)
     case workspace(WorkspaceAction)
     case network(NetworkConnectivityAction)
     case navigation(AppNavigationAction)

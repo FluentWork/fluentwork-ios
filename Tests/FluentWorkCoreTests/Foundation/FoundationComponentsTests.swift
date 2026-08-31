@@ -34,6 +34,38 @@ import TGReduxKitTesting
     #expect(try storage.read(key: "session.ticket") == nil)
 }
 
+@Test func inMemoryCorpusCacheStoreRoundTripsSnapshot() async throws {
+    let store = InMemoryCorpusCacheStore()
+    let snapshot = CachedCorpusSnapshot(
+        items: [
+            PhraseBlock(
+                id: "b-1",
+                intentZH: "表达感谢",
+                expressionEN: "Thank you.",
+                anchorUserSaid: "thanks",
+                sceneTag: "work",
+                functionTag: "gratitude",
+                state: "new",
+                successStreak: 0,
+                nextDueAt: "2026-09-01T10:00:00Z",
+                easeFactor: 2.5,
+                realUseCount: 0,
+                isFavorite: false,
+                pinnedAt: nil,
+                sourceSessionID: "session-1",
+                createdAt: "2026-08-31T09:00:00Z",
+                updatedAt: "2026-08-31T10:00:00Z"
+            ),
+        ],
+        nextCursor: "cursor-1"
+    )
+
+    try await store.saveSnapshot(snapshot, scope: "guest-1")
+    #expect(try await store.loadSnapshot(scope: "guest-1") == snapshot)
+    try await store.clearSnapshot(scope: "guest-1")
+    #expect(try await store.loadSnapshot(scope: "guest-1") == nil)
+}
+
 @Test func fixedClockAndIDGeneratorAreDeterministic() {
     let date = Date(timeIntervalSince1970: 1_700_000_000)
     let uuid = UUID(uuidString: "E621E1F8-C36C-495A-93FC-0C247A3E6E5F")!

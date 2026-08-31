@@ -155,6 +155,10 @@ public extension Container {
         }.singleton
     }
 
+    var corpusCacheStore: Factory<CorpusCacheStoreProtocol> {
+        self { JSONCorpusCacheStore() }.singleton
+    }
+
     var networkMonitor: Factory<NetworkMonitorProtocol> {
         self { NWPathNetworkMonitor() }.singleton
     }
