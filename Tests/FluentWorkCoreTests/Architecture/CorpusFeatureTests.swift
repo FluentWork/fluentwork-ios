@@ -31,6 +31,7 @@ import TGReduxKitTesting
     store.send(.appear)
     try store.assert(equals: expected)
 
+    expected.hasHydratedCache = true
     expected.items = [blockA, blockB]
     expected.nextCursor = "cursor-1"
     expected.phase = .ready
@@ -48,7 +49,7 @@ import TGReduxKitTesting
     #expect(store.state.visibleItems.map(\.id) == ["b-1"])
 }
 
-@Test func corpusReducerAppendsMergedRemotePage() throws {
+@Test func corpusReducerAppliesRemoteSnapshotAndMetadata() throws {
     let existing = makePhraseBlock(id: "b-1", expressionEN: "One", updatedAt: "2026-08-31T10:00:00Z")
     let updated = makePhraseBlock(id: "b-1", expressionEN: "One updated", updatedAt: "2026-08-31T10:10:00Z")
     let appended = makePhraseBlock(id: "b-2", expressionEN: "Two", updatedAt: "2026-08-31T10:20:00Z")
@@ -69,7 +70,15 @@ import TGReduxKitTesting
     expected.items = [updated, appended]
     expected.nextCursor = "cursor-2"
     expected.syncCursor = "2026-08-31T10:20:00Z"
-    store.send(.remoteLoadSucceeded(ListPhraseBlocksResponse(items: [updated, appended], nextCursor: "cursor-2"), append: true))
+    store.send(
+        .remoteLoadSucceeded(
+            snapshot: CachedCorpusSnapshot(items: [updated, appended], nextCursor: "cursor-2"),
+            metadata: CorpusSyncMetadata(
+                listCursor: "cursor-2",
+                syncCursor: "2026-08-31T10:20:00Z"
+            )
+        )
+    )
     try store.assert(equals: expected)
 }
 
@@ -79,20 +88,21 @@ import TGReduxKitTesting
     let remote = makePhraseBlock(id: "remote-1", expressionEN: "Remote")
 
     final class StubCorpusClient: CorpusClientProtocol, @unchecked Sendable {
-        let listHandler: @Sendable (String?, Int?, Bool) async throws -> ListPhraseBlocksResponse
+        let listHandler: @Sendable (String?, String?, Int?, Bool) async throws -> ListPhraseBlocksResponse
 
         init(
-            listHandler: @escaping @Sendable (String?, Int?, Bool) async throws -> ListPhraseBlocksResponse
+            listHandler: @escaping @Sendable (String?, String?, Int?, Bool) async throws -> ListPhraseBlocksResponse
         ) {
             self.listHandler = listHandler
         }
 
         func listBlocks(
             cursor: String?,
+            updatedAfter: String?,
             limit: Int?,
             favoriteOnly: Bool
         ) async throws -> ListPhraseBlocksResponse {
-            try await listHandler(cursor, limit, favoriteOnly)
+            try await listHandler(cursor, updatedAfter, limit, favoriteOnly)
         }
 
         func setFavorite(
@@ -146,16 +156,23 @@ import TGReduxKitTesting
             "guest-1": CachedCorpusSnapshot(items: [cached], nextCursor: "cursor-cached"),
         ]
     )
+    let syncStore = InMemoryCorpusSyncMetadataStore()
+    try await syncStore.save(
+        CorpusSyncMetadata(listCursor: "cursor-cached", syncCursor: "2026-08-31T09:00:00Z"),
+        scope: "guest-1"
+    )
 
     let container = Container()
     container.reset()
     container.corpusCacheStore.register { cache }
+    container.corpusSyncMetadataStore.register { syncStore }
     container.corpusClient.register {
-        StubCorpusClient { cursor, limit, favoriteOnly in
+        StubCorpusClient { cursor, updatedAfter, limit, favoriteOnly in
             #expect(cursor == nil)
+            #expect(updatedAfter == "2026-08-31T09:00:00Z")
             #expect(limit == 50)
             #expect(favoriteOnly == false)
-            return ListPhraseBlocksResponse(items: [remote], nextCursor: "cursor-remote")
+            return ListPhraseBlocksResponse(items: [remote], nextCursor: nil)
         }
     }
 
@@ -167,14 +184,15 @@ import TGReduxKitTesting
     store.dispatch(AppAction.corpus(.appear))
 
     try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        store.state.corpus.items.map { $0.id } == ["remote-1"]
+        store.state.corpus.items.map { $0.id } == ["cached-1", "remote-1"]
     }
 
     #expect(store.state.corpus.phase == CorpusScreenPhase.ready)
-    #expect(store.state.corpus.nextCursor == "cursor-remote")
+    #expect(store.state.corpus.nextCursor == "cursor-cached")
+    #expect(store.state.corpus.syncCursor == "2026-08-31T10:00:00Z")
     #expect(await cache.lastSavedScope == "guest-1")
     let refreshedCache = await cache.snapshot(scope: "guest-1")
-    #expect(refreshedCache?.items.map { $0.id } == ["remote-1"])
+    #expect(refreshedCache?.items.map { $0.id } == ["cached-1", "remote-1"])
 }
 
 @MainActor
@@ -191,10 +209,12 @@ import TGReduxKitTesting
 
         func listBlocks(
             cursor: String?,
+            updatedAfter: String?,
             limit: Int?,
             favoriteOnly: Bool
         ) async throws -> ListPhraseBlocksResponse {
             #expect(cursor == "cursor-1")
+            #expect(updatedAfter == nil)
             return response
         }
 
@@ -259,10 +279,12 @@ import TGReduxKitTesting
 
         func listBlocks(
             cursor: String?,
+            updatedAfter: String?,
             limit: Int?,
             favoriteOnly: Bool
         ) async throws -> ListPhraseBlocksResponse {
-            ListPhraseBlocksResponse(items: [], nextCursor: nil)
+            #expect(updatedAfter == nil)
+            return ListPhraseBlocksResponse(items: [], nextCursor: nil)
         }
 
         func setFavorite(
@@ -331,10 +353,12 @@ import TGReduxKitTesting
     actor RecordingCorpusClient: CorpusClientProtocol {
         func listBlocks(
             cursor: String?,
+            updatedAfter: String?,
             limit: Int?,
             favoriteOnly: Bool
         ) async throws -> ListPhraseBlocksResponse {
-            ListPhraseBlocksResponse(
+            #expect(updatedAfter == nil)
+            return ListPhraseBlocksResponse(
                 items: [makePhraseBlock(id: "registered-1", isFavorite: true)],
                 nextCursor: "cursor-new"
             )
@@ -427,6 +451,165 @@ import TGReduxKitTesting
     #expect((try await cache.loadSnapshot(scope: "user-42"))?.items.map { $0.id } == ["registered-1"])
 }
 
+@MainActor
+@Test func corpusMiddlewareAppliesIncrementalDeletionTombstone() async throws {
+    actor RecordingCorpusClient: CorpusClientProtocol {
+        func listBlocks(
+            cursor: String?,
+            updatedAfter: String?,
+            limit: Int?,
+            favoriteOnly: Bool
+        ) async throws -> ListPhraseBlocksResponse {
+            #expect(cursor == nil)
+            #expect(updatedAfter == "2026-08-31T10:00:00Z")
+            return ListPhraseBlocksResponse(
+                items: [
+                    makePhraseBlock(
+                        id: "b-1",
+                        expressionEN: "Removed",
+                        updatedAt: "2026-08-31T10:30:00Z",
+                        deletedAt: "2026-08-31T10:30:00Z"
+                    ),
+                ],
+                nextCursor: nil
+            )
+        }
+
+        func setFavorite(
+            blockID: String,
+            isFavorite: Bool,
+            pinned: Bool
+        ) async throws -> PhraseBlock {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+
+        func deleteBlock(blockID: String) async throws {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+
+        func batchAccept(
+            sourceSessionID: String,
+            cards: [RefineCard]
+        ) async throws -> BatchAcceptBlocksResponse {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+    }
+
+    let cache = InMemoryCorpusCacheStore()
+    let syncStore = InMemoryCorpusSyncMetadataStore()
+    try await cache.saveSnapshot(
+        CachedCorpusSnapshot(
+            items: [makePhraseBlock(id: "b-1", expressionEN: "Removed", updatedAt: "2026-08-31T10:00:00Z")],
+            nextCursor: "cursor-1"
+        ),
+        scope: "user-42"
+    )
+    try await syncStore.save(
+        CorpusSyncMetadata(listCursor: "cursor-1", syncCursor: "2026-08-31T10:00:00Z"),
+        scope: "user-42"
+    )
+
+    let container = Container()
+    container.reset()
+    container.corpusCacheStore.register { cache }
+    container.corpusSyncMetadataStore.register { syncStore }
+    container.corpusClient.register { RecordingCorpusClient() }
+
+    var initialState = AppState.initial
+    initialState.auth.mode = .registered
+    initialState.auth.currentUserID = "user-42"
+
+    let store = AppStoreFactory.make(container: container, initialState: initialState)
+    store.dispatch(.corpus(.appear))
+
+    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.corpus.hasHydratedCache && store.state.corpus.hasHydratedSyncMetadata && !store.state.corpus.isRefreshing
+    }
+
+    #expect(store.state.corpus.items.isEmpty)
+    #expect(store.state.corpus.nextCursor == "cursor-1")
+    #expect(store.state.corpus.syncCursor == "2026-08-31T10:30:00Z")
+}
+
+@MainActor
+@Test func corpusMiddlewareFallsBackToFullRefreshWhenCursorResetRequested() async throws {
+    actor RecordingCorpusClient: CorpusClientProtocol {
+        private(set) var calls: [(String?, String?)] = []
+
+        func listBlocks(
+            cursor: String?,
+            updatedAfter: String?,
+            limit: Int?,
+            favoriteOnly: Bool
+        ) async throws -> ListPhraseBlocksResponse {
+            calls.append((cursor, updatedAfter))
+            if updatedAfter != nil {
+                return ListPhraseBlocksResponse(items: [], nextCursor: nil, cursorReset: true)
+            }
+            return ListPhraseBlocksResponse(
+                items: [makePhraseBlock(id: "fresh-1", expressionEN: "Fresh")],
+                nextCursor: "cursor-fresh"
+            )
+        }
+
+        func setFavorite(
+            blockID: String,
+            isFavorite: Bool,
+            pinned: Bool
+        ) async throws -> PhraseBlock {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+
+        func deleteBlock(blockID: String) async throws {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+
+        func batchAccept(
+            sourceSessionID: String,
+            cards: [RefineCard]
+        ) async throws -> BatchAcceptBlocksResponse {
+            throw APIError.backend(code: "unexpected", message: "unused")
+        }
+
+        func recordedCalls() -> [(String?, String?)] {
+            calls
+        }
+    }
+
+    let cache = InMemoryCorpusCacheStore()
+    let syncStore = InMemoryCorpusSyncMetadataStore()
+    try await cache.saveSnapshot(
+        CachedCorpusSnapshot(items: [makePhraseBlock(id: "stale-1")], nextCursor: "cursor-old"),
+        scope: "user-42"
+    )
+    try await syncStore.save(
+        CorpusSyncMetadata(listCursor: "cursor-old", syncCursor: "2026-08-31T10:00:00Z"),
+        scope: "user-42"
+    )
+    let client = RecordingCorpusClient()
+
+    let container = Container()
+    container.reset()
+    container.corpusCacheStore.register { cache }
+    container.corpusSyncMetadataStore.register { syncStore }
+    container.corpusClient.register { client }
+
+    var initialState = AppState.initial
+    initialState.auth.mode = .registered
+    initialState.auth.currentUserID = "user-42"
+
+    let store = AppStoreFactory.make(container: container, initialState: initialState)
+    store.dispatch(.corpus(.appear))
+
+    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.corpus.items.map(\.id) == ["fresh-1"]
+    }
+
+    #expect(store.state.corpus.nextCursor == "cursor-fresh")
+    #expect(store.state.corpus.syncCursor == "2026-08-31T10:00:00Z")
+    #expect(await client.recordedCalls().count == 2)
+}
+
 @Test func corpusReducerTracksOfflineOutboxIndicators() throws {
     let block = makePhraseBlock(id: "b-1")
     let store = TestStore(
@@ -508,7 +691,8 @@ private func makePhraseBlock(
     sceneTag: String = "work",
     functionTag: String = "gratitude",
     isFavorite: Bool = false,
-    updatedAt: String = "2026-08-31T10:00:00Z"
+    updatedAt: String = "2026-08-31T10:00:00Z",
+    deletedAt: String? = nil
 ) -> PhraseBlock {
     PhraseBlock(
         id: id,
@@ -525,6 +709,7 @@ private func makePhraseBlock(
         isFavorite: isFavorite,
         pinnedAt: nil,
         sourceSessionID: "session-1",
+        deletedAt: deletedAt,
         createdAt: "2026-08-31T09:00:00Z",
         updatedAt: updatedAt
     )

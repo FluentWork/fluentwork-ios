@@ -249,14 +249,23 @@ public func corpusMiddleware(container: Container? = nil) -> Middleware<AppState
                 }
             )
 
-        case .corpus(.hydrateFromCache):
-            let effects: [Effect<AppAction>] = [
-                next(action),
+        case .corpus(.hydrateFromCache), .corpus(.hydrateSyncMetadata):
+            let base = next(action)
+            guard store.state.corpus.hasHydratedCache,
+                  store.state.corpus.hasHydratedSyncMetadata,
+                  !store.state.corpus.didRequestInitialRefresh
+            else {
+                return base
+            }
+            return .merge(
+                base,
+                .task {
+                    .corpus(.initialRefreshTriggered)
+                },
                 .task {
                     .corpus(.refreshRequested)
-                },
-            ]
-            return .merge(effects)
+                }
+            )
 
         case .corpus(.hydrateOutbox(let items)):
             guard store.state.network.isConnected, !items.isEmpty else {
@@ -271,26 +280,26 @@ public func corpusMiddleware(container: Container? = nil) -> Middleware<AppState
 
         case .corpus(.refreshRequested):
             let scope = corpusCacheScope(for: store.state)
+            let currentItems = store.state.corpus.items
+            let currentListCursor = store.state.corpus.nextCursor
+            let currentSyncCursor = store.state.corpus.syncCursor
             let base = next(action)
             return .merge(
                 base,
                 .task(id: AppTaskID.corpusRefresh) {
                     do {
-                        let response = try await corpusClient.listBlocks(
-                            cursor: nil,
-                            limit: 50,
-                            favoriteOnly: false
+                        let result = try await refreshCorpusSnapshot(
+                            corpusClient: corpusClient,
+                            currentItems: currentItems,
+                            currentListCursor: currentListCursor,
+                            currentSyncCursor: currentSyncCursor
                         )
-                        let syncCursor = response.items.map(\.updatedAt).max()
-                        let snapshot = CachedCorpusSnapshot(items: response.items, nextCursor: response.nextCursor)
-                        let metadata = CorpusSyncMetadata(
-                            listCursor: response.nextCursor,
-                            syncCursor: syncCursor
-                        )
+                        let snapshot = result.snapshot
+                        let metadata = result.metadata
                         try await corpusCacheStore.saveSnapshot(snapshot, scope: scope)
                         try await corpusSyncMetadataStore.save(metadata, scope: scope)
                         guard !Task.isCancelled else { return nil }
-                        return .corpus(.remoteLoadSucceeded(response, append: false))
+                        return .corpus(.remoteLoadSucceeded(snapshot: snapshot, metadata: metadata))
                     } catch is CancellationError {
                         return nil
                     } catch {
@@ -320,27 +329,28 @@ public func corpusMiddleware(container: Container? = nil) -> Middleware<AppState
                     do {
                         let response = try await corpusClient.listBlocks(
                             cursor: cursor,
+                            updatedAfter: nil,
                             limit: 50,
                             favoriteOnly: false
                         )
-                        let merged = mergeCachedSnapshot(
-                            currentItems: currentItems,
-                            incoming: response.items
+                        let snapshot = CachedCorpusSnapshot(
+                            items: mergeBrowsePage(
+                                currentItems: currentItems,
+                                incoming: response.items
+                            ),
+                            nextCursor: response.nextCursor
                         )
                         let metadata = CorpusSyncMetadata(
                             listCursor: response.nextCursor,
-                            syncCursor: max(
-                                currentSyncCursor ?? "",
-                                response.items.map(\.updatedAt).max() ?? ""
-                            ).nilIfEmpty
+                            syncCursor: mergedSyncCursor(
+                                currentSyncCursor,
+                                response.items.map(\.updatedAt).max()
+                            )
                         )
-                        try await corpusCacheStore.saveSnapshot(
-                            CachedCorpusSnapshot(items: merged, nextCursor: response.nextCursor),
-                            scope: scope
-                        )
+                        try await corpusCacheStore.saveSnapshot(snapshot, scope: scope)
                         try await corpusSyncMetadataStore.save(metadata, scope: scope)
                         guard !Task.isCancelled else { return nil }
-                        return .corpus(.remoteLoadSucceeded(response, append: true))
+                        return .corpus(.remoteLoadSucceeded(snapshot: snapshot, metadata: metadata))
                     } catch is CancellationError {
                         return nil
                     } catch {
@@ -531,29 +541,26 @@ public func corpusMiddleware(container: Container? = nil) -> Middleware<AppState
                         try await corpusSyncMetadataStore.clear(scope: oldScope)
                         let response = try await corpusClient.listBlocks(
                             cursor: nil,
+                            updatedAfter: nil,
                             limit: 50,
                             favoriteOnly: false
                         )
+                        let metadata = CorpusSyncMetadata(
+                            listCursor: response.nextCursor,
+                            syncCursor: response.items.map(\.updatedAt).max()
+                        )
+                        let snapshot = CachedCorpusSnapshot(
+                            items: response.items,
+                            nextCursor: response.nextCursor
+                        )
                         try await corpusCacheStore.saveSnapshot(
-                            CachedCorpusSnapshot(items: response.items, nextCursor: response.nextCursor),
+                            snapshot,
                             scope: newScope
                         )
-                        try await corpusSyncMetadataStore.save(
-                            CorpusSyncMetadata(
-                                listCursor: response.nextCursor,
-                                syncCursor: response.items.map(\.updatedAt).max()
-                            ),
-                            scope: newScope
-                        )
+                        try await corpusSyncMetadataStore.save(metadata, scope: newScope)
                         return .corpus(.mergeRebuildPrepared(
-                            snapshot: CachedCorpusSnapshot(
-                                items: response.items,
-                                nextCursor: response.nextCursor
-                            ),
-                            metadata: CorpusSyncMetadata(
-                                listCursor: response.nextCursor,
-                                syncCursor: response.items.map(\.updatedAt).max()
-                            )
+                            snapshot: snapshot,
+                            metadata: metadata
                         ))
                     } catch {
                         return .corpus(.remoteLoadFailed(error.localizedDescription))
@@ -579,7 +586,79 @@ private func corpusCacheScope(for state: AppState) -> String {
     state.auth.currentUserID ?? state.auth.mode.rawValue
 }
 
-private func mergeCachedSnapshot(currentItems: [PhraseBlock], incoming: [PhraseBlock]) -> [PhraseBlock] {
+private struct CorpusRefreshResult: Sendable {
+    let snapshot: CachedCorpusSnapshot
+    let metadata: CorpusSyncMetadata
+}
+
+private func refreshCorpusSnapshot(
+    corpusClient: CorpusClientProtocol,
+    currentItems: [PhraseBlock],
+    currentListCursor: String?,
+    currentSyncCursor: String?
+) async throws -> CorpusRefreshResult {
+    guard let currentSyncCursor, !currentSyncCursor.isEmpty else {
+        let response = try await corpusClient.listBlocks(
+            cursor: nil,
+            updatedAfter: nil,
+            limit: 50,
+            favoriteOnly: false
+        )
+        return CorpusRefreshResult(
+            snapshot: CachedCorpusSnapshot(items: response.items, nextCursor: response.nextCursor),
+            metadata: CorpusSyncMetadata(
+                listCursor: response.nextCursor,
+                syncCursor: response.items.map(\.updatedAt).max()
+            )
+        )
+    }
+
+    var mergedItems = currentItems
+    var pageCursor: String?
+    var latestSyncCursor = currentSyncCursor
+
+    while true {
+        let response = try await corpusClient.listBlocks(
+            cursor: pageCursor,
+            updatedAfter: currentSyncCursor,
+            limit: 50,
+            favoriteOnly: false
+        )
+        if response.cursorReset {
+            let fallback = try await corpusClient.listBlocks(
+                cursor: nil,
+                updatedAfter: nil,
+                limit: 50,
+                favoriteOnly: false
+            )
+            return CorpusRefreshResult(
+                snapshot: CachedCorpusSnapshot(items: fallback.items, nextCursor: fallback.nextCursor),
+                metadata: CorpusSyncMetadata(
+                    listCursor: fallback.nextCursor,
+                    syncCursor: fallback.items.map(\.updatedAt).max()
+                )
+            )
+        }
+
+        mergedItems = applyDeltaChanges(currentItems: mergedItems, incoming: response.items)
+        latestSyncCursor = mergedSyncCursor(latestSyncCursor, response.items.map(\.updatedAt).max()) ?? latestSyncCursor
+
+        guard let nextCursor = response.nextCursor, !nextCursor.isEmpty else {
+            break
+        }
+        pageCursor = nextCursor
+    }
+
+    return CorpusRefreshResult(
+        snapshot: CachedCorpusSnapshot(items: mergedItems, nextCursor: currentListCursor),
+        metadata: CorpusSyncMetadata(
+            listCursor: currentListCursor,
+            syncCursor: latestSyncCursor.nilIfEmpty
+        )
+    )
+}
+
+private func mergeBrowsePage(currentItems: [PhraseBlock], incoming: [PhraseBlock]) -> [PhraseBlock] {
     var mergedByID = Dictionary(uniqueKeysWithValues: currentItems.map { ($0.id, $0) })
     for block in incoming {
         mergedByID[block.id] = block
@@ -588,6 +667,25 @@ private func mergeCachedSnapshot(currentItems: [PhraseBlock], incoming: [PhraseB
     var ordered = currentItems.map(\.id)
     for id in incoming.map(\.id) where !ordered.contains(id) {
         ordered.append(id)
+    }
+
+    return ordered.compactMap { mergedByID[$0] }
+}
+
+private func applyDeltaChanges(currentItems: [PhraseBlock], incoming: [PhraseBlock]) -> [PhraseBlock] {
+    var mergedByID = Dictionary(uniqueKeysWithValues: currentItems.map { ($0.id, $0) })
+    var ordered = currentItems.map(\.id)
+
+    for block in incoming {
+        if block.deletedAt != nil {
+            mergedByID.removeValue(forKey: block.id)
+            ordered.removeAll { $0 == block.id }
+            continue
+        }
+        mergedByID[block.id] = block
+        if !ordered.contains(block.id) {
+            ordered.append(block.id)
+        }
     }
 
     return ordered.compactMap { mergedByID[$0] }
@@ -620,6 +718,19 @@ private func mergeTargetCorpusScope(for action: AppAction, fallbackState: AppSta
         return corpusCacheScope(for: fallbackState)
     }
     return userID
+}
+
+private func mergedSyncCursor(_ lhs: String?, _ rhs: String?) -> String? {
+    switch (lhs?.nilIfEmpty, rhs?.nilIfEmpty) {
+    case let (left?, right?):
+        return max(left, right)
+    case let (left?, nil):
+        return left
+    case let (nil, right?):
+        return right
+    case (nil, nil):
+        return nil
+    }
 }
 
 private extension String {

@@ -18,6 +18,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
         function: String? = nil,
         keyword: String? = nil,
         cursor: String? = nil,
+        updatedAfter: String? = nil,
         limit: Int? = nil,
         favoriteOnly: Bool = false
     )
@@ -117,7 +118,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
                 parameters: ["text": text, "channel": channel],
                 encoding: JSONEncoding.default
             )
-        case let .listCorpusBlocks(_, scene, function, keyword, cursor, limit, favoriteOnly):
+        case let .listCorpusBlocks(_, scene, function, keyword, cursor, updatedAfter, limit, favoriteOnly):
             var parameters: [String: Any] = [:]
             if let scene, !scene.isEmpty {
                 parameters["scene"] = scene
@@ -130,6 +131,9 @@ public enum FluentWorkAPI: FluentWorkTargetType {
             }
             if let cursor, !cursor.isEmpty {
                 parameters["cursor"] = cursor
+            }
+            if let updatedAfter, !updatedAfter.isEmpty {
+                parameters["updated_after"] = updatedAfter
             }
             if let limit {
                 parameters["limit"] = limit
@@ -178,7 +182,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
              let .createSession(token, _, _),
              let .getSessionReview(_, token),
              let .sendSessionMessage(_, token, _, _),
-             let .listCorpusBlocks(token, _, _, _, _, _, _),
+             let .listCorpusBlocks(token, _, _, _, _, _, _, _),
              let .batchAcceptCorpusBlocks(token, _, _),
              let .updateCorpusBlock(token, _, _),
              let .deleteCorpusBlock(token, _),

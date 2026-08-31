@@ -4,6 +4,7 @@ import Foundation
 public protocol CorpusClientProtocol: Sendable {
     func listBlocks(
         cursor: String?,
+        updatedAfter: String?,
         limit: Int?,
         favoriteOnly: Bool
     ) async throws -> ListPhraseBlocksResponse
@@ -36,6 +37,7 @@ public final class DefaultCorpusClient: CorpusClientProtocol, @unchecked Sendabl
 
     public func listBlocks(
         cursor: String? = nil,
+        updatedAfter: String? = nil,
         limit: Int? = nil,
         favoriteOnly: Bool = false
     ) async throws -> ListPhraseBlocksResponse {
@@ -46,6 +48,7 @@ public final class DefaultCorpusClient: CorpusClientProtocol, @unchecked Sendabl
             function: nil,
             keyword: nil,
             cursor: cursor,
+            updatedAfter: updatedAfter,
             limit: limit,
             favoriteOnly: favoriteOnly
         )

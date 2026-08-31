@@ -30,6 +30,9 @@ public struct CorpusState: Equatable, Sendable, State {
     public var isReplayingOutbox: Bool
     public var pendingIndicators: [CorpusPendingIndicator]
     public var outbox: [CorpusOutboxItem]
+    public var hasHydratedCache: Bool
+    public var hasHydratedSyncMetadata: Bool
+    public var didRequestInitialRefresh: Bool
     public var lastErrorMessage: String?
 
     public init(
@@ -43,6 +46,9 @@ public struct CorpusState: Equatable, Sendable, State {
         isReplayingOutbox: Bool = false,
         pendingIndicators: [CorpusPendingIndicator] = [],
         outbox: [CorpusOutboxItem] = [],
+        hasHydratedCache: Bool = false,
+        hasHydratedSyncMetadata: Bool = false,
+        didRequestInitialRefresh: Bool = false,
         lastErrorMessage: String? = nil
     ) {
         self.phase = phase
@@ -55,6 +61,9 @@ public struct CorpusState: Equatable, Sendable, State {
         self.isReplayingOutbox = isReplayingOutbox
         self.pendingIndicators = pendingIndicators
         self.outbox = outbox
+        self.hasHydratedCache = hasHydratedCache
+        self.hasHydratedSyncMetadata = hasHydratedSyncMetadata
+        self.didRequestInitialRefresh = didRequestInitialRefresh
         self.lastErrorMessage = lastErrorMessage
     }
 
@@ -88,10 +97,11 @@ public enum CorpusAction: Equatable, Sendable, Action {
     case hydrateFromCache(CachedCorpusSnapshot?)
     case hydrateOutbox([CorpusOutboxItem])
     case hydrateSyncMetadata(CorpusSyncMetadata?)
+    case initialRefreshTriggered
     case refreshRequested
     case loadMoreRequested
     case remoteLoadStarted
-    case remoteLoadSucceeded(ListPhraseBlocksResponse, append: Bool)
+    case remoteLoadSucceeded(snapshot: CachedCorpusSnapshot, metadata: CorpusSyncMetadata)
     case remoteLoadFailed(String)
     case favoriteToggled(blockID: String, isFavorite: Bool, pinned: Bool)
     case deleteTapped(blockID: String)
@@ -112,12 +122,16 @@ public enum CorpusAction: Equatable, Sendable, Action {
 public let corpusReducer: Reducer<CorpusState, CorpusAction> = { state, action in
     switch action {
     case .appear:
+        state.hasHydratedCache = false
+        state.hasHydratedSyncMetadata = false
+        state.didRequestInitialRefresh = false
         if state.items.isEmpty {
             state.phase = .loading
         }
         state.lastErrorMessage = nil
 
     case let .hydrateFromCache(snapshot):
+        state.hasHydratedCache = true
         guard let snapshot else { break }
         state.items = snapshot.items
         state.nextCursor = snapshot.nextCursor
@@ -130,8 +144,12 @@ public let corpusReducer: Reducer<CorpusState, CorpusAction> = { state, action i
         }
 
     case let .hydrateSyncMetadata(metadata):
-        state.nextCursor = metadata?.listCursor
+        state.hasHydratedSyncMetadata = true
+        state.nextCursor = metadata?.listCursor ?? state.nextCursor
         state.syncCursor = metadata?.syncCursor
+
+    case .initialRefreshTriggered:
+        state.didRequestInitialRefresh = true
 
     case .refreshRequested, .remoteLoadStarted:
         if state.items.isEmpty {
@@ -140,15 +158,13 @@ public let corpusReducer: Reducer<CorpusState, CorpusAction> = { state, action i
         state.isRefreshing = true
         state.lastErrorMessage = nil
 
-    case let .remoteLoadSucceeded(response, append):
+    case let .remoteLoadSucceeded(snapshot, metadata):
         state.isRefreshing = false
-        state.phase = .ready
-        state.nextCursor = response.nextCursor
-        state.syncCursor = response.items.map(\.updatedAt).max() ?? state.syncCursor
+        state.phase = snapshot.items.isEmpty ? .idle : .ready
+        state.items = snapshot.items
+        state.nextCursor = metadata.listCursor
+        state.syncCursor = metadata.syncCursor
         state.lastErrorMessage = nil
-        state.items = append
-            ? mergeCorpusBlocks(existing: state.items, incoming: response.items)
-            : response.items
 
     case let .remoteLoadFailed(message):
         state.isRefreshing = false
@@ -251,18 +267,4 @@ private func updateCorpusBlock(
         return
     }
     mutate(&items[index])
-}
-
-private func mergeCorpusBlocks(existing: [PhraseBlock], incoming: [PhraseBlock]) -> [PhraseBlock] {
-    var mergedByID = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })
-    for block in incoming {
-        mergedByID[block.id] = block
-    }
-
-    let orderedIDs = existing.map(\.id) + incoming.map(\.id).filter { mergedByID[$0] != nil && !existing.map(\.id).contains($0) }
-    var seen = Set<String>()
-    return orderedIDs.compactMap { id in
-        guard seen.insert(id).inserted else { return nil }
-        return mergedByID[id]
-    }
 }
