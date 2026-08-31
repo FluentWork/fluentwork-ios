@@ -6,11 +6,13 @@ import TGReduxKit
 public enum AppTaskID {
     public static let bootstrap: CancellationID = "app.bootstrap"
     public static let networkMonitor: CancellationID = "app.networkMonitor"
+    public static let reviewPoll: CancellationID = "review.poll"
 }
 
 public func makeAppMiddlewares(container: Container? = nil) -> [Middleware<AppState, AppAction>] {
     let resolvedContainer = container ?? Container.shared
     return [
+        reviewMiddleware(container: resolvedContainer),
         speechSessionMiddleware(container: resolvedContainer),
         appBootstrapMiddleware(container: resolvedContainer),
         appNetworkMonitorMiddleware(container: resolvedContainer),
@@ -99,4 +101,46 @@ private func appBootstrapErrorMessage(_ error: any Error) -> String {
     }
 
     return "Bootstrap failed. Please try again."
+}
+
+public func reviewMiddleware(container: Container? = nil) -> Middleware<AppState, AppAction> {
+    let resolvedContainer = container ?? Container.shared
+
+    return { store, action, next in
+        let speechClient = resolvedContainer.speechSessionClient()
+
+        switch action {
+        case let .review(.appear(sessionID)):
+            guard let sessionID, !sessionID.isEmpty else {
+                return next(action)
+            }
+            return .merge(
+                next(action),
+                .task {
+                    .review(.loadRequested(sessionID: sessionID))
+                }
+            )
+
+        case let .review(.loadRequested(sessionID)):
+            let base = next(action)
+            return .merge(
+                base,
+                .task(id: AppTaskID.reviewPoll) {
+                    do {
+                        let poll = try await speechClient.pollReview(sessionID: sessionID)
+                        guard !Task.isCancelled else { return nil }
+                        return .review(.applyPoll(poll))
+                    } catch is CancellationError {
+                        return nil
+                    } catch {
+                        guard !Task.isCancelled else { return nil }
+                        return .review(.loadFailed(error.localizedDescription))
+                    }
+                }
+            )
+
+        default:
+            return next(action)
+        }
+    }
 }

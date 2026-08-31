@@ -19,6 +19,7 @@ public protocol AudioEngineProtocol: Sendable {
 public protocol SpeechSessionClientProtocol: Sendable {
     func startSession() async throws
     func submitTranscript(_ text: String) async
+    func pollReview(sessionID: String) async throws -> ReviewPollResponse
     func sendDegradedTextMessage(_ text: String) async throws -> PostMessageResponse
     func endSession() async
 }
@@ -86,6 +87,10 @@ public final class PlaceholderSpeechSessionClient: SpeechSessionClientProtocol, 
     public func startSession() async throws {}
 
     public func submitTranscript(_ text: String) async {}
+
+    public func pollReview(sessionID: String) async throws -> ReviewPollResponse {
+        ReviewPollResponse(sessionID: sessionID, status: .pending, review: nil)
+    }
 
     public func sendDegradedTextMessage(_ text: String) async throws -> PostMessageResponse {
         PostMessageResponse(
