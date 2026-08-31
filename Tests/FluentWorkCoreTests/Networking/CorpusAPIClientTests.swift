@@ -26,7 +26,8 @@ import Testing
               "updated_at":"2026-08-31T00:00:00Z"
             }
           ],
-          "next_cursor":"cursor-2"
+          "next_cursor":"cursor-2",
+          "cursor_reset":false
         }
         """.utf8
     )
@@ -40,6 +41,7 @@ import Testing
                 #expect(parameters["func"] as? String == "commit")
                 #expect(parameters["kw"] as? String == "follow")
                 #expect(parameters["cursor"] as? String == "cursor-1")
+                #expect(parameters["updated_after"] as? String == "2026-08-31T00:00:00Z")
                 #expect(parameters["limit"] as? Int == 20)
                 #expect(parameters["favorite_only"] as? Bool == true)
             } else {
@@ -56,12 +58,14 @@ import Testing
         function: "commit",
         keyword: "follow",
         cursor: "cursor-1",
+        updatedAfter: "2026-08-31T00:00:00Z",
         limit: 20,
         favoriteOnly: true
     )
     #expect(response.items.count == 1)
     #expect(response.items[0].id == "b-1")
     #expect(response.nextCursor == "cursor-2")
+    #expect(response.cursorReset == false)
 }
 
 @Test func corpusAPIClientBatchAcceptsRefineBlocks() async throws {

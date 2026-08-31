@@ -365,6 +365,7 @@ public struct PhraseBlock: Codable, Equatable, Sendable, Identifiable {
     public var isFavorite: Bool
     public var pinnedAt: String?
     public var sourceSessionID: String?
+    public var deletedAt: String?
     public var createdAt: String
     public var updatedAt: String
 
@@ -383,6 +384,7 @@ public struct PhraseBlock: Codable, Equatable, Sendable, Identifiable {
         case isFavorite = "is_favorite"
         case pinnedAt = "pinned_at"
         case sourceSessionID = "source_session_id"
+        case deletedAt = "deleted_at"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
@@ -402,6 +404,7 @@ public struct PhraseBlock: Codable, Equatable, Sendable, Identifiable {
         isFavorite: Bool,
         pinnedAt: String?,
         sourceSessionID: String?,
+        deletedAt: String? = nil,
         createdAt: String,
         updatedAt: String
     ) {
@@ -419,6 +422,7 @@ public struct PhraseBlock: Codable, Equatable, Sendable, Identifiable {
         self.isFavorite = isFavorite
         self.pinnedAt = pinnedAt
         self.sourceSessionID = sourceSessionID
+        self.deletedAt = deletedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -427,15 +431,18 @@ public struct PhraseBlock: Codable, Equatable, Sendable, Identifiable {
 public struct ListPhraseBlocksResponse: Codable, Equatable, Sendable {
     public var items: [PhraseBlock]
     public var nextCursor: String?
+    public var cursorReset: Bool
 
     enum CodingKeys: String, CodingKey {
         case items
         case nextCursor = "next_cursor"
+        case cursorReset = "cursor_reset"
     }
 
-    public init(items: [PhraseBlock], nextCursor: String?) {
+    public init(items: [PhraseBlock], nextCursor: String?, cursorReset: Bool = false) {
         self.items = items
         self.nextCursor = nextCursor
+        self.cursorReset = cursorReset
     }
 }
 

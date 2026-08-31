@@ -7,6 +7,7 @@ public protocol CorpusAPIClientProtocol: Sendable {
         function: String?,
         keyword: String?,
         cursor: String?,
+        updatedAfter: String?,
         limit: Int?,
         favoriteOnly: Bool
     ) async throws -> ListPhraseBlocksResponse
@@ -44,6 +45,7 @@ public final class CorpusAPIClient: CorpusAPIClientProtocol, Sendable {
         function: String? = nil,
         keyword: String? = nil,
         cursor: String? = nil,
+        updatedAfter: String? = nil,
         limit: Int? = nil,
         favoriteOnly: Bool = false
     ) async throws -> ListPhraseBlocksResponse {
@@ -55,6 +57,7 @@ public final class CorpusAPIClient: CorpusAPIClientProtocol, Sendable {
                 function: function,
                 keyword: keyword,
                 cursor: cursor,
+                updatedAfter: updatedAfter,
                 limit: limit,
                 favoriteOnly: favoriteOnly
             )

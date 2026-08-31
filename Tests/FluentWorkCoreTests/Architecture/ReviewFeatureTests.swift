@@ -114,6 +114,7 @@ import TGReduxKitTesting
 
         func listBlocks(
             cursor: String?,
+            updatedAfter: String?,
             limit: Int?,
             favoriteOnly: Bool
         ) async throws -> ListPhraseBlocksResponse {
@@ -174,6 +175,7 @@ import TGReduxKitTesting
     final class FailingCorpusClient: CorpusClientProtocol, @unchecked Sendable {
         func listBlocks(
             cursor: String?,
+            updatedAfter: String?,
             limit: Int?,
             favoriteOnly: Bool
         ) async throws -> ListPhraseBlocksResponse {
