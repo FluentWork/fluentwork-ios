@@ -40,6 +40,29 @@ struct AudioSpeechActivityTracker: Sendable {
     }
 }
 
+struct AudioPlaybackGate: Sendable {
+    private(set) var lastAcceptedSequence: UInt32?
+    private(set) var interruptWatermark: UInt32?
+
+    mutating func shouldAccept(_ frame: WSAudioFrame) -> Bool {
+        if let interruptWatermark, frame.sequence <= interruptWatermark {
+            return false
+        }
+        lastAcceptedSequence = frame.sequence
+        return true
+    }
+
+    mutating func markInterrupted() -> UInt32? {
+        interruptWatermark = lastAcceptedSequence
+        return interruptWatermark
+    }
+
+    mutating func reset() {
+        lastAcceptedSequence = nil
+        interruptWatermark = nil
+    }
+}
+
 public actor LiveAudioEngine: AudioEngineProtocol {
     private final class ConversionConsumptionState: @unchecked Sendable {
         var consumed = false
@@ -61,6 +84,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     private var sourceFormat: AVAudioFormat?
     private var hasInstalledTap = false
     private var speechTracker = AudioSpeechActivityTracker()
+    private var playbackGate = AudioPlaybackGate()
     private let clock = ContinuousClock()
 
     public init() {
@@ -88,6 +112,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         self.sourceFormat = inputFormat
         self.converter = converter
         self.speechTracker = AudioSpeechActivityTracker()
+        self.playbackGate.reset()
         self.hasInstalledTap = false
 
         if hadInstalledTap {
@@ -120,6 +145,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         if let emitted = speechTracker.reset() {
             continuation.yield(emitted)
         }
+        playbackGate.reset()
 
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
@@ -131,13 +157,12 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     }
 
     public func play(frame: WSAudioFrame) async {
-        // I12 first slice wires capture + upstream PCM first.
-        // Downstream Opus decode/playback will land after the codec path is in place.
-        _ = frame
+        guard playbackGate.shouldAccept(frame) else { return }
+        // Decoder / player-node scheduling will hang off this gate next.
     }
 
     public func interruptNow() async {
-        // Playback decode queue is not wired yet, so local stop is currently a no-op.
+        _ = playbackGate.markInterrupted()
     }
 
     private func processInput(_ buffer: AVAudioPCMBuffer) async {
