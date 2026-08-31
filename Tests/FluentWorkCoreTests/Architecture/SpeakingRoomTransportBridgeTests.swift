@@ -10,5 +10,5 @@ import Testing
 @Test func speakingRoomActionBridgesSocketReadyAndBadge() {
     #expect(SpeakingRoomAction(.socketReady) == .session(.socketReady))
     #expect(SpeakingRoomAction(.badgeHit("表达自然")) == .badgeHit("表达自然"))
-    #expect(SpeakingRoomAction(.networkDowngraded) == .session(.networkDegraded))
+    #expect(SpeakingRoomAction(.networkLost) == .session(.networkLost))
 }

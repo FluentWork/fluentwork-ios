@@ -15,11 +15,11 @@ public enum SocketTransportEventMapper {
         case let .control(.feedbackBadge(badge)):
             return .badgeHit(badge)
 
+        case .failure(.pingTimedOut), .stateChanged(.disconnected):
+            return .networkLost
+
         case let .failure(error):
             return .failed(error.userFacingMessage)
-
-        case .stateChanged(.disconnected):
-            return .networkDowngraded
 
         case .stateChanged, .control, .audio:
             return nil
@@ -32,7 +32,7 @@ public enum SpeakingRoomTransportAction: Equatable, Sendable {
     case socketReady
     case badgeHit(String)
     case failed(String)
-    case networkDowngraded
+    case networkLost
 }
 
 extension SocketTransportError {

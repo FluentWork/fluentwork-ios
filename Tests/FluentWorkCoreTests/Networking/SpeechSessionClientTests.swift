@@ -4,6 +4,39 @@ import FluentWorkNetworking
 import Testing
 @testable import FluentWorkCore
 
+private actor FailingSessionStartTransport: SocketTransportProtocol {
+    enum StubError: Error, Equatable {
+        case sessionStartFailed
+    }
+
+    nonisolated let events: AsyncStream<SocketTransportEvent>
+    private let continuation: AsyncStream<SocketTransportEvent>.Continuation
+    private(set) var disconnectCount = 0
+
+    init() {
+        let pair = AsyncStream.makeStream(of: SocketTransportEvent.self)
+        self.events = pair.stream
+        self.continuation = pair.continuation
+    }
+
+    func connect(url: URL, sessionID: String, ticket: String) async throws {}
+
+    func disconnect() async {
+        disconnectCount += 1
+        continuation.finish()
+    }
+
+    func send(control frame: WSControlFrame) async throws {
+        if case .sessionStart = frame {
+            throw StubError.sessionStartFailed
+        }
+    }
+
+    func send(audio data: Data) async throws {}
+
+    func markInterrupted() async {}
+}
+
 @Test func authTokenStorePersistsGuestTokens() throws {
     let storage = InMemorySecureStorage()
     let deviceUUID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
@@ -205,4 +238,69 @@ import Testing
     } catch {
         Issue.record("unexpected error: \(error)")
     }
+}
+
+@MainActor
+@Test func defaultSpeechSessionClientClearsActiveSessionWhenStartFails() async throws {
+    let transport = FailingSessionStartTransport()
+    let storage = InMemorySecureStorage()
+    let tokenStore = SecureAuthTokenStore(
+        storage: storage,
+        idGenerator: FixedIDGenerator(value: UUID(uuidString: "66666666-6666-6666-6666-666666666666")!)
+    )
+
+    let guestJSON = Data(
+        """
+        {"user_id":"u-1","is_guest":true,"status":"active","access_token":"access-1","refresh_token":"r","token_type":"Bearer","expires_in":3600}
+        """.utf8
+    )
+    let sessionJSON = Data(
+        """
+        {"session_id":"s-11","wss_url":"ws://127.0.0.1:9/ws","ticket":"tik","ticket_expires_in":60,"ticket_expires_at":"2026-08-26T00:00:00Z","scene_type":"demo","status":"created"}
+        """.utf8
+    )
+
+    let api = SessionAPIClient(
+        network: StubNetworkClient { target in
+            switch target.path {
+            case "/auth/guest": return guestJSON
+            case "/sessions": return sessionJSON
+            case "/sessions/s-11/messages":
+                return Data(#"{"session_id":"s-11","reply":"ok","channel":"text","generator":"stub"}"#.utf8)
+            default:
+                Issue.record("unexpected \(target.path)")
+                return Data()
+            }
+        },
+        baseURL: URL(string: "http://127.0.0.1:8080/api/v1")!
+    )
+
+    let client = DefaultSpeechSessionClient(
+        api: api,
+        tokens: tokenStore,
+        transport: transport
+    )
+
+    do {
+        try await client.startSession()
+        Issue.record("expected start session failure")
+    } catch let error as FailingSessionStartTransport.StubError {
+        #expect(error == .sessionStartFailed)
+    } catch {
+        Issue.record("unexpected error: \(error)")
+    }
+
+    do {
+        _ = try await client.sendDegradedTextMessage("after-failure")
+        Issue.record("expected no active session error after failed start")
+    } catch let error as APIError {
+        #expect(error == .backend(
+            code: "no_active_session",
+            message: "No active speaking-room session."
+        ))
+    } catch {
+        Issue.record("unexpected error: \(error)")
+    }
+
+    #expect(await transport.disconnectCount == 1)
 }

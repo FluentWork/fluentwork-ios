@@ -7,7 +7,7 @@ import Foundation
 public enum SpeechSessionEvent: Equatable, Sendable {
     case sessionStartTap
     case socketReady
-    case aiAudioEnd
+    case aiTurnEnd
     case vadSpeechStart
     case holdStart
     case vadSpeechEnd
