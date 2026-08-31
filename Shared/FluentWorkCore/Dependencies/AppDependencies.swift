@@ -137,6 +137,15 @@ public extension Container {
         }.singleton
     }
 
+    var corpusAPIClient: Factory<CorpusAPIClientProtocol> {
+        self {
+            CorpusAPIClient(
+                network: self.networkClient(),
+                baseURL: self.appEnvironment().apiBaseURL
+            )
+        }.singleton
+    }
+
     var authTokenStore: Factory<AuthTokenStoreProtocol> {
         self {
             SecureAuthTokenStore(
@@ -160,6 +169,16 @@ public extension Container {
                 api: self.sessionAPIClient(),
                 tokens: self.authTokenStore(),
                 transport: self.socketTransport()
+            )
+        }.shared
+    }
+
+    var corpusClient: Factory<CorpusClientProtocol> {
+        self {
+            DefaultCorpusClient(
+                api: self.corpusAPIClient(),
+                sessionAPI: self.sessionAPIClient(),
+                tokens: self.authTokenStore()
             )
         }.shared
     }

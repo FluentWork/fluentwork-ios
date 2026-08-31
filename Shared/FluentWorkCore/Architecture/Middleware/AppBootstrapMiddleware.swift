@@ -7,6 +7,10 @@ public enum AppTaskID {
     public static let bootstrap: CancellationID = "app.bootstrap"
     public static let networkMonitor: CancellationID = "app.networkMonitor"
     public static let reviewPoll: CancellationID = "review.poll"
+
+    public static func reviewAccept(cardID: String) -> CancellationID {
+        CancellationID("review.accept.\(cardID)")
+    }
 }
 
 public func makeAppMiddlewares(container: Container? = nil) -> [Middleware<AppState, AppAction>] {
@@ -108,6 +112,7 @@ public func reviewMiddleware(container: Container? = nil) -> Middleware<AppState
 
     return { store, action, next in
         let speechClient = resolvedContainer.speechSessionClient()
+        let corpusClient = resolvedContainer.corpusClient()
 
         switch action {
         case let .review(.appear(sessionID)):
@@ -135,6 +140,50 @@ public func reviewMiddleware(container: Container? = nil) -> Middleware<AppState
                     } catch {
                         guard !Task.isCancelled else { return nil }
                         return .review(.loadFailed(error.localizedDescription))
+                    }
+                }
+            )
+
+        case let .review(.acceptRefineCardTapped(cardID)):
+            guard let sessionID = store.state.review.sessionID,
+                  !sessionID.isEmpty,
+                  let payload = store.state.review.payload,
+                  let card = payload.refineCards.first(where: { $0.id == cardID }),
+                  !store.state.review.acceptingRefineCardIDs.contains(cardID),
+                  !store.state.review.acceptedRefineCardIDs.contains(cardID)
+            else {
+                return next(action)
+            }
+
+            let base = next(action)
+            return .merge(
+                base,
+                .task {
+                    .review(.acceptRefineCardStarted(cardID: cardID))
+                },
+                .task(id: AppTaskID.reviewAccept(cardID: cardID)) {
+                    do {
+                        let response = try await corpusClient.batchAccept(
+                            sourceSessionID: sessionID,
+                            cards: [card]
+                        )
+                        guard !Task.isCancelled else { return nil }
+                        return .review(
+                            .acceptRefineCardSucceeded(
+                                cardID: cardID,
+                                acceptedCount: response.acceptedCount
+                            )
+                        )
+                    } catch is CancellationError {
+                        return nil
+                    } catch {
+                        guard !Task.isCancelled else { return nil }
+                        return .review(
+                            .acceptRefineCardFailed(
+                                cardID: cardID,
+                                message: error.localizedDescription
+                            )
+                        )
                     }
                 }
             )

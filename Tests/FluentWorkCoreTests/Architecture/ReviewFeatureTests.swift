@@ -31,6 +31,32 @@ import TGReduxKitTesting
     try store.assert(equals: expected)
 }
 
+@Test func reviewReducerTracksRefineCardAcceptLifecycle() throws {
+    let payload = try makeReadyPayload()
+    let cardID = try #require(payload.refineCards.first?.id)
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+
+    var expected = AppState.initial
+    expected.review.sessionID = "s-1"
+    expected.review.phase = .ready
+    expected.review.payload = payload
+    store.send(.review(.applyPoll(ReviewPollResponse(sessionID: "s-1", status: .ready, review: payload))))
+    try store.assert(equals: expected)
+
+    expected.review.acceptingRefineCardIDs = [cardID]
+    store.send(.review(.acceptRefineCardStarted(cardID: cardID)))
+    try store.assert(equals: expected)
+
+    expected.review.acceptingRefineCardIDs = []
+    expected.review.acceptedRefineCardIDs = [cardID]
+    store.send(.review(.acceptRefineCardSucceeded(cardID: cardID, acceptedCount: 1)))
+    try store.assert(equals: expected)
+
+    expected.review.acceptErrorMessage = "accept failed"
+    store.send(.review(.acceptRefineCardFailed(cardID: cardID, message: "accept failed")))
+    try store.assert(equals: expected)
+}
+
 @MainActor
 @Test func reviewMiddlewareLoadsFullReviewPayload() async throws {
     let payload = try makeReadyPayload()
@@ -70,6 +96,90 @@ import TGReduxKitTesting
     #expect(store.state.review.payload?.generator == "ark-review-refine-v1")
     #expect(store.state.review.payload?.transcript.count == 2)
     #expect(store.state.review.payload?.refineCards.count == 1)
+}
+
+@MainActor
+@Test func reviewMiddlewareAcceptsRefineCardIntoCorpus() async throws {
+    let payload = try makeReadyPayload()
+    let card = try #require(payload.refineCards.first)
+
+    final class StubCorpusClient: CorpusClientProtocol, @unchecked Sendable {
+        let handler: @Sendable (String, [RefineCard]) async throws -> BatchAcceptBlocksResponse
+
+        init(
+            handler: @escaping @Sendable (String, [RefineCard]) async throws -> BatchAcceptBlocksResponse
+        ) {
+            self.handler = handler
+        }
+
+        func batchAccept(
+            sourceSessionID: String,
+            cards: [RefineCard]
+        ) async throws -> BatchAcceptBlocksResponse {
+            try await handler(sourceSessionID, cards)
+        }
+    }
+
+    let container = Container()
+    container.corpusClient.register {
+        StubCorpusClient { sourceSessionID, cards in
+            #expect(sourceSessionID == "s-1")
+            #expect(cards.map(\.id) == [card.id])
+            return try makeBatchAcceptResponse(acceptedCount: 1)
+        }
+    }
+
+    var initialState = AppState.initial
+    initialState.review.sessionID = "s-1"
+    initialState.review.phase = .ready
+    initialState.review.payload = payload
+
+    let store = AppStoreFactory.make(container: container, initialState: initialState)
+    store.dispatch(.review(.acceptRefineCardTapped(cardID: card.id)))
+
+    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.review.acceptedRefineCardIDs.contains(card.id)
+    }
+
+    #expect(store.state.review.acceptingRefineCardIDs.isEmpty)
+    #expect(store.state.review.acceptedRefineCardIDs == [card.id])
+    #expect(store.state.review.acceptErrorMessage == nil)
+}
+
+@MainActor
+@Test func reviewMiddlewareSurfacesCorpusAcceptFailure() async throws {
+    let payload = try makeReadyPayload()
+    let card = try #require(payload.refineCards.first)
+
+    final class FailingCorpusClient: CorpusClientProtocol, @unchecked Sendable {
+        func batchAccept(
+            sourceSessionID: String,
+            cards: [RefineCard]
+        ) async throws -> BatchAcceptBlocksResponse {
+            throw APIError.backend(code: "forbidden", message: "accept denied")
+        }
+    }
+
+    let container = Container()
+    container.corpusClient.register {
+        FailingCorpusClient()
+    }
+
+    var initialState = AppState.initial
+    initialState.review.sessionID = "s-1"
+    initialState.review.phase = .ready
+    initialState.review.payload = payload
+
+    let store = AppStoreFactory.make(container: container, initialState: initialState)
+    store.dispatch(.review(.acceptRefineCardTapped(cardID: card.id)))
+
+    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.review.acceptErrorMessage == "accept denied"
+    }
+
+    #expect(store.state.review.acceptingRefineCardIDs.isEmpty)
+    #expect(store.state.review.acceptedRefineCardIDs.isEmpty)
+    #expect(store.state.review.acceptErrorMessage == "accept denied")
 }
 
 private func makeReadyPayload() throws -> ReviewReadyPayload {
@@ -131,6 +241,18 @@ private func makeReadyPayload() throws -> ReviewReadyPayload {
         """.utf8
     )
     return try JSONDecoder().decode(ReviewReadyPayload.self, from: payload)
+}
+
+private func makeBatchAcceptResponse(acceptedCount: Int) throws -> BatchAcceptBlocksResponse {
+    let payload = Data(
+        """
+        {
+          "accepted_count":\(acceptedCount),
+          "items":[]
+        }
+        """.utf8
+    )
+    return try JSONDecoder().decode(BatchAcceptBlocksResponse.self, from: payload)
 }
 
 @MainActor
