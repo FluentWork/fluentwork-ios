@@ -11,10 +11,8 @@ extension SpeakingRoomAction {
             self = .badgeHit(badge)
         case let .failed(message):
             self = .session(.failed(message))
-        case .networkDowngraded:
-            // Immediate text degrade (legacy speaking-room path). Hard disconnect /
-            // heartbeat loss maps to `.networkLost` separately when wired.
-            self = .session(.networkDegraded)
+        case .networkLost:
+            self = .session(.networkLost)
         }
     }
 }

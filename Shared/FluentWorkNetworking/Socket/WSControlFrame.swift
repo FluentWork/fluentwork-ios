@@ -11,6 +11,7 @@ public enum WSControlFrame: Equatable, Sendable {
     case userSpeechEnd
     case aiTextDelta(text: String)
     case aiAudioChunk(sequence: UInt32)
+    case aiTurnEnd(turnID: String?)
     case interrupt
     case feedbackBadge(badge: String)
     case sessionEnd(reason: String?)
@@ -50,6 +51,7 @@ extension WSControlFrame: Codable {
         case sessionID = "session_id"
         case text
         case sequence
+        case turnID = "turn_id"
         case badge
         case reason
         case materialContext = "material_context"
@@ -88,6 +90,9 @@ extension WSControlFrame: Codable {
 
         case "ai.audio.chunk":
             self = .aiAudioChunk(sequence: try container.decode(UInt32.self, forKey: .sequence))
+
+        case "ai.turn.end":
+            self = .aiTurnEnd(turnID: try container.decodeIfPresent(String.self, forKey: .turnID))
 
         case "interrupt":
             self = .interrupt
@@ -131,6 +136,10 @@ extension WSControlFrame: Codable {
         case let .aiAudioChunk(sequence):
             try container.encode("ai.audio.chunk", forKey: .type)
             try container.encode(sequence, forKey: .sequence)
+
+        case let .aiTurnEnd(turnID):
+            try container.encode("ai.turn.end", forKey: .type)
+            try container.encodeIfPresent(turnID, forKey: .turnID)
 
         case .interrupt:
             try container.encode("interrupt", forKey: .type)

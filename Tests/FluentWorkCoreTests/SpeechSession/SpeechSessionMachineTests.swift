@@ -139,12 +139,12 @@ import Testing
     }
 }
 
-@Test func interruptRaceVadThenAIAudioEndLeavesRecording() {
+@Test func interruptRaceVadThenAITurnEndLeavesRecording() {
     var state = SpeechSessionState(phase: .aiSpeaking)
     _ = SpeechSessionMachine.reduce(&state, event: .vadSpeechStart)
     #expect(state.phase == .recording)
 
-    let effects = SpeechSessionMachine.reduce(&state, event: .aiAudioEnd)
+    let effects = SpeechSessionMachine.reduce(&state, event: .aiTurnEnd)
     #expect(state.phase == .recording)
     #expect(effects.isEmpty)
 }
@@ -158,11 +158,18 @@ import Testing
     #expect(state.phase == .processing)
 }
 
-@Test func aiAudioEndHappyPathReturnsToWaitingUser() {
+@Test func aiTurnEndHappyPathReturnsToWaitingUser() {
     var state = SpeechSessionState(phase: .aiSpeaking)
-    let effects = SpeechSessionMachine.reduce(&state, event: .aiAudioEnd)
+    let effects = SpeechSessionMachine.reduce(&state, event: .aiTurnEnd)
     #expect(state.phase == .waitingUser)
     #expect(effects.contains(.trackTransition(from: .aiSpeaking, to: .waitingUser)))
+}
+
+@Test func aiTurnEndFromProcessingReturnsToWaitingUser() {
+    var state = SpeechSessionState(phase: .processing)
+    let effects = SpeechSessionMachine.reduce(&state, event: .aiTurnEnd)
+    #expect(state.phase == .waitingUser)
+    #expect(effects.contains(.trackTransition(from: .processing, to: .waitingUser)))
 }
 
 @Test func reconnectSucceededClearsReconnectFlag() {
@@ -179,6 +186,7 @@ import Testing
     #expect(state.phase == .failed)
     #expect(state.failureReason == "网络错误")
     #expect(effects.contains(.trackTransition(from: .connecting, to: .failed)))
+    #expect(effects.contains(.endSession))
 }
 
 @Test func degradedTextLoopKeepsPhaseOnSendAndReply() {

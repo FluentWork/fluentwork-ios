@@ -63,7 +63,11 @@ private func interpretSpeechSessionSideEffect(
 
                     switch event {
                     case let .audio(frame):
+                        await dispatchBox.dispatch(.speakingRoom(.session(.aiFirstAudioChunk)))
                         await audioEngine.play(frame: frame)
+
+                    case .control(.aiTurnEnd(turnID: _)):
+                        await dispatchBox.dispatch(.speakingRoom(.session(.aiTurnEnd)))
 
                     default:
                         guard let mapped = SocketTransportEventMapper.speakingRoomAction(for: event),

@@ -10,6 +10,7 @@ import Testing
         .userSpeechEnd,
         .aiTextDelta(text: "你好"),
         .aiAudioChunk(sequence: 42),
+        .aiTurnEnd(turnID: "turn-42"),
         .interrupt,
         .feedbackBadge(badge: "表达自然"),
         .sessionEnd(reason: "completed"),
@@ -89,7 +90,7 @@ import Testing
     let mapped = SocketTransportEventMapper.speakingRoomAction(
         for: .failure(.pingTimedOut)
     )
-    #expect(mapped == .failed("Network connection lost."))
+    #expect(mapped == .networkLost)
 }
 
 @Test func transportConnectedMapsToSocketReady() {
@@ -104,4 +105,11 @@ import Testing
         for: .control(.feedbackBadge(badge: "表达自然"))
     )
     #expect(mapped == .badgeHit("表达自然"))
+}
+
+@Test func transportDisconnectedMapsToNetworkLost() {
+    let mapped = SocketTransportEventMapper.speakingRoomAction(
+        for: .stateChanged(.disconnected)
+    )
+    #expect(mapped == .networkLost)
 }

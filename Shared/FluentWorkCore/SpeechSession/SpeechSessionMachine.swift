@@ -39,8 +39,11 @@ public enum SpeechSessionMachine {
         case (.connecting, .failed(let message)):
             state.phase = .failed
             state.failureReason = message
+            state.isReconnecting = false
+            state.suspendedPhase = nil
+            effects.append(.endSession)
 
-        case (.aiSpeaking, .aiAudioEnd):
+        case (.processing, .aiTurnEnd), (.aiSpeaking, .aiTurnEnd):
             state.phase = .waitingUser
 
         case (.aiSpeaking, .vadSpeechStart), (.aiSpeaking, .holdStart):
@@ -111,6 +114,7 @@ public enum SpeechSessionMachine {
             state.failureReason = message
             state.isReconnecting = false
             state.suspendedPhase = nil
+            effects.append(.endSession)
 
         // Idempotent: duplicate socketReady while connecting/reconnecting after first ready.
         case (.aiSpeaking, .socketReady), (.waitingUser, .socketReady), (.recording, .socketReady),

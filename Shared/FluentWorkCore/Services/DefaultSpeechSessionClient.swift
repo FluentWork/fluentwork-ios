@@ -47,16 +47,22 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         }
 
         await activeSession.set(created.sessionID)
-        try await transport.connect(
-            url: wssURL,
-            sessionID: created.sessionID,
-            ticket: created.ticket
-        )
-        try await transport.send(
-            control: .sessionStart(
-                .init(scene: "demo")
+        do {
+            try await transport.connect(
+                url: wssURL,
+                sessionID: created.sessionID,
+                ticket: created.ticket
             )
-        )
+            try await transport.send(
+                control: .sessionStart(
+                    .init(scene: "demo")
+                )
+            )
+        } catch {
+            await transport.disconnect()
+            await activeSession.set(nil)
+            throw error
+        }
     }
 
     public func submitTranscript(_ text: String) async {
