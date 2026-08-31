@@ -66,6 +66,7 @@ After `./Scripts/setup-git-hooks.sh`, local `pre-commit` runs:
 Notes:
 
 - local global gstack skill root: `/Users/apple/.codex/skills/gstack`
+- project-local gstack skill mirror: `.trae/skills/gstack/SKILL.md` (mirrors the global router so the repo can expose a local skill entry)
 - the hook cannot execute the interactive review skill itself; run it manually in your AI session with **`/review`** or **`/gstack-review`** when skill prefixes are enabled, then attest with `GSTACK_REVIEWED=1`
 - emergency bypass remains `SKIP_GSTACK_REVIEW=1` and must be justified in commit/PR text
 
