@@ -4,11 +4,18 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 if [[ -x "$ROOT/Scripts/gstack-review-gate.sh" ]]; then
-  exec "$ROOT/Scripts/gstack-review-gate.sh"
-fi
-if [[ -x "$ROOT/scripts/gstack-review-gate.sh" ]]; then
-  exec "$ROOT/scripts/gstack-review-gate.sh"
+  "$ROOT/Scripts/gstack-review-gate.sh"
+elif [[ -x "$ROOT/scripts/gstack-review-gate.sh" ]]; then
+  "$ROOT/scripts/gstack-review-gate.sh"
+else
+  echo "error: gstack-review-gate.sh not found under Scripts/ or scripts/" >&2
+  exit 1
 fi
 
-echo "error: gstack-review-gate.sh not found under Scripts/ or scripts/" >&2
-exit 1
+if [[ -x "$ROOT/Scripts/swift-format-staged.sh" ]]; then
+  "$ROOT/Scripts/swift-format-staged.sh"
+fi
+
+if [[ -x "$ROOT/Scripts/swiftlint-staged.sh" ]]; then
+  "$ROOT/Scripts/swiftlint-staged.sh"
+fi

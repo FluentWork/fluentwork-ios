@@ -55,6 +55,20 @@ Boots `iPhone 17 Pro`, builds/launches `FluentWorkHost`, and runs launch → boo
 - agent entry file validation
 - pre-commit gstack `/review` attestation (`GSTACK_REVIEWED=1`); CI does not run code review
 
+## Local Pre-commit
+
+After `./Scripts/setup-git-hooks.sh`, local `pre-commit` runs:
+
+1. `gstack /review` attestation gate via `Scripts/gstack-review-gate.sh`
+2. `swift format` on staged `.swift` files
+3. `swiftlint` on staged `.swift` files
+
+Notes:
+
+- local global gstack skill root: `/Users/apple/.claude/skills/gstack`
+- the hook cannot execute the interactive review skill itself; it only enforces attestation with `GSTACK_REVIEWED=1`
+- emergency bypass remains `SKIP_GSTACK_REVIEW=1` and must be justified in commit/PR text
+
 ## Upstream Source of Truth
 
 Product and architecture decisions should come from `fluentwork-meta`.
@@ -70,6 +84,7 @@ This repository currently includes:
 - `.github/workflows/agent-config-check.yml`
 - `.github/workflows/ios-ci.yml`
 - `.githooks/pre-commit` + `Scripts/setup-git-hooks.sh` + `Scripts/gstack-review-gate.sh`
+- `Scripts/swift-format-staged.sh` + `Scripts/swiftlint-staged.sh`
 - executable Swift package baseline
 - initial directory skeleton
 
