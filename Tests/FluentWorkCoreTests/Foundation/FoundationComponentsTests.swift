@@ -30,6 +30,41 @@ import TGReduxKitTesting
     #expect(tracker.reset() == nil)
 }
 
+@Test func audioPlaybackGateDropsFramesAtAndBeforeInterruptWatermark() {
+    var gate = AudioPlaybackGate()
+    let first = WSAudioFrame(sequence: 10, opusPayload: Data([0x01]))
+    let second = WSAudioFrame(sequence: 11, opusPayload: Data([0x02]))
+    let stale = WSAudioFrame(sequence: 11, opusPayload: Data([0x03]))
+    let fresh = WSAudioFrame(sequence: 12, opusPayload: Data([0x04]))
+
+    let acceptedFirst = gate.shouldAccept(first)
+    let acceptedSecond = gate.shouldAccept(second)
+    #expect(gate.markInterrupted() == 11)
+    let acceptedStale = gate.shouldAccept(stale)
+    let acceptedFresh = gate.shouldAccept(fresh)
+
+    #expect(acceptedFirst)
+    #expect(acceptedSecond)
+    #expect(acceptedStale == false)
+    #expect(acceptedFresh)
+}
+
+@Test func audioPlaybackGateResetClearsInterruptWatermark() {
+    var gate = AudioPlaybackGate()
+    let acceptedBeforeInterrupt = gate.shouldAccept(
+        WSAudioFrame(sequence: 4, opusPayload: Data([0x01]))
+    )
+    _ = gate.markInterrupted()
+    gate.reset()
+    let acceptedAfterReset = gate.shouldAccept(
+        WSAudioFrame(sequence: 1, opusPayload: Data([0x02]))
+    )
+
+    #expect(acceptedBeforeInterrupt)
+    #expect(gate.interruptWatermark == nil)
+    #expect(acceptedAfterReset)
+}
+
 @Test func capturingLoggerRecordsEntriesByDomain() {
     let logger = CapturingLogger()
     logger.info("hello", domain: .api)

@@ -9,6 +9,7 @@ private actor StubSpeechSessionClientState {
     var startCalls = 0
     var boundaries: [Bool] = []
     var audioPayloads: [Data] = []
+    var transcripts: [String] = []
 
     func recordStart() {
         startCalls += 1
@@ -21,10 +22,22 @@ private actor StubSpeechSessionClientState {
     func recordAudioPayload(_ data: Data) {
         audioPayloads.append(data)
     }
+
+    func recordTranscript(_ text: String) {
+        transcripts.append(text)
+    }
 }
 
 private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unchecked Sendable {
     private let state = StubSpeechSessionClientState()
+    private let stream: AsyncStream<SocketTransportEvent>
+    private let continuation: AsyncStream<SocketTransportEvent>.Continuation
+
+    init() {
+        let pair = AsyncStream.makeStream(of: SocketTransportEvent.self)
+        self.stream = pair.stream
+        self.continuation = pair.continuation
+    }
 
     func startSession() async throws {
         await state.recordStart()
@@ -38,12 +51,12 @@ private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unche
         await state.recordAudioPayload(data)
     }
 
-    func submitTranscript(_ text: String) async {}
+    func submitTranscript(_ text: String) async {
+        await state.recordTranscript(text)
+    }
 
     func transportEvents() -> AsyncStream<SocketTransportEvent> {
-        AsyncStream { continuation in
-            continuation.finish()
-        }
+        stream
     }
 
     func pollReview(sessionID: String) async throws -> ReviewPollResponse {
@@ -67,13 +80,31 @@ private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unche
     func snapshotAudioPayloads() async -> [Data] {
         await state.audioPayloads
     }
+
+    func snapshotTranscripts() async -> [String] {
+        await state.transcripts
+    }
+
+    func emit(_ event: SocketTransportEvent) {
+        continuation.yield(event)
+    }
 }
 
 private actor StubAudioEngineState {
     var startCalls = 0
+    var playedFrames: [WSAudioFrame] = []
+    var interruptCalls = 0
 
     func recordStart() {
         startCalls += 1
+    }
+
+    func recordPlayedFrame(_ frame: WSAudioFrame) {
+        playedFrames.append(frame)
+    }
+
+    func recordInterrupt() {
+        interruptCalls += 1
     }
 }
 
@@ -98,9 +129,13 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
 
     func stopCapture() async {}
 
-    func play(frame: WSAudioFrame) async {}
+    func play(frame: WSAudioFrame) async {
+        await state.recordPlayedFrame(frame)
+    }
 
-    func interruptNow() async {}
+    func interruptNow() async {
+        await state.recordInterrupt()
+    }
 
     func emit(_ event: AudioEngineEvent) {
         continuation.yield(event)
@@ -108,6 +143,14 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
 
     func snapshotStartCalls() async -> Int {
         await state.startCalls
+    }
+
+    func snapshotPlayedFrames() async -> [WSAudioFrame] {
+        await state.playedFrames
+    }
+
+    func snapshotInterruptCalls() async -> Int {
+        await state.interruptCalls
     }
 }
 
@@ -191,6 +234,30 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
 }
 
 @MainActor
+@Test func speechSessionMiddlewareForwardsTransportAudioToAudioEngine() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await audioEngine.snapshotStartCalls() == 1
+    }
+
+    let frame = WSAudioFrame(sequence: 7, opusPayload: Data([0x01, 0x02]))
+    speechClient.emit(.audio(frame))
+
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await audioEngine.snapshotPlayedFrames() == [frame]
+    }
+    #expect(await audioEngine.snapshotPlayedFrames() == [frame])
+}
+
+@MainActor
 @Test func speechSessionMiddlewareConsumesAudioEngineEvents() async {
     let container = Container()
     container.reset()
@@ -234,6 +301,37 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
     }
     #expect(store.state.speakingRoom.phase == .processing)
     #expect(await speechClient.snapshotBoundaries() == [true, false])
+}
+
+@MainActor
+@Test func speechSessionMiddlewareInterruptsPlaybackImmediately() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await speechClient.snapshotStartCalls() == 1
+    }
+
+    store.dispatch(.speakingRoom(.session(.socketReady)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .aiSpeaking
+    }
+
+    store.dispatch(.speakingRoom(.session(.holdStart)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        let interruptCalls = await audioEngine.snapshotInterruptCalls()
+        let transcripts = await speechClient.snapshotTranscripts()
+        return interruptCalls == 1 && transcripts == ["__interrupt__"]
+    }
+
+    #expect(await audioEngine.snapshotInterruptCalls() == 1)
+    #expect(await speechClient.snapshotTranscripts() == ["__interrupt__"])
 }
 
 @MainActor
