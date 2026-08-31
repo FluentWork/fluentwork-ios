@@ -28,7 +28,7 @@ public protocol NetworkMonitorProtocol: Sendable {
 public final class NWPathNetworkMonitor: NetworkMonitorProtocol, @unchecked Sendable {
     private let monitor: NWPathMonitor
     private let queue: DispatchQueue
-    private let lock = NSLock()
+    private let stateQueue = DispatchQueue(label: "com.fluentwork.network-monitor.state")
     private var latest: NetworkPathSnapshot
 
     public init(monitor: NWPathMonitor = NWPathMonitor()) {
@@ -42,9 +42,9 @@ public final class NWPathNetworkMonitor: NetworkMonitorProtocol, @unchecked Send
     }
 
     public func currentSnapshot() -> NetworkPathSnapshot {
-        lock.lock()
-        defer { lock.unlock() }
-        return latest
+        stateQueue.sync {
+            latest
+        }
     }
 
     public func connectivityUpdates() -> AsyncStream<NetworkPathSnapshot> {
@@ -57,9 +57,9 @@ public final class NWPathNetworkMonitor: NetworkMonitorProtocol, @unchecked Send
                     isExpensive: path.isExpensive,
                     isConstrained: path.isConstrained
                 )
-                self?.lock.lock()
-                self?.latest = snapshot
-                self?.lock.unlock()
+                self?.stateQueue.sync {
+                    self?.latest = snapshot
+                }
                 continuation.yield(snapshot)
             }
             monitor.start(queue: queue)
@@ -72,7 +72,7 @@ public final class NWPathNetworkMonitor: NetworkMonitorProtocol, @unchecked Send
 }
 
 public final class StubNetworkMonitor: NetworkMonitorProtocol, @unchecked Sendable {
-    private let lock = NSLock()
+    private let stateQueue = DispatchQueue(label: "com.fluentwork.stub-network-monitor")
     private var snapshot: NetworkPathSnapshot
     private var continuations: [UUID: AsyncStream<NetworkPathSnapshot>.Continuation] = [:]
 
@@ -81,34 +81,40 @@ public final class StubNetworkMonitor: NetworkMonitorProtocol, @unchecked Sendab
     }
 
     public func currentSnapshot() -> NetworkPathSnapshot {
-        lock.lock()
-        defer { lock.unlock() }
-        return snapshot
+        stateQueue.sync {
+            snapshot
+        }
     }
 
     public func connectivityUpdates() -> AsyncStream<NetworkPathSnapshot> {
         AsyncStream { continuation in
             let id = UUID()
-            lock.lock()
-            continuations[id] = continuation
-            let current = snapshot
-            lock.unlock()
+            let current = stateQueue.sync { () -> NetworkPathSnapshot in
+                continuations[id] = continuation
+                return snapshot
+            }
             continuation.yield(current)
             continuation.onTermination = { [weak self] _ in
-                self?.lock.lock()
-                self?.continuations[id] = nil
-                self?.lock.unlock()
+                self?.stateQueue.sync {
+                    self?.continuations[id] = nil
+                }
             }
         }
     }
 
     public func emit(_ snapshot: NetworkPathSnapshot) {
-        lock.lock()
-        self.snapshot = snapshot
-        let targets = Array(continuations.values)
-        lock.unlock()
+        let targets = stateQueue.sync { () -> [AsyncStream<NetworkPathSnapshot>.Continuation] in
+            self.snapshot = snapshot
+            return Array(continuations.values)
+        }
         for continuation in targets {
             continuation.yield(snapshot)
+        }
+    }
+
+    public func subscriberCountForTesting() -> Int {
+        stateQueue.sync {
+            continuations.count
         }
     }
 }

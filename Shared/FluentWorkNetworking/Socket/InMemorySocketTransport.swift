@@ -4,6 +4,7 @@ import Foundation
 public actor InMemorySocketTransport: SocketTransportProtocol {
     public private(set) var connectCalls: [(url: URL, sessionID: String, ticket: String)] = []
     public private(set) var sentControlFrames: [WSControlFrame] = []
+    public private(set) var sentAudioPayloads: [Data] = []
     public private(set) var interruptMarks = 0
     public private(set) var disconnectCount = 0
 
@@ -41,6 +42,13 @@ public actor InMemorySocketTransport: SocketTransportProtocol {
             throw SocketTransportError.notConnected
         }
         sentControlFrames.append(frame)
+    }
+
+    public func send(audio data: Data) async throws {
+        guard isConnected else {
+            throw SocketTransportError.notConnected
+        }
+        sentAudioPayloads.append(data)
     }
 
     public func markInterrupted() async {

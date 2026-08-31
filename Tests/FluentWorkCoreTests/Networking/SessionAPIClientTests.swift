@@ -1,6 +1,18 @@
 import Foundation
 import FluentWorkNetworking
+import Moya
 import Testing
+
+private enum NetworkClientCancellationTarget: FluentWorkTargetType {
+    case delayed
+
+    var baseURL: URL { URL(string: "http://127.0.0.1:8080")! }
+    var path: String { "/delayed" }
+    var method: Moya.Method { .get }
+    var task: Moya.Task { .requestPlain }
+    var headers: [String: String]? { nil }
+    var sampleData: Data { Data(#"{"ok":true}"#.utf8) }
+}
 
 @Test func sessionAPIClientIssuesGuestAndCreatesSession() async throws {
     let guestJSON = Data(
@@ -199,4 +211,25 @@ import Testing
     let merged = try await client.mergeGuestAccount(deviceID: "device-1", accessToken: "access-1")
     #expect(merged.userID == "u-2")
     #expect(merged.alreadyMerged == false)
+}
+
+@Test func moyaNetworkClientMapsCancellationToAPIErrorCancelled() async {
+    let provider = MoyaProvider<MultiTarget>(stubClosure: MoyaProvider.delayedStub(1.0))
+    let client = MoyaNetworkClient(provider: provider)
+
+    let task = Swift.Task {
+        try await client.requestData(for: NetworkClientCancellationTarget.delayed)
+    }
+
+    await Swift.Task.yield()
+    task.cancel()
+
+    do {
+        _ = try await task.value
+        Issue.record("expected cancellation")
+    } catch let error as APIError {
+        #expect(error == .cancelled)
+    } catch {
+        Issue.record("unexpected error: \(error)")
+    }
 }

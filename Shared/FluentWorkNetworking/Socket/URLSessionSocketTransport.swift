@@ -96,6 +96,17 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         try await send(control: frame, using: task)
     }
 
+    public func send(audio data: Data) async throws {
+        let task = try currentTask()
+        do {
+            try await task.send(.data(data))
+        } catch is CancellationError {
+            throw SocketTransportError.cancelled
+        } catch {
+            throw SocketTransportError.network(error.localizedDescription)
+        }
+    }
+
     public func markInterrupted() async {
         dropGate.markInterrupted()
     }

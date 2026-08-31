@@ -33,6 +33,7 @@ public protocol SocketTransportProtocol: Sendable {
     func disconnect() async
 
     func send(control frame: WSControlFrame) async throws
+    func send(audio data: Data) async throws
 
     /// Marks the interrupt watermark using the highest observed audio sequence so far.
     func markInterrupted() async
@@ -62,6 +63,8 @@ public final class PlaceholderSocketTransport: SocketTransportProtocol, Sendable
     }
 
     public func send(control frame: WSControlFrame) async throws {}
+
+    public func send(audio data: Data) async throws {}
 
     public func markInterrupted() async {}
 }
