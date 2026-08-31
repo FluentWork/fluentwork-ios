@@ -14,6 +14,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+GSTACK_SKILL_ROOT="${GSTACK_SKILL_ROOT:-/Users/apple/.claude/skills/gstack}"
 
 if git diff --cached --quiet; then
   echo "gstack review gate: no staged changes; skipping."
@@ -42,4 +43,9 @@ Bash cannot run the Cursor skill. Before committing:
 Emergency bypass (justify in commit/PR body):
        SKIP_GSTACK_REVIEW=1 git commit ...
 EOF
+if [[ -d "$GSTACK_SKILL_ROOT" ]]; then
+  echo "Detected local gstack skill root: $GSTACK_SKILL_ROOT" >&2
+else
+  echo "gstack skill root not found at: $GSTACK_SKILL_ROOT" >&2
+fi
 exit 1
