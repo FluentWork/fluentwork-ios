@@ -14,7 +14,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-GSTACK_SKILL_ROOT="${GSTACK_SKILL_ROOT:-/Users/apple/.claude/skills/gstack}"
+GSTACK_SKILL_ROOT="${GSTACK_SKILL_ROOT:-/Users/apple/.codex/skills/gstack}"
 
 if git diff --cached --quiet; then
   echo "gstack review gate: no staged changes; skipping."

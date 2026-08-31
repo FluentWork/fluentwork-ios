@@ -16,7 +16,7 @@ echo "  1. gstack /review attestation"
 echo "  2. swift format on staged Swift files"
 echo "  3. swiftlint on staged Swift files"
 echo
-echo "gstack skill root (if installed globally): /Users/apple/.claude/skills/gstack"
+echo "gstack skill root (if installed globally): /Users/apple/.codex/skills/gstack"
 echo "pre-commit requires gstack /review attestation:"
 echo "  GSTACK_REVIEWED=1 git commit ..."
 echo "Emergency bypass: SKIP_GSTACK_REVIEW=1 (justify in commit/PR body)"
