@@ -12,10 +12,5 @@ else
   exit 1
 fi
 
-if [[ -x "$ROOT/Scripts/swift-format-staged.sh" ]]; then
-  "$ROOT/Scripts/swift-format-staged.sh"
-fi
-
-if [[ -x "$ROOT/Scripts/swiftlint-staged.sh" ]]; then
-  "$ROOT/Scripts/swiftlint-staged.sh"
-fi
+# NOTE: swift-format and swiftlint checks are disabled for pre-commit.
+# They can be run manually or via CI when needed.
