@@ -32,6 +32,9 @@ public enum APIError: Error, Equatable, Sendable, LocalizedError {
     }
 }
 
+/// Serialized via a dedicated queue instead of an actor on purpose: `set` runs inside
+/// the synchronous body of `withCheckedThrowingContinuation` and `cancel` runs from the
+/// synchronous `onCancel` closure, so both call sites cannot await.
 private final class RequestCancellationBox: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.fluentwork.request-cancellation")
     private var cancellable: Cancellable?

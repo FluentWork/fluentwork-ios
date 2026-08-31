@@ -40,20 +40,21 @@ struct AudioSpeechActivityTracker: Sendable {
     }
 }
 
-public final class LiveAudioEngine: AudioEngineProtocol, @unchecked Sendable {
+public actor LiveAudioEngine: AudioEngineProtocol {
     private final class ConversionConsumptionState: @unchecked Sendable {
         var consumed = false
     }
 
     private let engine = AVAudioEngine()
-    private let stateQueue = DispatchQueue(label: "com.fluentwork.live-audio-engine")
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16,
         sampleRate: 16_000,
         channels: 1,
         interleaved: true
     )!
-    private let stream: AsyncStream<AudioEngineEvent>
+    // Sendable immutable state exposed nonisolated so `events()` can stay a
+    // synchronous protocol requirement.
+    private nonisolated let stream: AsyncStream<AudioEngineEvent>
     private let continuation: AsyncStream<AudioEngineEvent>.Continuation
 
     private var converter: AVAudioConverter?
@@ -83,14 +84,11 @@ public final class LiveAudioEngine: AudioEngineProtocol, @unchecked Sendable {
         let inputNode = engine.inputNode
         let inputFormat = inputNode.inputFormat(forBus: 0)
         let converter = AVAudioConverter(from: inputFormat, to: targetFormat)
-        let hadInstalledTap = stateQueue.sync { () -> Bool in
-            let previous = hasInstalledTap
-            self.sourceFormat = inputFormat
-            self.converter = converter
-            self.speechTracker = AudioSpeechActivityTracker()
-            self.hasInstalledTap = false
-            return previous
-        }
+        let hadInstalledTap = hasInstalledTap
+        self.sourceFormat = inputFormat
+        self.converter = converter
+        self.speechTracker = AudioSpeechActivityTracker()
+        self.hasInstalledTap = false
 
         if hadInstalledTap {
             inputNode.removeTap(onBus: 0)
@@ -102,9 +100,7 @@ public final class LiveAudioEngine: AudioEngineProtocol, @unchecked Sendable {
                 await self.processInput(buffer)
             }
         }
-        stateQueue.sync {
-            hasInstalledTap = true
-        }
+        hasInstalledTap = true
 
         if !engine.isRunning {
             try engine.start()
@@ -112,11 +108,8 @@ public final class LiveAudioEngine: AudioEngineProtocol, @unchecked Sendable {
     }
 
     public func stopCapture() async {
-        let shouldRemoveTap = stateQueue.sync { () -> Bool in
-            let installed = hasInstalledTap
-            hasInstalledTap = false
-            return installed
-        }
+        let shouldRemoveTap = hasInstalledTap
+        hasInstalledTap = false
         if shouldRemoveTap {
             engine.inputNode.removeTap(onBus: 0)
         }
@@ -124,11 +117,7 @@ public final class LiveAudioEngine: AudioEngineProtocol, @unchecked Sendable {
             engine.stop()
         }
 
-        let emitted = stateQueue.sync {
-            speechTracker.reset()
-        }
-
-        if let emitted {
+        if let emitted = speechTracker.reset() {
             continuation.yield(emitted)
         }
 
@@ -137,7 +126,7 @@ public final class LiveAudioEngine: AudioEngineProtocol, @unchecked Sendable {
         #endif
     }
 
-    public func events() -> AsyncStream<AudioEngineEvent> {
+    nonisolated public func events() -> AsyncStream<AudioEngineEvent> {
         stream
     }
 
@@ -165,19 +154,12 @@ public final class LiveAudioEngine: AudioEngineProtocol, @unchecked Sendable {
         let energy = normalizedEnergy(for: pcm)
         let now = clock.now
 
-        let emitted = stateQueue.sync {
-            speechTracker.register(energy: energy, at: now)
-        }
-        if let emitted {
+        if let emitted = speechTracker.register(energy: energy, at: now) {
             continuation.yield(emitted)
         }
     }
 
     private func convertToPCM16(_ buffer: AVAudioPCMBuffer) throws -> Data? {
-        let (converter, sourceFormat) = stateQueue.sync {
-            (self.converter, self.sourceFormat)
-        }
-
         guard let converter, let sourceFormat else { return nil }
 
         let ratio = targetFormat.sampleRate / max(sourceFormat.sampleRate, 1)

@@ -25,6 +25,8 @@ public final class CapturingTracker: TrackerClientProtocol, @unchecked Sendable 
         }
     }
 
+    // Queue-serialized instead of an actor: `TrackerClientProtocol.track` is a synchronous
+    // requirement, so actor-isolated state cannot back it without changing the protocol.
     private let queue = DispatchQueue(label: "com.fluentwork.capturing-tracker")
     private var storage: [Event] = []
 

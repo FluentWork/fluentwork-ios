@@ -54,6 +54,8 @@ public final class CapturingLogger: LoggingProtocol, @unchecked Sendable {
         public let message: String
     }
 
+    // Queue-serialized instead of an actor: `LoggingProtocol` is synchronous by design
+    // (fire-and-forget logging from reducers/middleware), so isolated state cannot back it.
     private let queue = DispatchQueue(label: "com.fluentwork.capturing-logger")
     private var storage: [Entry] = []
 
