@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+
+  "indentation": {
+    "spaces": 4
+  },
+
+  "lineLength": 120,
+  "respectsExistingLineBreaks": true,
+  "tabWidth": 4,
+
+  "rules": {
+    "UseLetInEveryBoundCaseVariable": false,
+    "DoNotUseSemicolons": true,
+    "NeverUseForceCast": true,
+    "NeverUseImplicitlyUnwrappedOptionals": true,
+    "UseExplicitElse": true
+  }
+}

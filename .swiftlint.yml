@@ -1,0 +1,50 @@
+disabled_rules:
+  # trailing comma: project's case-let patterns rely on multi-line trailing commas
+  # that swiftlint disagrees with. Swift-format is source of truth for layout.
+  - trailing_comma
+  # todo: allow TODOs during active development
+  - todo
+  # force_cast / force_try: required in DI graph bootstrap and decoder paths
+  - force_cast
+  - force_try
+  # large_tuple / file_length / line_length / function_body_length: pre-existing in main, not enforced yet
+  - large_tuple
+  - file_length
+  - line_length
+  - function_body_length
+
+opt_in_rules:
+  - empty_count
+  - explicit_init
+  - first_where
+  - let_var_whitespace
+  - unused_optional_binding
+
+included:
+  - Shared
+  - App
+  - Tests
+
+excluded:
+  - .build
+  - .derivedData
+  - .swiftpm
+  - .tmp
+  - "**/checkouts/**"
+  - "**/.build/**"
+
+identifier_name:
+  min_length:
+    warning: 2
+    error: 1
+  excluded:
+    - id
+    - it
+    - x
+    - y
+    - z
+
+type_name:
+  min_length:
+    warning: 3
+    error: 1
