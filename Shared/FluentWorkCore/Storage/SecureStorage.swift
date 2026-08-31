@@ -71,6 +71,8 @@ public struct KeychainSecureStorage: SecureStorageProtocol {
     }
 }
 
+/// Queue-serialized instead of an actor: `SecureStorageProtocol` mirrors the synchronous
+/// Keychain API and is consumed synchronously by `AuthTokenStore`.
 public final class InMemorySecureStorage: SecureStorageProtocol, @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.fluentwork.secure-storage")
     private var storage: [String: Data] = [:]

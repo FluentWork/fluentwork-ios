@@ -25,6 +25,8 @@ public protocol NetworkMonitorProtocol: Sendable {
     func connectivityUpdates() -> AsyncStream<NetworkPathSnapshot>
 }
 
+/// State is serialized on a queue rather than an actor: `NetworkMonitorProtocol.currentSnapshot()`
+/// is a synchronous requirement read from reducer/middleware contexts that cannot await.
 public final class NWPathNetworkMonitor: NetworkMonitorProtocol, @unchecked Sendable {
     private let monitor: NWPathMonitor
     private let queue: DispatchQueue
@@ -71,6 +73,7 @@ public final class NWPathNetworkMonitor: NetworkMonitorProtocol, @unchecked Send
     }
 }
 
+/// Same synchronous-boundary constraint as `NWPathNetworkMonitor`; kept queue-serialized.
 public final class StubNetworkMonitor: NetworkMonitorProtocol, @unchecked Sendable {
     private let stateQueue = DispatchQueue(label: "com.fluentwork.stub-network-monitor")
     private var snapshot: NetworkPathSnapshot
