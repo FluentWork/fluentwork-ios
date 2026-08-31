@@ -31,6 +31,15 @@ public let appReducer: Reducer<AppState, AppAction> = combineReducers(
         }
     ),
     pullback(
+        reviewReducer,
+        state: \.review,
+        action: AppAction.review,
+        extract: {
+            guard case let .review(action) = $0 else { return nil }
+            return action
+        }
+    ),
+    pullback(
         workspaceReducer,
         state: \.workspace,
         action: AppAction.workspace,

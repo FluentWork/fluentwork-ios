@@ -1,5 +1,6 @@
 import FluentWorkCore
 import SwiftUI
+import FluentWorkUI
 
 @MainActor
 struct HostRootView: View {
@@ -45,9 +46,66 @@ struct HostRootView: View {
             Text("说的房间（骨架）\(sessionID.map { " · \($0)" } ?? "")")
                 .navigationTitle("说的房间")
         case let .review(sessionID):
-            Text("回顾（骨架）\(sessionID.map { " · \($0)" } ?? "")")
-                .navigationTitle("回顾")
+            ReviewRootView(
+                model: makeReviewViewModel(from: store.state.review),
+                onAppear: {
+                    store.dispatch(.review(.appear(sessionID: sessionID)))
+                },
+                onRetry: {
+                    let targetSessionID = store.state.review.sessionID ?? sessionID
+                    guard let targetSessionID, !targetSessionID.isEmpty else { return }
+                    store.dispatch(.review(.loadRequested(sessionID: targetSessionID)))
+                }
+            )
         }
+    }
+
+    private func makeReviewViewModel(from state: ReviewState) -> ReviewViewModel {
+        let phase: ReviewViewPhase
+        switch state.phase {
+        case .idle:
+            phase = .idle
+        case .loading:
+            phase = .loading
+        case .pending:
+            phase = .pending
+        case .ready:
+            phase = .ready
+        case .failed:
+            phase = .failed
+        }
+
+        let overview = state.payload.map {
+            ReviewOverviewViewData(
+                note: $0.overview.goalAchievement.note,
+                issueCount: $0.overview.issueCount,
+                suggestionCount: $0.overview.suggestionCount,
+                comparisonCount: $0.overview.comparisonCount
+            )
+        }
+        let transcript = state.payload?.transcript.map {
+            ReviewTranscriptRow(id: $0.id, speaker: $0.speaker, text: $0.text)
+        } ?? []
+        let dualColumn = state.payload?.dualColumn.map {
+            ReviewComparisonRow(id: $0.id, user: $0.user, better: $0.better)
+        } ?? []
+        let refineCards = state.payload?.refineCards.map {
+            ReviewRefineCardRow(
+                id: $0.id,
+                intentZH: $0.intentZH,
+                expressionEN: $0.expressionEN,
+                anchorUserSaid: $0.anchorUserSaid
+            )
+        } ?? []
+
+        return ReviewViewModel(
+            phase: phase,
+            overview: overview,
+            transcript: transcript,
+            dualColumn: dualColumn,
+            refineCards: refineCards,
+            errorMessage: state.lastErrorMessage
+        )
     }
 
     private var debugRootList: some View {

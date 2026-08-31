@@ -78,6 +78,79 @@ import Testing
     #expect(poll.sessionID == "s-1")
 }
 
+@Test func sessionAPIClientDecodesReadyFullReviewPayload() async throws {
+    let ready = Data(
+        """
+        {
+          "session_id":"s-1",
+          "status":"ready",
+          "review":{
+            "generator":"ark-review-refine-v1",
+            "status":"ready",
+            "duration_sec":42,
+            "transcript":[
+              {"seq":1,"speaker":"user","text":"hello"},
+              {"seq":2,"speaker":"ai","text":"hi"}
+            ],
+            "overview":{
+              "goal_achievement":{"met":true,"note":"Met"},
+              "issue_count":1,
+              "suggestion_count":1,
+              "comparison_count":1
+            },
+            "evaluation":[
+              {"layer":"goal","title":"Goal","content":{"met":true}}
+            ],
+            "dual_column":[
+              {"user":"I do it tomorrow.","better":"I'll do it tomorrow."}
+            ],
+            "refine_cards":[
+              {
+                "intent_zh":"说明下一步",
+                "expression_en":"I'll do it tomorrow.",
+                "anchor_user_said":"I do it tomorrow.",
+                "scene_tag":"standup",
+                "function_tag":"commit"
+              }
+            ],
+            "review":{
+              "goal_achievement":{"met":true,"note":"Met"},
+              "issues":[
+                {"type":"grammar","original_quote":"I do it tomorrow.","hint":"Use future tense."}
+              ],
+              "suggestions":[
+                {"text":"Use will + verb."}
+              ],
+              "comparisons":[
+                {"user":"I do it tomorrow.","better":"I'll do it tomorrow."}
+              ]
+            },
+            "refine":{
+              "blocks":[
+                {
+                  "intent_zh":"说明下一步",
+                  "expression_en":"I'll do it tomorrow.",
+                  "anchor_user_said":"I do it tomorrow.",
+                  "scene_tag":"standup",
+                  "function_tag":"commit"
+                }
+              ]
+            }
+          }
+        }
+        """.utf8
+    )
+    let client = SessionAPIClient(
+        network: StubNetworkClient { _ in ready },
+        baseURL: URL(string: "http://127.0.0.1:8080/api/v1")!
+    )
+    let poll = try await client.getSessionReview(sessionID: "s-1", accessToken: "t")
+    #expect(poll.status == .ready)
+    #expect(poll.review?.generator == "ark-review-refine-v1")
+    #expect(poll.review?.transcript.count == 2)
+    #expect(poll.review?.refineCards.count == 1)
+}
+
 @Test func sessionAPIClientPostsDegradedTextMessage() async throws {
     let replyJSON = Data(
         """
