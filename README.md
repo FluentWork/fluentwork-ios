@@ -65,7 +65,7 @@ After `./Scripts/setup-git-hooks.sh`, local `pre-commit` runs:
 
 Notes:
 
-- local global gstack skill root: `/Users/apple/.claude/skills/gstack`
+- local global gstack skill root: `/Users/apple/.codex/skills/gstack`
 - the hook cannot execute the interactive review skill itself; it only enforces attestation with `GSTACK_REVIEWED=1`
 - emergency bypass remains `SKIP_GSTACK_REVIEW=1` and must be justified in commit/PR text
 
