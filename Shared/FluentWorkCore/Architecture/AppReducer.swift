@@ -3,127 +3,136 @@ import FluentWorkPluginSupport
 import TGReduxKit
 
 public let appReducer: Reducer<AppState, AppAction> = combineReducers(
-    pullback(
-        featureFlagsReducer,
-        state: \.featureFlags,
-        action: AppAction.featureFlags,
-        extract: {
-            guard case let .featureFlags(action) = $0 else { return nil }
-            return action
-        }
-    ),
-    pullback(
-        authReducer,
-        state: \.auth,
-        action: AppAction.auth,
-        extract: {
-            guard case let .auth(action) = $0 else { return nil }
-            return action
-        }
-    ),
-    pullback(
-        speakingRoomReducer,
-        state: \.speakingRoom,
-        action: AppAction.speakingRoom,
-        extract: {
-            guard case let .speakingRoom(action) = $0 else { return nil }
-            return action
-        }
-    ),
-    pullback(
-        reviewReducer,
-        state: \.review,
-        action: AppAction.review,
-        extract: {
-            guard case let .review(action) = $0 else { return nil }
-            return action
-        }
-    ),
-    pullback(
-        corpusReducer,
-        state: \.corpus,
-        action: AppAction.corpus,
-        extract: {
-            guard case let .corpus(action) = $0 else { return nil }
-            return action
-        }
-    ),
-    pullback(
-        workspaceReducer,
-        state: \.workspace,
-        action: AppAction.workspace,
-        extract: {
-            guard case let .workspace(action) = $0 else { return nil }
-            return action
-        }
-    ),
-    pullback(
-        networkConnectivityReducer,
-        state: \.network,
-        action: AppAction.network,
-        extract: {
-            guard case let .network(action) = $0 else { return nil }
-            return action
-        }
-    ),
-    pullback(
-        appNavigationReducer,
-        state: \.navigation,
-        action: AppAction.navigation,
-        extract: {
-            guard case let .navigation(action) = $0 else { return nil }
-            return action
-        }
-    ),
-    appCrossCuttingReducer
+  pullback(
+    featureFlagsReducer,
+    state: \.featureFlags,
+    action: AppAction.featureFlags,
+    extract: {
+      guard case .featureFlags(let action) = $0 else { return nil }
+      return action
+    }
+  ),
+  pullback(
+    authReducer,
+    state: \.auth,
+    action: AppAction.auth,
+    extract: {
+      guard case .auth(let action) = $0 else { return nil }
+      return action
+    }
+  ),
+  pullback(
+    speakingRoomReducer,
+    state: \.speakingRoom,
+    action: AppAction.speakingRoom,
+    extract: {
+      guard case .speakingRoom(let action) = $0 else { return nil }
+      return action
+    }
+  ),
+  pullback(
+    reviewReducer,
+    state: \.review,
+    action: AppAction.review,
+    extract: {
+      guard case .review(let action) = $0 else { return nil }
+      return action
+    }
+  ),
+  pullback(
+    corpusReducer,
+    state: \.corpus,
+    action: AppAction.corpus,
+    extract: {
+      guard case .corpus(let action) = $0 else { return nil }
+      return action
+    }
+  ),
+  pullback(
+    dailyReadReducer,
+    state: \.dailyRead,
+    action: AppAction.dailyRead,
+    extract: {
+      guard case .dailyRead(let action) = $0 else { return nil }
+      return action
+    }
+  ),
+  pullback(
+    workspaceReducer,
+    state: \.workspace,
+    action: AppAction.workspace,
+    extract: {
+      guard case .workspace(let action) = $0 else { return nil }
+      return action
+    }
+  ),
+  pullback(
+    networkConnectivityReducer,
+    state: \.network,
+    action: AppAction.network,
+    extract: {
+      guard case .network(let action) = $0 else { return nil }
+      return action
+    }
+  ),
+  pullback(
+    appNavigationReducer,
+    state: \.navigation,
+    action: AppAction.navigation,
+    extract: {
+      guard case .navigation(let action) = $0 else { return nil }
+      return action
+    }
+  ),
+  appCrossCuttingReducer
 )
 
 public let appCrossCuttingReducer: Reducer<AppState, AppAction> = { state, action in
-    switch action {
-    case .lifecycle(.appLaunched):
-        state.bootstrapStatus = .loading
-        state.lastErrorMessage = nil
+  switch action {
+  case .lifecycle(.appLaunched):
+    state.bootstrapStatus = .loading
+    state.lastErrorMessage = nil
 
-    case .lifecycle(.bootstrapStarted):
-        state.bootstrapStatus = .loading
-        state.lastErrorMessage = nil
+  case .lifecycle(.bootstrapStarted):
+    state.bootstrapStatus = .loading
+    state.lastErrorMessage = nil
 
-    case let .lifecycle(.bootstrapSucceeded(snapshot)):
-        state.bootstrapStatus = .ready
-        state.workspace.isBootstrapComplete = true
-        state.workspace.activeSurface = snapshot.preferredSurface
-        state.featureFlags.snapshot = snapshot.featureFlags
-        state.featureFlags.isRemoteLoaded = true
-        applyFeatureFlagProjection(to: &state)
+  case .lifecycle(.bootstrapSucceeded(let snapshot)):
+    state.bootstrapStatus = .ready
+    state.workspace.isBootstrapComplete = true
+    state.workspace.activeSurface = snapshot.preferredSurface
+    state.featureFlags.snapshot = snapshot.featureFlags
+    state.featureFlags.isRemoteLoaded = true
+    applyFeatureFlagProjection(to: &state)
 
-    case let .lifecycle(.bootstrapFailed(message)):
-        state.bootstrapStatus = .failed
-        state.lastErrorMessage = message
+  case .lifecycle(.bootstrapFailed(let message)):
+    state.bootstrapStatus = .failed
+    state.lastErrorMessage = message
 
-    case let .featureFlags(.applyRemoteSnapshot(snapshot)):
-        state.featureFlags.snapshot = snapshot
-        state.featureFlags.isRemoteLoaded = true
-        applyFeatureFlagProjection(to: &state)
+  case .featureFlags(.applyRemoteSnapshot(let snapshot)):
+    state.featureFlags.snapshot = snapshot
+    state.featureFlags.isRemoteLoaded = true
+    applyFeatureFlagProjection(to: &state)
 
-    case .featureFlags(.setLocalOverride), .featureFlags(.clearLocalOverrides):
-        applyFeatureFlagProjection(to: &state)
+  case .featureFlags(.setLocalOverride), .featureFlags(.clearLocalOverrides):
+    applyFeatureFlagProjection(to: &state)
 
-    case let .speakingRoom(.badgeHit(badge)):
-        state.workspace.highlightedBadge = badge
-        state.workspace.badgeFeedCount += 1
+  case .speakingRoom(.badgeHit(let badge)):
+    state.workspace.highlightedBadge = badge
+    state.workspace.badgeFeedCount += 1
 
-    case .auth(.signedInAsGuest), .auth(.mergedIntoRegistered):
-        state.corpus = CorpusState()
+  case .auth(.signedInAsGuest), .auth(.mergedIntoRegistered):
+    state.corpus = CorpusState()
 
-    default:
-        break
-    }
+  default:
+    break
+  }
 }
 
 private func applyFeatureFlagProjection(to state: inout AppState) {
-    let effectiveSnapshot = state.featureFlags.effectiveSnapshot
-    let pluginRegistry = StaticFeaturePluginRegistry()
+  let effectiveSnapshot = state.featureFlags.effectiveSnapshot
+  let pluginRegistry = StaticFeaturePluginRegistry()
 
-    state.speakingRoom.isBootstrapReady = effectiveSnapshot.isEnabled(.speakingRoom)
-    state.workspace.availableModules = pluginRegistry.enabledPlugins(for: effectiveSnapshot)
+  state.speakingRoom.isBootstrapReady = effectiveSnapshot.isEnabled(.speakingRoom)
+  state.workspace.availableModules = pluginRegistry.enabledPlugins(for: effectiveSnapshot)
 }
