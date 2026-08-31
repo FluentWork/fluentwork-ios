@@ -36,6 +36,12 @@ struct HostRootView: View {
                     onLoadMore: {
                         store.dispatch(.corpus(.loadMoreRequested))
                     },
+                    onToggleFavorite: { blockID, isFavorite in
+                        store.dispatch(.corpus(.favoriteToggled(blockID: blockID, isFavorite: isFavorite, pinned: isFavorite)))
+                    },
+                    onDelete: { blockID in
+                        store.dispatch(.corpus(.deleteTapped(blockID: blockID)))
+                    },
                     onSearchQueryChanged: { query in
                         store.dispatch(.corpus(.searchQueryChanged(query)))
                     },
@@ -141,6 +147,8 @@ struct HostRootView: View {
             phase = .ready
         case .failed:
             phase = .failed
+        case .migrating:
+            phase = .migrating
         }
 
         return CorpusViewModel(
@@ -154,12 +162,15 @@ struct HostRootView: View {
                     sceneTag: $0.sceneTag,
                     functionTag: $0.functionTag,
                     isFavorite: $0.isFavorite,
+                    hasPendingFavorite: state.isPending(blockID: $0.id, operation: .favorite),
+                    hasPendingDelete: state.isPending(blockID: $0.id, operation: .delete),
                     updatedAt: $0.updatedAt
                 )
             },
             searchQuery: state.searchQuery,
             favoriteOnly: state.favoriteOnly,
             isRefreshing: state.isRefreshing,
+            isReplayingOutbox: state.isReplayingOutbox,
             canLoadMore: state.nextCursor != nil,
             errorMessage: state.lastErrorMessage
         )
@@ -299,7 +310,10 @@ struct HostRootView: View {
                 LabeledContent("Total Blocks", value: "\(store.state.corpus.items.count)")
                 LabeledContent("Visible Blocks", value: "\(store.state.corpus.visibleItems.count)")
                 LabeledContent("Refreshing", value: store.state.corpus.isRefreshing ? "yes" : "no")
+                LabeledContent("Replaying Outbox", value: store.state.corpus.isReplayingOutbox ? "yes" : "no")
                 LabeledContent("Next Cursor", value: store.state.corpus.nextCursor ?? "-")
+                LabeledContent("Sync Cursor", value: store.state.corpus.syncCursor ?? "-")
+                LabeledContent("Outbox Count", value: "\(store.state.corpus.outbox.count)")
 
                 if let message = store.state.corpus.lastErrorMessage {
                     Text(message)

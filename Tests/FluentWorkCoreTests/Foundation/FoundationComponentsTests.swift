@@ -66,6 +66,35 @@ import TGReduxKitTesting
     #expect(try await store.loadSnapshot(scope: "guest-1") == nil)
 }
 
+@Test func inMemoryCorpusOutboxStoreRoundTripsItems() async throws {
+    let store = InMemoryCorpusOutboxStore()
+    let items = [
+        CorpusOutboxItem(
+            id: "op-1",
+            blockID: "b-1",
+            operation: .favorite,
+            payload: .init(isFavorite: true, pinned: true),
+            retryCount: 0,
+            createdAt: "2026-08-31T10:00:00Z"
+        ),
+    ]
+
+    try await store.saveItems(items, scope: "guest-1")
+    #expect(try await store.loadItems(scope: "guest-1") == items)
+    try await store.clearItems(scope: "guest-1")
+    #expect(try await store.loadItems(scope: "guest-1").isEmpty)
+}
+
+@Test func inMemoryCorpusSyncMetadataStoreRoundTripsMetadata() async throws {
+    let store = InMemoryCorpusSyncMetadataStore()
+    let metadata = CorpusSyncMetadata(listCursor: "cursor-1", syncCursor: "2026-08-31T10:00:00Z")
+
+    try await store.save(metadata, scope: "user-42")
+    #expect(try await store.load(scope: "user-42") == metadata)
+    try await store.clear(scope: "user-42")
+    #expect(try await store.load(scope: "user-42") == nil)
+}
+
 @Test func fixedClockAndIDGeneratorAreDeterministic() {
     let date = Date(timeIntervalSince1970: 1_700_000_000)
     let uuid = UUID(uuidString: "E621E1F8-C36C-495A-93FC-0C247A3E6E5F")!

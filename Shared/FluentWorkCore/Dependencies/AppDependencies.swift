@@ -159,6 +159,14 @@ public extension Container {
         self { JSONCorpusCacheStore() }.singleton
     }
 
+    var corpusOutboxStore: Factory<CorpusOutboxStoreProtocol> {
+        self { JSONCorpusOutboxStore() }.singleton
+    }
+
+    var corpusSyncMetadataStore: Factory<CorpusSyncMetadataStoreProtocol> {
+        self { JSONCorpusSyncMetadataStore() }.singleton
+    }
+
     var networkMonitor: Factory<NetworkMonitorProtocol> {
         self { NWPathNetworkMonitor() }.singleton
     }

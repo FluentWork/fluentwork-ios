@@ -7,6 +7,12 @@ public protocol CorpusClientProtocol: Sendable {
         limit: Int?,
         favoriteOnly: Bool
     ) async throws -> ListPhraseBlocksResponse
+    func setFavorite(
+        blockID: String,
+        isFavorite: Bool,
+        pinned: Bool
+    ) async throws -> PhraseBlock
+    func deleteBlock(blockID: String) async throws
     func batchAccept(
         sourceSessionID: String,
         cards: [RefineCard]
@@ -43,6 +49,25 @@ public final class DefaultCorpusClient: CorpusClientProtocol, @unchecked Sendabl
             limit: limit,
             favoriteOnly: favoriteOnly
         )
+    }
+
+    public func setFavorite(
+        blockID: String,
+        isFavorite: Bool,
+        pinned: Bool
+    ) async throws -> PhraseBlock {
+        let accessToken = try await requireAccessToken()
+        return try await api.favoriteBlock(
+            accessToken: accessToken,
+            blockID: blockID,
+            isFavorite: isFavorite,
+            pinned: pinned
+        )
+    }
+
+    public func deleteBlock(blockID: String) async throws {
+        let accessToken = try await requireAccessToken()
+        _ = try await api.deleteBlock(accessToken: accessToken, blockID: blockID)
     }
 
     public func batchAccept(
