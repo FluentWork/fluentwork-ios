@@ -55,10 +55,25 @@ public struct AppEnvironment: Equatable, Sendable {
 
     #if DEBUG
     // MARK: - Current Environment Override
-    // To test on a physical device, change this to:
-    // public static let current: AppEnvironment = .local(host: "YOUR_LOCAL_IP")
-    // e.g., .local(host: "192.168.2.15")
-    public static let current: AppEnvironment = .local
+    // Three ways to configure for physical device testing:
+    //
+    // 1. Environment Variable (Recommended):
+    //    In Xcode: Product → Scheme → Edit Scheme → Run → Arguments → Environment Variables
+    //    Add: LOCAL_HOST = "192.168.x.x"
+    //
+    // 2. Direct Code Override:
+    //    Change this to: .local(host: "192.168.x.x")
+    //
+    // 3. Runtime Detection:
+    //    Keep as-is, set LOCAL_HOST in scheme or environment
+    public static let current: AppEnvironment = {
+        // Check for LOCAL_HOST environment variable first
+        if let host = ProcessInfo.processInfo.environment["LOCAL_HOST"], !host.isEmpty {
+            return .local(host: host)
+        }
+        // Fall back to localhost (works for simulator)
+        return .local
+    }()
     #else
     public static let current: AppEnvironment = AppEnvironment(
         kind: .production,

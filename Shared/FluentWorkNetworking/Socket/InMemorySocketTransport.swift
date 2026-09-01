@@ -9,7 +9,7 @@ public actor InMemorySocketTransport: SocketTransportProtocol {
     public private(set) var disconnectCount = 0
 
     nonisolated public let events: AsyncStream<SocketTransportEvent>
-    private nonisolated let continuation: AsyncStream<SocketTransportEvent>.Continuation
+    private let continuation: AsyncStream<SocketTransportEvent>.Continuation
     private var dropGate = AudioFrameDropGate()
     private var isConnected = false
 
@@ -56,11 +56,11 @@ public actor InMemorySocketTransport: SocketTransportProtocol {
         dropGate.markInterrupted()
     }
 
-    public func emitFailure(_ error: SocketTransportError) {
+    public func emitFailure(_ error: SocketTransportError) async {
         continuation.yield(.failure(error))
     }
 
-    public func emitControl(_ frame: WSControlFrame) {
+    public func emitControl(_ frame: WSControlFrame) async {
         continuation.yield(.control(frame))
     }
 
