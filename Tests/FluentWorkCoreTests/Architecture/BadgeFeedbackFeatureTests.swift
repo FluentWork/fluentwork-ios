@@ -190,7 +190,7 @@ import Testing
 @Test func speakingRoomBadgeHitTriggersBadgeFeedbackIngest() throws {
     let store = TestStore(initialState: AppState.initial, reducer: appReducer)
 
-    store.send(.speakingRoom(.badgeHit(badge: "表达自然")))
+    store.send(AppAction.speakingRoom(.badgeHit(badge: "表达自然")))
 
     // Equality on `Date` would force us to mirror the unknown wall-clock;
     // instead compare by field.
@@ -209,7 +209,7 @@ import Testing
     let store = TestStore(initialState: AppState.initial, reducer: appReducer)
 
     store.send(
-        .speakingRoom(.badgeHit(
+        AppAction.speakingRoom(.badgeHit(
             badge: "节奏稳定",
             phraseBlockID: "block-42",
             tier: .nextTurnConfirm,
