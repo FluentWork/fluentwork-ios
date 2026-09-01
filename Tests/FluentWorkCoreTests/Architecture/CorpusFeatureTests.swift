@@ -523,7 +523,11 @@ import TGReduxKitTesting
     store.dispatch(.corpus(.appear))
 
     try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        store.state.corpus.hasHydratedCache && store.state.corpus.hasHydratedSyncMetadata && !store.state.corpus.isRefreshing
+        store.state.corpus.hasHydratedCache &&
+        store.state.corpus.hasHydratedSyncMetadata &&
+        !store.state.corpus.isRefreshing &&
+        store.state.corpus.items.isEmpty &&
+        store.state.corpus.syncCursor == "2026-08-31T10:30:00Z"
     }
 
     #expect(store.state.corpus.items.isEmpty)
