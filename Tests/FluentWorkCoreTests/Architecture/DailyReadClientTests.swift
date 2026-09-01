@@ -176,6 +176,10 @@ private final class StubSessionAPIClient: SessionAPIClientProtocol, @unchecked S
   ) async throws -> PostMessageResponse {
     throw IssueMismatch()
   }
+  
+  func refreshToken(_ accessToken: String) async throws -> AuthToken {
+    throw IssueMismatch()
+  }
 }
 
 private final class InMemoryAuthTokenStore: AuthTokenStoreProtocol, @unchecked Sendable {
@@ -229,6 +233,22 @@ private final class InMemoryAuthTokenStore: AuthTokenStoreProtocol, @unchecked S
     lock.lock()
     defer { lock.unlock() }
     return isGuestValue
+  }
+  
+  func loadAccessToken() throws -> AuthToken? {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let token = accessTokenValue else { return nil }
+    return AuthToken(
+      value: token,
+      expiresAt: Date().addingTimeInterval(3600) // 1 hour from now
+    )
+  }
+  
+  func saveAccessToken(_ token: AuthToken) throws {
+    lock.lock()
+    defer { lock.unlock() }
+    accessTokenValue = token.value
   }
 }
 

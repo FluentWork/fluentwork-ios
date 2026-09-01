@@ -18,6 +18,8 @@ public protocol SessionAPIClientProtocol: Sendable {
         text: String,
         channel: String
     ) async throws -> PostMessageResponse
+    /// Refresh access token using current token
+    func refreshToken(_ accessToken: String) async throws -> AuthToken
 }
 
 public final class SessionAPIClient: SessionAPIClientProtocol, Sendable {
@@ -82,6 +84,18 @@ public final class SessionAPIClient: SessionAPIClientProtocol, Sendable {
                 text: text,
                 channel: channel
             )
+        )
+    }
+    
+    public func refreshToken(_ accessToken: String) async throws -> AuthToken {
+        let tokenResponse = try await decode(
+            TokenResponse.self,
+            .refreshToken(accessToken: accessToken)
+        )
+        let expiresAt = Date().addingTimeInterval(TimeInterval(tokenResponse.expiresIn))
+        return AuthToken(
+            value: tokenResponse.accessToken,
+            expiresAt: expiresAt
         )
     }
 

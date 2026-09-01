@@ -5,6 +5,7 @@ import Moya
 public enum FluentWorkAPI: FluentWorkTargetType {
   case issueGuest(deviceID: String)
   case mergeGuestAccount(deviceID: String, accessToken: String)
+  case refreshToken(accessToken: String)
   case createSession(
     accessToken: String,
     materialID: String? = nil,
@@ -54,6 +55,8 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       return "/auth/guest"
     case .mergeGuestAccount:
       return "/account/merge"
+    case .refreshToken:
+      return "/auth/refresh"
     case .createSession:
       return "/sessions"
     case .getSessionReview(let sessionID, _):
@@ -86,6 +89,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       return .put
     case .issueGuest,
       .mergeGuestAccount,
+      .refreshToken,
       .createSession,
       .sendSessionMessage,
       .batchAcceptCorpusBlocks,
@@ -107,6 +111,8 @@ public enum FluentWorkAPI: FluentWorkTargetType {
         parameters: ["device_id": deviceID],
         encoding: JSONEncoding.default
       )
+    case .refreshToken:
+      return .requestPlain
     case .createSession(_, let materialID, let sceneType):
       var parameters: [String: Any] = [:]
       if let materialID {
@@ -196,6 +202,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
     case .issueGuest:
       return nil
     case .mergeGuestAccount(_, let token),
+      .refreshToken(let token),
       .createSession(let token, _, _),
       .getSessionReview(_, let token),
       .sendSessionMessage(_, let token, _, _),

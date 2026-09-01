@@ -276,13 +276,23 @@ public extension Container {
     }
 
     var networkClient: Factory<NetworkClientProtocol> {
-        self { self.networkPluginFactory().makeNetworkClient() }.singleton
+        self {
+            let baseClient = self.networkPluginFactory().makeNetworkClient()
+            return AuthenticatedNetworkClient(
+                baseClient: baseClient,
+                tokenRefreshCoordinator: self.tokenRefreshCoordinator()
+            )
+        }.singleton
     }
 
     var sessionAPIClient: Factory<SessionAPIClientProtocol> {
         self {
-            SessionAPIClient(
-                network: self.networkClient(),
+            // Use base network client directly (no auth interceptor)
+            // to avoid circular dependency: sessionAPIClient is used
+            // by tokenRefreshCoordinator, which is used by networkClient
+            let baseClient = self.networkPluginFactory().makeNetworkClient()
+            return SessionAPIClient(
+                network: baseClient,
                 baseURL: self.appEnvironment().apiBaseURL
             )
         }.singleton
@@ -311,6 +321,16 @@ public extension Container {
             SecureAuthTokenStore(
                 storage: self.secureStorage(),
                 idGenerator: self.idGenerator()
+            )
+        }.singleton
+    }
+
+    var tokenRefreshCoordinator: Factory<TokenRefreshCoordinator> {
+        self {
+            TokenRefreshCoordinator(
+                tokenStore: self.authTokenStore(),
+                sessionAPI: self.sessionAPIClient(),
+                expiryBuffer: 5 * 60  // 5 minutes
             )
         }.singleton
     }

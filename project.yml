@@ -7,6 +7,26 @@ packages:
   FluentWorkIOS:
     path: .
 
+schemes:
+  FluentWorkHost:
+    build:
+      targets:
+        FluentWorkHost: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - name: FluentWorkCoreTests
+          parallelizable: true
+          randomExecutionOrder: true
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+
 targets:
   FluentWorkHost:
     type: application
