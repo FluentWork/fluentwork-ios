@@ -39,6 +39,27 @@ public enum AppRoute: TGRoute, Codable {
             return nil
         }
     }
+
+    /// Default workbench navigation semantics for user-facing module entry.
+    /// Conversational surfaces stay full-screen; content reading stays in-stack.
+    public var defaultWorkbenchNavigationAction: AppNavigationAction {
+        switch self {
+        case .speakingRoom, .review:
+            return .workbench(.present(self, style: .fullScreenCover))
+        case .dailyRead:
+            return .workbench(.push(self))
+        }
+    }
+
+    public static func workbenchNavigationAction(
+        entryRoute: String,
+        sessionID: String? = nil
+    ) -> AppNavigationAction? {
+        guard let route = AppRoute(entryRoute: entryRoute, sessionID: sessionID) else {
+            return nil
+        }
+        return route.defaultWorkbenchNavigationAction
+    }
 }
 
 public struct AppNavigationState: Equatable, Sendable, State {
