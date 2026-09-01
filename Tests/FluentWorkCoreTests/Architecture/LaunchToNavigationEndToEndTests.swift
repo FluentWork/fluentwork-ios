@@ -16,7 +16,7 @@ private func makeIsolatedLaunchContainer() -> Container {
     container.bootstrapClient.register {
         ResolverBackedBootstrapClient(
             resolver: FeatureFlagResolverFactory.makeFirstWaveResolver(),
-            preferredSurface: .speakingRoom
+            preferredSurfaceProvider: { .speakingRoom }
         )
     }
     return container

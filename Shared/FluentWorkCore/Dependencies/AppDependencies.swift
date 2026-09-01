@@ -118,14 +118,14 @@ public struct StaticBootstrapClient: BootstrapClientProtocol {
 /// Loads flags via TGFeatureFlag `FeatureFlagResolver`, then maps into Redux domain snapshot.
 public struct ResolverBackedBootstrapClient: BootstrapClientProtocol {
     public let resolver: FeatureFlagResolver
-    public let preferredSurface: WorkspaceSurface
+    public let preferredSurfaceProvider: @Sendable () -> WorkspaceSurface
 
     public init(
         resolver: FeatureFlagResolver = FeatureFlagResolverFactory.makeFirstWaveResolver(),
-        preferredSurface: WorkspaceSurface = .speakingRoom
+        preferredSurfaceProvider: @escaping @Sendable () -> WorkspaceSurface = { .speakingRoom }
     ) {
         self.resolver = resolver
-        self.preferredSurface = preferredSurface
+        self.preferredSurfaceProvider = preferredSurfaceProvider
     }
 
     public func loadBootstrap() async throws -> BootstrapSnapshot {
@@ -133,7 +133,7 @@ public struct ResolverBackedBootstrapClient: BootstrapClientProtocol {
         let remote = resolver.snapshot(for: AppFeatureFlag.allCases)
         return BootstrapSnapshot(
             featureFlags: FeatureFlagSnapshotMapper.map(remote),
-            preferredSurface: preferredSurface
+            preferredSurface: preferredSurfaceProvider()
         )
     }
 }
@@ -208,7 +208,18 @@ public extension Container {
 
     var bootstrapClient: Factory<BootstrapClientProtocol> {
         self {
-            ResolverBackedBootstrapClient(resolver: self.featureFlagResolver())
+            ResolverBackedBootstrapClient(
+                resolver: self.featureFlagResolver(),
+                preferredSurfaceProvider: self.preferredSurfaceProvider()
+            )
+        }.singleton
+    }
+
+    var preferredSurfaceProvider: Factory<@Sendable () -> WorkspaceSurface> {
+        self {
+            // Production default: speakingRoom
+            // Debug builds can override via `container.preferredSurfaceProvider.register { { .workbench } }`
+            { .speakingRoom }
         }.singleton
     }
 
