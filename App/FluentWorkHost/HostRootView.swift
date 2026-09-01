@@ -84,6 +84,13 @@ struct HostRootView: View {
                 }
                 .padding(.top, 4)
             }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("关闭") {
+                        closeSpeakingRoom()
+                    }
+                }
+            }
             .onAppear { _ = sessionID }
         case let .review(sessionID):
             ReviewRootView(
@@ -100,6 +107,13 @@ struct HostRootView: View {
                     store.dispatch(.review(.acceptRefineCardTapped(cardID: cardID)))
                 }
             )
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("关闭") {
+                        dismissWorkbenchModal()
+                    }
+                }
+            }
         case let .dailyRead(sessionID):
             DailyReadRootView(
                 model: makeDailyReadViewModel(from: store.state.dailyRead, isOffline: !store.state.network.isConnected),
@@ -448,6 +462,17 @@ struct HostRootView: View {
         default:
             return .unsupported
         }
+    }
+
+    private func closeSpeakingRoom() {
+        if store.state.speakingRoom.phase != .idle && store.state.speakingRoom.phase != .ended {
+            store.dispatch(.speakingRoom(.session(.endTap)))
+        }
+        dismissWorkbenchModal()
+    }
+
+    private func dismissWorkbenchModal() {
+        store.dispatch(.navigation(.workbench(.dismiss)))
     }
 }
 
