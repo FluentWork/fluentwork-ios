@@ -76,7 +76,7 @@ struct HostRootView: View {
                         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
                     },
                     onStopTapped: {
-                        store.dispatch(.speakingRoom(.session(.sessionStopTap)))
+                        store.dispatch(.speakingRoom(.session(.endTap)))
                     }
                 )
                 .navigationTitle("说的房间")
