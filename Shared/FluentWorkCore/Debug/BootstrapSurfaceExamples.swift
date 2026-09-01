@@ -1,5 +1,4 @@
 import FactoryKit
-import FluentWorkCore
 
 /// Example integration of bootstrap surface configuration in app entry point.
 ///
