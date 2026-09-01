@@ -319,8 +319,8 @@ swift test 2>&1 | grep -E "✘|fail" | head
 
 - [x] `fluentwork-ios/docs/05_第二波开发范围与任务清单.md` §I11 / I12 / I13
 - [x] `fluentwork-backend/docs/20_B12_badge_emit_问题修复说明.md`（追加 turn_id 章节）
-- [ ] `fluentwork-meta/docs/30_技术方案/36_FluentWork可观测性与事件Schema设计草案.md` 加 iOS `source=ios` 注释
-- [ ] `fluentwork-infra/docs/observability/00_FluentWork可观测性与事件Schema设计.md` 加 `phrase_block_id` 例
+- [x] `fluentwork-meta/docs/30_技术方案/36_FluentWork可观测性与事件Schema设计草案.md` 加 iOS `source=ios` 注释
+- [x] `fluentwork-infra/docs/observability/00_FluentWork可观测性与事件Schema设计.md` 加 `phrase_block_id` 例
 
 ---
 
