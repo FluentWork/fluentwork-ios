@@ -85,7 +85,15 @@ wssBaseURL = URL(string: "ws://127.0.0.1:8080/v1/voice")!
 
 ### Case 1 — turn_id 在 iOS 端单调递增
 
-**目标**：iOS `user.speech.end` 帧携带的 `turn_id` 从 `"turn-1"` 开始，按完成顺序递增。
+**Mock 覆盖**（无 Charles 时）：
+
+```bash
+swift test --filter defaultSpeechSessionClientSendsMonotonicTurnIDsAcrossMultipleTurns
+```
+
+测试驱动 `InMemorySocketTransport` + `DefaultSpeechSessionClient`，直接断言两个连续的 `user.speech.end` 帧携带 `turn_id: "turn-1"` → `"turn-2"`。
+
+**真机 + Charles 步骤**：iOS `user.speech.end` 帧携带的 `turn_id` 从 `"turn-1"` 开始，按完成顺序递增。
 
 步骤：
 
@@ -113,7 +121,15 @@ voicegateway.handler voice user speech frame session_id=... type=user.speech.end
 
 ### Case 2 — 后端 hit-detection 命中 + dedupe 正确
 
-**目标**：同一 (session, turn, phrase_block) 的命中只产生一次 `feedback.badge`，跨 turn 不 dedupe。
+**Mock 覆盖**（无 Charles 时）：
+
+```bash
+swift test --filter badgeFeedbackDedupeHonorsTimeWindowTTL
+```
+
+测试直接驱动 `BadgeFeedback.state.ingest()` 三次（TTL 内重复 → 1 条、TTL 过期 → 2 条、跨 turn_id → 3 条），不依赖 transport 层或 Charles。
+
+**真机 + Charles 步骤**：同一 (session, turn, phrase_block) 的命中只产生一次 `feedback.badge`，跨 turn 不 dedupe。
 
 步骤：
 
@@ -321,6 +337,7 @@ swift test 2>&1 | grep -E "✘|fail" | head
 - [x] `fluentwork-backend/docs/20_B12_badge_emit_问题修复说明.md`（追加 turn_id 章节）
 - [x] `fluentwork-meta/docs/30_技术方案/36_FluentWork可观测性与事件Schema设计草案.md` 加 iOS `source=ios` 注释
 - [x] `fluentwork-infra/docs/observability/00_FluentWork可观测性与事件Schema设计.md` 加 `phrase_block_id` 例
+- [x] `fluentwork-ios/docs/12_mock_device_测试支持说明.md` mock 资产全量盘点 + Case 1/2/3 mock 覆盖表（由 `docs/I13-mock-case12-plus-mock-guide` MR 落地）
 
 ---
 
