@@ -15,6 +15,8 @@ public enum FeedbackBadgeTier: String, Equatable, Sendable, Codable {
 /// Keep field names aligned with the backend WSS contract tests
 /// (`type` discriminator + snake_case payloads).
 public enum WSControlFrame: Equatable, Sendable {
+    case auth(ticket: String)
+    case sessionReady(sessionID: String, userID: String?)
     case handshake(ticket: String, sessionID: String)
     case sessionStart(SessionStartPayload)
     case userSpeechStart
@@ -59,6 +61,7 @@ extension WSControlFrame: Codable {
         case type
         case ticket
         case sessionID = "session_id"
+        case userID = "user_id"
         case text
         case sequence
         case turnID = "turn_id"
@@ -76,6 +79,15 @@ extension WSControlFrame: Codable {
         let type = try container.decode(String.self, forKey: .type)
 
         switch type {
+        case "auth":
+            self = .auth(ticket: try container.decode(String.self, forKey: .ticket))
+
+        case "session.ready":
+            self = .sessionReady(
+                sessionID: try container.decode(String.self, forKey: .sessionID),
+                userID: try container.decodeIfPresent(String.self, forKey: .userID)
+            )
+
         case "handshake":
             self = .handshake(
                 ticket: try container.decode(String.self, forKey: .ticket),
@@ -131,6 +143,15 @@ extension WSControlFrame: Codable {
         var container = encoder.container(keyedBy: CodingKeys.self)
 
         switch self {
+        case let .auth(ticket):
+            try container.encode("auth", forKey: .type)
+            try container.encode(ticket, forKey: .ticket)
+
+        case let .sessionReady(sessionID, userID):
+            try container.encode("session.ready", forKey: .type)
+            try container.encode(sessionID, forKey: .sessionID)
+            try container.encodeIfPresent(userID, forKey: .userID)
+
         case let .handshake(ticket, sessionID):
             try container.encode("handshake", forKey: .type)
             try container.encode(ticket, forKey: .ticket)

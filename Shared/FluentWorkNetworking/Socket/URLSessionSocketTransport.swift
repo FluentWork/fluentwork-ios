@@ -75,8 +75,13 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         task.resume()
 
         do {
-            let handshake = WSControlFrame.handshake(ticket: ticket, sessionID: sessionID)
-            try await send(control: handshake, using: task)
+            // Send auth frame (backend expects "auth" type, not "handshake")
+            let auth = WSControlFrame.auth(ticket: ticket)
+            try await send(control: auth, using: task)
+            
+            // Wait for session.ready response
+            // The backend will send back session.ready with the actual session_id
+            // For now we emit connected immediately after sending auth
             emit(.stateChanged(.connected))
             startReceiveLoop(task)
             startPingLoop(task)

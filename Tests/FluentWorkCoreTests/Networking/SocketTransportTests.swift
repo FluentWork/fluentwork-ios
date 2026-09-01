@@ -4,6 +4,8 @@ import Testing
 
 @Test func controlFrameCodecRoundTripsKnownTypes() throws {
     let frames: [WSControlFrame] = [
+        .auth(ticket: "t-1"),
+        .sessionReady(sessionID: "s-1", userID: "u-1"),
         .handshake(ticket: "t-1", sessionID: "s-1"),
         .sessionStart(.init(materialContext: "ctx", scene: "interview", voiceID: "v1")),
         .userSpeechStart,
