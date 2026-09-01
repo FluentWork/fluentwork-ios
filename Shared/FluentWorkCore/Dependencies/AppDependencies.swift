@@ -25,6 +25,66 @@ public protocol AudioEngineProtocol: Sendable {
     func interruptNow() async
 }
 
+/// Decodes an inbound `WSAudioFrame` (Opus payload) into 16 kHz mono
+/// interleaved PCM16 frames ready for `AVAudioPlayerNode` scheduling.
+///
+/// The wire format is fixed at the speaking-room boundary — both the
+/// Volcengine path and any test fallback produce the same PCM shape so
+/// the AVAudioPlayerNode can stay format-locked once attached.
+public protocol WSAudioFrameDecoder: Sendable {
+    /// Decode one `WSAudioFrame` into 16 kHz mono interleaved PCM16 bytes.
+    ///
+    /// Returned `Data.count` is always a multiple of 2 (one `Int16` per sample).
+    /// The PCM shape is the same shape `LiveAudioEngine` emits on the
+    /// capture side, which keeps the loopback test round-trip tight.
+    func decode(_ frame: WSAudioFrame) async throws -> Data
+}
+
+/// Decoder that treats `opusPayload` as already-PCM16 bytes.
+///
+/// Useful for:
+///   - Unit tests that drive the speaking-room wiring without a Volcengine
+///     decoder
+///   - The first day of B13 integration, when the backend can still send raw
+///     PCM fallback frames while we confirm the wire format
+///
+/// Validates the payload length is a multiple of two (PCM16 sample width) so
+/// a malformed fallback frame surfaces a clear error instead of corrupting
+/// the player node's buffer queue.
+public struct RawPCM16FrameDecoder: WSAudioFrameDecoder {
+    public enum Error: Swift.Error, Equatable {
+        case oddSampleCount(Int)
+    }
+
+    public init() {}
+
+    public func decode(_ frame: WSAudioFrame) async throws -> Data {
+        guard frame.opusPayload.count.isMultiple(of: 2) else {
+            throw Error.oddSampleCount(frame.opusPayload.count)
+        }
+        return frame.opusPayload
+    }
+}
+
+/// Decoder that targets the Volcengine Opus pipeline.
+///
+/// This is a deliberate stub — the real implementation lands in B13 once the
+/// Volcengine SDK is on the SDK dependency list and the SDK wrapper type is
+/// selected. Until then, constructing this decoder and asking it to decode
+/// surfaces a clear `notAvailable` error so the engine can degrade instead of
+/// crashing the speaking room.
+public struct VolcengineOpusFrameDecoder: WSAudioFrameDecoder {
+    public enum Error: Swift.Error, Equatable {
+        case notAvailable
+    }
+
+    public init() {}
+
+    public func decode(_ frame: WSAudioFrame) async throws -> Data {
+        throw Error.notAvailable
+    }
+}
+
 public protocol SpeechSessionClientProtocol: Sendable {
     func startSession() async throws
     func sendSpeechBoundary(started: Bool) async throws
@@ -217,14 +277,26 @@ public extension Container {
     var audioEngine: Factory<AudioEngineProtocol> {
         self {
             if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                // XCTest path: keep `PlaceholderAudioEngine` so unit tests that
+                // exercise reducer/middleware wiring without AVFoundation can
+                // still resolve `audioEngine()` without spinning up an
+                // `AVAudioEngine` graph.
                 return PlaceholderAudioEngine()
             }
             #if canImport(AVFoundation)
-            return LiveAudioEngine()
+            // Day-one real wiring uses the raw PCM16 decoder so loopback
+            // tests can drive the speaking-room pipeline without the
+            // Volcengine SDK; the production decoder swap happens behind the
+            // I12 decoder factory once B13 main-lines Opus encoding.
+            return LiveAudioEngine(decoder: self.wsAudioFrameDecoder())
             #else
             return PlaceholderAudioEngine()
             #endif
         }.shared
+    }
+
+    var wsAudioFrameDecoder: Factory<any WSAudioFrameDecoder> {
+        self { RawPCM16FrameDecoder() }.singleton
     }
 
     var speechSessionClient: Factory<SpeechSessionClientProtocol> {
