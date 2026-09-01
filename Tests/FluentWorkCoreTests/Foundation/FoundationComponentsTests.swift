@@ -271,7 +271,7 @@ import TGReduxKitTesting
 }
 
 @Test func networkConnectivityReducerAppliesSnapshot() throws {
-    let store = TestStore(
+    let store = TGReduxKitTesting.TestStore(
         initialState: NetworkConnectivityState(),
         reducer: networkConnectivityReducer
     )
@@ -282,7 +282,7 @@ import TGReduxKitTesting
     expected.isConstrained = true
 
     store.send(
-        .connectivityChanged(
+        NetworkConnectivityAction.connectivityChanged(
             NetworkPathSnapshot(isConnected: false, isExpensive: true, isConstrained: true)
         )
     )
@@ -290,7 +290,7 @@ import TGReduxKitTesting
 }
 
 @Test func navigationReducerPresentsSpeakingRoomFullScreen() throws {
-    let store = TestStore(
+    let store = TGReduxKitTesting.TestStore(
         initialState: AppNavigationState(),
         reducer: appNavigationReducer
     )
@@ -300,20 +300,20 @@ import TGReduxKitTesting
     expected.workbench.presentationStyle = .fullScreenCover
 
     store.send(
-        .workbench(.present(.speakingRoom(sessionID: "s1"), style: .fullScreenCover))
+        AppNavigationAction.workbench(.present(.speakingRoom(sessionID: "s1"), style: .fullScreenCover))
     )
     try store.assert(equals: expected)
 }
 
 @Test func navigationSelectTabUpdatesSelectedTab() throws {
-    let store = TestStore(
+    let store = TGReduxKitTesting.TestStore(
         initialState: AppNavigationState(),
         reducer: appNavigationReducer
     )
 
     var expected = AppNavigationState()
     expected.selectedTab = .corpus
-    store.send(.selectTab(.corpus))
+    store.send(AppNavigationAction.selectTab(.corpus))
     try store.assert(equals: expected)
 }
 

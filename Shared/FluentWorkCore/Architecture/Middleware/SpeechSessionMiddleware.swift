@@ -134,12 +134,20 @@ private func interpretSpeechSessionSideEffect(
                 return nil
             },
             .task(id: SpeechSessionTaskID.audioEngineEvents) {
+                // B13: Buffer PCM chunks during speech for client ASR transcription
+                var pcmBuffer: [Data] = []
+                var isCapturingSpeech = false
+                
                 for await event in audioEngine.events() {
                     if Task.isCancelled { return nil }
 
                     switch event {
                     case .speechStarted:
                         do {
+                            // Reset PCM buffer at the start of each turn
+                            pcmBuffer.removeAll()
+                            isCapturingSpeech = true
+                            
                             // No turnID on start — backend uses the next
                             // user.speech.end's turnID as the dedupe scope.
                             try await speechClient.sendSpeechBoundary(
@@ -155,6 +163,8 @@ private func interpretSpeechSessionSideEffect(
 
                     case .speechEnded:
                         do {
+                            isCapturingSpeech = false
+                            
                             // `turnCounter` is updated by the session event
                             // handler *after* every reduce, so by the time
                             // `.speechEnded` arrives the box already holds
@@ -164,11 +174,12 @@ private func interpretSpeechSessionSideEffect(
                             // is therefore `count + 1`.
                             let turnID = "turn-\(turnCounter.get() + 1)"
                             
-                            // B13: Attempt client-side ASR transcription
+                            // B13: Attempt client-side ASR transcription with buffered PCM
                             let clientASRText = await transcribeWithClientASR(
                                 transcriber: clientASRTranscriber,
                                 tracker: tracker,
-                                turnID: turnID
+                                turnID: turnID,
+                                pcmChunks: pcmBuffer
                             )
                             
                             try await speechClient.sendSpeechBoundary(
@@ -185,6 +196,9 @@ private func interpretSpeechSessionSideEffect(
                                 ]
                             )
                             await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechEnd(turnID: turnID))))
+                            
+                            // Clear buffer after use
+                            pcmBuffer.removeAll()
                         } catch {
                             await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
                             return nil
@@ -192,6 +206,11 @@ private func interpretSpeechSessionSideEffect(
 
                     case let .pcmChunk(data):
                         do {
+                            // B13: Buffer PCM during speech capture for client ASR
+                            if isCapturingSpeech {
+                                pcmBuffer.append(data)
+                            }
+                            
                             try await speechClient.sendAudioPCM(data)
                         } catch {
                             await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
@@ -276,17 +295,14 @@ private final class MainActorActionBox: @unchecked Sendable {
 private func transcribeWithClientASR(
     transcriber: ClientASRTranscriber,
     tracker: TrackerClientProtocol,
-    turnID: String
+    turnID: String,
+    pcmChunks: [Data]
 ) async -> String? {
-    // Create a stream of PCM chunks captured during this turn
-    // Note: This is a simplified implementation. In production, you'd need to:
-    // 1. Buffer PCM chunks from the audio engine during the turn
-    // 2. Replay them through an AsyncStream for the transcriber
-    // For now, we'll use an empty stream as a placeholder
+    // Create a stream from buffered PCM chunks
     let pcmStream = AsyncStream<Data> { continuation in
-        // TODO(B13): Wire actual PCM buffer from LiveAudioEngine
-        // This requires LiveAudioEngine to expose a separate PCM tap
-        // or buffer PCM chunks during the turn for replay
+        for chunk in pcmChunks {
+            continuation.yield(chunk)
+        }
         continuation.finish()
     }
     

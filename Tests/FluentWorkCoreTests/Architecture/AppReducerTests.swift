@@ -145,10 +145,10 @@ import TGReduxKitTesting
 }
 
 @Test func appLaunchedSetsBootstrapLoading() throws {
-    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+    let store = TGReduxKitTesting.TestStore(initialState: AppState.initial, reducer: appReducer)
 
     var expected = AppState.initial
     expected.bootstrapStatus = .loading
-    store.send(.lifecycle(.appLaunched))
+    store.send(AppAction.lifecycle(.appLaunched))
     try store.assert(equals: expected)
 }

@@ -188,7 +188,7 @@ import Testing
   var expected = initial
   expected.dailyRead.audioPhase = .playing
 
-  store.send(.dailyRead(.audioPlaybackStarted))
+  store.send(AppAction.dailyRead(.audioPlaybackStarted))
   try store.assert(equals: expected)
 }
 
