@@ -216,5 +216,59 @@ struct DebugBootstrapConfigurationTests {
         Container.shared.preferredSurfaceProvider.reset()
         Container.shared.bootstrapClient.reset()
     }
+
+    @Test("Launch arguments configure workbench override")
+    func launchArgumentsConfigureWorkbenchOverride() async throws {
+        DebugBootstrapConfiguration.commandLineArgumentsProvider = {
+            ["FluentWorkHost", "--workbench-first"]
+        }
+        DebugBootstrapConfiguration.configureLaunchArgumentOverride()
+        installSharedBootstrapClient()
+
+        let client = Container.shared.bootstrapClient()
+        let result = try await client.loadBootstrap()
+
+        #expect(result.snapshot.preferredSurface == .workbench)
+
+        DebugBootstrapConfiguration.reset()
+        Container.shared.preferredSurfaceProvider.reset()
+        Container.shared.bootstrapClient.reset()
+    }
+
+    @Test("Launch arguments configure review override")
+    func launchArgumentsConfigureReviewOverride() async throws {
+        DebugBootstrapConfiguration.commandLineArgumentsProvider = {
+            ["FluentWorkHost", "--review-first"]
+        }
+        DebugBootstrapConfiguration.configureLaunchArgumentOverride()
+        installSharedBootstrapClient()
+
+        let client = Container.shared.bootstrapClient()
+        let result = try await client.loadBootstrap()
+
+        #expect(result.snapshot.preferredSurface == .review)
+
+        DebugBootstrapConfiguration.reset()
+        Container.shared.preferredSurfaceProvider.reset()
+        Container.shared.bootstrapClient.reset()
+    }
+
+    @Test("Launch arguments fall back to speaking room")
+    func launchArgumentsFallBackToSpeakingRoom() async throws {
+        DebugBootstrapConfiguration.commandLineArgumentsProvider = {
+            ["FluentWorkHost", "--unknown-flag"]
+        }
+        DebugBootstrapConfiguration.configureLaunchArgumentOverride()
+        installSharedBootstrapClient()
+
+        let client = Container.shared.bootstrapClient()
+        let result = try await client.loadBootstrap()
+
+        #expect(result.snapshot.preferredSurface == .speakingRoom)
+
+        DebugBootstrapConfiguration.reset()
+        Container.shared.preferredSurfaceProvider.reset()
+        Container.shared.bootstrapClient.reset()
+    }
 }
 #endif

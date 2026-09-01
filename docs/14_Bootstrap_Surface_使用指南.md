@@ -1,396 +1,357 @@
 # Bootstrap Surface 使用指南
 
-## 概述
+**版本**：V2  
+**日期**：2026-09  
+**适用范围**：`fluentwork-ios` 当前 bootstrap 实现
 
-Bootstrap Surface 是 FluentWork iOS 应用启动流程的抽象层，用于在启动时显示不同的 UI 界面（欢迎屏、权限请求、功能介绍等）。它解决了以下问题：
+---
 
-1. **启动流程的灵活性**：可以根据用户状态（首次安装、版本升级、权限缺失）显示不同的界面
-2. **解耦启动 UI 和业务逻辑**：启动流程和主应用逻辑分离
-3. **测试友好**：通过 Provider 模式可以轻松 mock 不同的启动场景
+## 1. 当前口径
 
-## 架构设计
+当前 iOS 仓已经没有旧版 `BootstrapSurfaceProviderProtocol -> BootstrapSurface?` 这套实现。
 
-### 核心组件
+现在的实际方案是：
 
-```
-BootstrapSurfaceProvider
-    ├── determineBootstrapSurface() → BootstrapSurface?
-    └── 返回 nil 表示直接进入主应用
-    
-BootstrapSurface (enum)
-    ├── welcome           // 欢迎屏
-    ├── permissions       // 权限请求
-    ├── featureIntro      // 功能介绍
-    └── ... (可扩展)
-```
+1. 启动由 `appBootstrapMiddleware` 触发
+2. `BootstrapClientProtocol` 返回 `BootstrapResult`
+3. `BootstrapResult.snapshot.preferredSurface` 决定启动后的工作台入口 surface
+4. `preferredSurfaceProvider` 通过 DI 注入，允许 production/debug/test 使用不同策略
 
-### 启动流程
+所以这里说的 “Bootstrap Surface”，当前准确含义是：
 
-```
-App 启动
-    ↓
-RootReducer 处理 .appLaunched
-    ↓
-BootstrapSurfaceProvider.determineBootstrapSurface()
-    ↓
-    ├─ 返回 surface → 显示 Bootstrap UI
-    │       ↓
-    │   用户完成操作 → dispatch(.bootstrap(.completed))
-    │       ↓
-    └─ 返回 nil → 直接进入主应用
-```
+**bootstrap 过程中决定 `WorkspaceSurface` 初始值的策略与用法。**
 
-## 使用方法
+不是单独的一层欢迎页/权限页状态机。
 
-### 1. 实现自定义 Provider
+---
 
-创建一个类实现 `BootstrapSurfaceProviderProtocol`：
+## 2. 关键类型
+
+### `BootstrapSnapshot`
+
+文件：
+
+- `Shared/FluentWorkCore/Architecture/AppState.swift`
+
+当前结构：
 
 ```swift
-import FluentWorkCore
-
-final class MyBootstrapProvider: BootstrapSurfaceProviderProtocol {
-    func determineBootstrapSurface() async -> BootstrapSurface? {
-        // 检查是否需要显示欢迎屏
-        if isFirstLaunch() {
-            return .welcome
-        }
-        
-        // 检查麦克风权限
-        if !hasMicrophonePermission() {
-            return .permissions
-        }
-        
-        // 不需要 Bootstrap，直接进入主应用
-        return nil
-    }
-    
-    private func isFirstLaunch() -> Bool {
-        // 实现逻辑
-    }
-    
-    private func hasMicrophonePermission() -> Bool {
-        // 实现逻辑
-    }
+public struct BootstrapSnapshot: Equatable, Sendable {
+  public var featureFlags: FeatureFlagSnapshot
+  public var preferredSurface: WorkspaceSurface
 }
 ```
 
-### 2. 注册到 DI 容器
+它承载 bootstrap 成功后要投影进 Store 的启动快照。
 
-在 `AppDependencies.swift` 中注册：
+### `BootstrapResult`
 
 ```swift
-extension Container {
-    var bootstrapSurfaceProvider: Factory<BootstrapSurfaceProviderProtocol> {
-        self { MyBootstrapProvider() }.singleton
-    }
+public struct BootstrapResult: Equatable, Sendable {
+  public var snapshot: BootstrapSnapshot
+  public var authInfo: AuthInfo?
 }
 ```
 
-### 3. 创建 Bootstrap UI
+它把启动快照和认证信息打包返回给 middleware。
 
-根据 `BootstrapSurface` 类型创建对应的 SwiftUI View：
+### `preferredSurfaceProvider`
+
+文件：
+
+- `Shared/FluentWorkCore/Dependencies/AppDependencies.swift`
+
+当前工厂：
 
 ```swift
-import SwiftUI
-import FluentWorkCore
-
-struct BootstrapView: View {
-    let surface: BootstrapSurface
-    let onComplete: () -> Void
-    
-    var body: some View {
-        switch surface {
-        case .welcome:
-            WelcomeView(onComplete: onComplete)
-        case .permissions:
-            PermissionsView(onComplete: onComplete)
-        case .featureIntro:
-            FeatureIntroView(onComplete: onComplete)
-        }
-    }
-}
-
-struct WelcomeView: View {
-    let onComplete: () -> Void
-    
-    var body: some View {
-        VStack {
-            Text("欢迎使用 FluentWork")
-            Button("开始使用", action: onComplete)
-        }
-    }
+var preferredSurfaceProvider: Factory<@Sendable () -> WorkspaceSurface> {
+    self {
+        { .speakingRoom }
+    }.singleton
 }
 ```
 
-### 4. 在根视图中使用
+这表示：
+
+1. 生产默认入口是 `.speakingRoom`
+2. 但入口策略不是写死在 bootstrap client 里
+3. debug / test 可以通过 DI 覆盖
+
+---
+
+## 3. 实际启动链路
+
+```text
+appLaunched
+  -> appBootstrapMiddleware
+  -> bootstrapClient.loadBootstrap()
+      -> ensureGuestToken()
+      -> resolver.refresh()
+      -> resolver.snapshot(...)
+      -> preferredSurfaceProvider()
+      -> BootstrapResult(snapshot, authInfo)
+  -> .lifecycle(.bootstrapSucceeded(...))
+  -> AppReducer
+      -> bootstrapStatus = .ready
+      -> workspace.activeSurface = snapshot.preferredSurface
+      -> featureFlags / auth / workspace modules 投影
+```
+
+对应文件：
+
+- `Shared/FluentWorkCore/Architecture/Middleware/AppBootstrapMiddleware.swift`
+- `Shared/FluentWorkCore/Dependencies/AppDependencies.swift`
+- `Shared/FluentWorkCore/Architecture/AppReducer.swift`
+
+---
+
+## 4. 生产默认行为
+
+默认情况下，不需要做任何额外配置。
+
+`Container.bootstrapClient` 会使用：
 
 ```swift
-import SwiftUI
-import FluentWorkCore
-
-struct RootView: View {
-    @EnvironmentObject var store: Store<AppState, AppAction>
-    
-    var body: some View {
-        Group {
-            if let surface = store.state.bootstrapSurface {
-                BootstrapView(surface: surface) {
-                    store.send(.bootstrap(.completed))
-                }
-            } else {
-                MainAppView()
-            }
-        }
-    }
-}
+ResolverBackedBootstrapClient(
+    resolver: self.featureFlagResolver(),
+    preferredSurfaceProvider: self.preferredSurfaceProvider(),
+    sessionAPI: self.sessionAPIClient(),
+    tokenStore: self.authTokenStore()
+)
 ```
 
-## 内置示例
+而 `preferredSurfaceProvider()` 默认返回 `.speakingRoom`。
 
-项目提供了两个内置示例（仅在 DEBUG 模式可用）：
+因此 production 口径是：
 
-### 1. AlwaysWelcomeBootstrapProvider
+1. 启动时拉 feature flags
+2. 确保 guest token
+3. 默认进入 `speakingRoom`
 
-每次启动都显示欢迎屏：
+---
+
+## 5. Debug 下如何覆盖启动入口
+
+文件：
+
+- `Shared/FluentWorkCore/Debug/DebugBootstrapConfiguration.swift`
+
+当前支持三种方式。
+
+### 5.1 直接强制指定 surface
 
 ```swift
 #if DEBUG
-container.bootstrapSurfaceProvider.register {
-    AlwaysWelcomeBootstrapProvider()
-}
+DebugBootstrapConfiguration.forceSurface(.workbench)
 #endif
 ```
 
-### 2. NoBootstrapProvider
+适合：
 
-跳过 Bootstrap，直接进入主应用：
+1. 本地手工调试某个入口
+2. 快速验证某个 surface 的启动投影
+
+### 5.2 通过 launch arguments
+
+支持：
+
+- `--workbench-first`
+- `--review-first`
+- `--speaking-room-first`
+
+示例：
 
 ```swift
 #if DEBUG
-container.bootstrapSurfaceProvider.register {
-    NoBootstrapProvider()
-}
+DebugBootstrapConfiguration.configureLaunchArgumentOverride()
 #endif
 ```
 
-## Debug 配置
+然后在 Xcode Scheme 中加参数：
 
-在 `DebugBootstrapConfiguration.swift` 中可以切换不同的 Provider：
-
-```swift
-#if DEBUG
-import Foundation
-
-public enum DebugBootstrapConfiguration {
-    public static let useAlwaysWelcome = false // 改为 true 启用
-}
-#endif
+```text
+--review-first
 ```
 
-## 测试
-
-### 单元测试
+### 5.3 通过 UserDefaults 持久化
 
 ```swift
-import Testing
-@testable import FluentWorkCore
-
-@Test func bootstrapProviderReturnsWelcomeOnFirstLaunch() async {
-    // Given
-    let provider = MyBootstrapProvider()
-    // 模拟首次启动
-    
-    // When
-    let surface = await provider.determineBootstrapSurface()
-    
-    // Then
-    #expect(surface == .welcome)
-}
-
-@Test func bootstrapProviderReturnsNilWhenSetupComplete() async {
-    // Given
-    let provider = MyBootstrapProvider()
-    // 模拟已完成设置
-    
-    // When
-    let surface = await provider.determineBootstrapSurface()
-    
-    // Then
-    #expect(surface == nil)
-}
+UserDefaults.standard.set("workbench", forKey: "debug.bootstrap.surface")
+DebugBootstrapConfiguration.configureFromUserDefaults()
 ```
 
-### 端到端测试
+适合：
 
-参考 `LaunchToNavigationEndToEndTests.swift`：
+1. 调试菜单
+2. 本地多次重启保持同一入口
+
+### 5.4 重置到默认行为
 
 ```swift
-@Test func appLaunchWithBootstrapShowsWelcome() async throws {
-    let container = Container()
-    container.bootstrapSurfaceProvider.register {
-        AlwaysWelcomeBootstrapProvider()
-    }
-    
-    let store = Store(
-        initialState: AppState(),
-        reducer: rootReducer,
-        environment: container
+DebugBootstrapConfiguration.reset()
+```
+
+它会：
+
+1. 重置 `preferredSurfaceProvider`
+2. 重置 launch argument provider
+
+恢复默认 `.speakingRoom`
+
+---
+
+## 6. 测试里应该怎么用
+
+### 6.1 测试入口策略时，不要依赖真实网络 bootstrap
+
+这类测试目标是验证：
+
+1. provider 默认值
+2. override 是否生效
+3. debug 配置是否真的改变 bootstrap 结果
+
+因此应该使用假的 bootstrap client，而不是 `ResolverBackedBootstrapClient`。
+
+当前测试文件：
+
+- `Tests/FluentWorkCoreTests/Architecture/BootstrapSurfaceProviderTests.swift`
+
+里面使用了：
+
+```swift
+private struct SurfaceOnlyBootstrapClient: BootstrapClientProtocol
+```
+
+它只做一件事：
+
+```swift
+BootstrapResult(
+    snapshot: BootstrapSnapshot(
+        featureFlags: .firstWave,
+        preferredSurface: preferredSurfaceProvider()
     )
-    
-    await store.send(.appLaunched)
-    
-    #expect(store.state.bootstrapSurface == .welcome)
-}
+)
 ```
 
-## 常见场景
+这样测试只验证 surface 逻辑，不碰网络、鉴权和真实 resolver。
 
-### 场景 1：首次安装引导
+### 6.2 Launch 到导航的 store-level 测试
+
+文件：
+
+- `Tests/FluentWorkCoreTests/Architecture/LaunchToNavigationEndToEndTests.swift`
+
+这里使用 `StaticBootstrapClient`，因为测试重点是：
+
+1. `appLaunched` 后 bootstrap 是否完成
+2. `BootstrapSnapshot` 是否正确投影进 Store
+3. 导航和 workspace 模块状态是否一致
+
+不是验证真实 backend 是否可连。
+
+---
+
+## 7. 如何在容器里自定义 surface
+
+### 测试容器
 
 ```swift
-func determineBootstrapSurface() async -> BootstrapSurface? {
-    let isFirstLaunch = UserDefaults.standard.bool(forKey: "has_launched") == false
-    
-    if isFirstLaunch {
-        UserDefaults.standard.set(true, forKey: "has_launched")
-        return .welcome
-    }
-    
-    return nil
+let container = Container()
+container.preferredSurfaceProvider.register {
+    { .review }
+}
+container.bootstrapClient.register {
+    SurfaceOnlyBootstrapClient(
+        preferredSurfaceProvider: container.preferredSurfaceProvider()
+    )
 }
 ```
 
-### 场景 2：权限检查
+### 共享容器
 
 ```swift
-import AVFoundation
-
-func determineBootstrapSurface() async -> BootstrapSurface? {
-    let status = AVAudioSession.sharedInstance().recordPermission
-    
-    if status == .undetermined || status == .denied {
-        return .permissions
-    }
-    
-    return nil
+Container.shared.preferredSurfaceProvider.register {
+    { .workbench }
 }
 ```
 
-### 场景 3：版本升级引导
+注意：
+
+1. `Container.shared` 更适合 debug 配置
+2. 并行测试优先使用独立 `Container()`
+3. 用完要 reset，避免测试串扰
+
+---
+
+## 8. 新增一个 surface 时怎么做
+
+如果后续需要新增 `WorkspaceSurface`，例如：
 
 ```swift
-func determineBootstrapSurface() async -> BootstrapSurface? {
-    let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-    let lastVersion = UserDefaults.standard.string(forKey: "last_version")
-    
-    if currentVersion != lastVersion {
-        UserDefaults.standard.set(currentVersion, forKey: "last_version")
-        return .featureIntro // 显示新功能介绍
-    }
-    
-    return nil
-}
+case dailyRead
 ```
 
-### 场景 4：多步骤引导
+需要同步更新四处：
 
-```swift
-enum OnboardingStep: String {
-    case welcome
-    case permissions
-    case tutorial
-}
+1. `WorkspaceSurface` 枚举
+2. `preferredSurfaceProvider` 的调用方和消费方
+3. `DebugBootstrapConfiguration` 的 launch argument / UserDefaults 映射
+4. `BootstrapSurfaceProviderTests` 覆盖
 
-func determineBootstrapSurface() async -> BootstrapSurface? {
-    let completedSteps = UserDefaults.standard.stringArray(forKey: "completed_steps") ?? []
-    
-    if !completedSteps.contains(OnboardingStep.welcome.rawValue) {
-        return .welcome
-    }
-    
-    if !completedSteps.contains(OnboardingStep.permissions.rawValue) {
-        return .permissions
-    }
-    
-    if !completedSteps.contains(OnboardingStep.tutorial.rawValue) {
-        return .featureIntro
-    }
-    
-    return nil
-}
+如果入口变化还影响导航或模块投影，还要同步补：
 
-// 完成某步骤时调用
-func completeStep(_ step: OnboardingStep) {
-    var completed = UserDefaults.standard.stringArray(forKey: "completed_steps") ?? []
-    completed.append(step.rawValue)
-    UserDefaults.standard.set(completed, forKey: "completed_steps")
-}
+5. `LaunchToNavigationEndToEndTests`
+6. `AppReducerTests`
+
+---
+
+## 9. 不要再按旧方案扩展
+
+以下口径已经过时，不应继续使用：
+
+1. `BootstrapSurfaceProviderProtocol`
+2. `determineBootstrapSurface() async -> BootstrapSurface?`
+3. `store.state.bootstrapSurface`
+4. `.bootstrap(.completed)` 这类旧 action
+
+如果未来真的要做欢迎页/权限页/引导页多步骤链路，应新建独立的 onboarding / gating 设计，而不是复用当前 `preferredSurface` 方案。
+
+这两者不是一回事：
+
+```text
+preferredSurface = 启动后默认落到哪个工作台 surface
+onboarding/gating = 是否需要先过一层引导或阻塞流程
 ```
 
-## 扩展 BootstrapSurface
+---
 
-如果需要新的 Bootstrap 类型：
+## 10. 当前相关文件
 
-1. 在 `BootstrapSurface` 枚举中添加新 case：
+- `Shared/FluentWorkCore/Architecture/AppState.swift`
+- `Shared/FluentWorkCore/Architecture/AppReducer.swift`
+- `Shared/FluentWorkCore/Architecture/Middleware/AppBootstrapMiddleware.swift`
+- `Shared/FluentWorkCore/Dependencies/AppDependencies.swift`
+- `Shared/FluentWorkCore/Debug/DebugBootstrapConfiguration.swift`
+- `Tests/FluentWorkCoreTests/Architecture/BootstrapSurfaceProviderTests.swift`
+- `Tests/FluentWorkCoreTests/Architecture/LaunchToNavigationEndToEndTests.swift`
+- `docs/17_Bootstrap设计原理说明.md`
 
-```swift
-public enum BootstrapSurface: Equatable, Sendable {
-    case welcome
-    case permissions
-    case featureIntro
-    case accountSetup // 新增
-}
-```
+---
 
-2. 创建对应的 UI View
+## 11. FAQ
 
-3. 在 Provider 中返回新的 surface
+### Q1：为什么不直接在 UI 层判断启动进哪个页面？
 
-## 注意事项
+因为启动入口属于全局状态初始化的一部分，应该通过 bootstrap 收敛，再由 reducer 投影到 Store。这样测试、调试和生产行为才是一致的。
 
-1. **Provider 应该是无状态的**：不要在 Provider 中保存状态，所有状态应该存储在持久化层（UserDefaults、Keychain 等）
+### Q2：为什么不把 `preferredSurface` 写死在 `ResolverBackedBootstrapClient`？
 
-2. **异步操作**：`determineBootstrapSurface()` 是 async 方法，可以执行网络请求或其他异步操作
+因为 debug / test 需要覆盖，而入口策略不属于网络客户端本身的职责。把它抽成 provider 后，网络逻辑和入口策略就解耦了。
 
-3. **线程安全**：Provider 会在后台线程调用，确保实现是线程安全的
+### Q3：为什么测试不用真实 `ResolverBackedBootstrapClient`？
 
-4. **性能考虑**：Provider 在每次启动时调用，避免执行耗时操作
+因为那会把测试目标和外部环境绑死。bootstrap provider 测试应该只验证入口策略，不应该因为 backend 不在线而失败。
 
-5. **测试覆盖**：为 Provider 编写单元测试，覆盖所有可能的启动路径
+### Q4：launch arguments 为什么要单独做可测性改造？
 
-## 相关文件
-
-- `Shared/FluentWorkCore/Architecture/BootstrapSurfaceProvider.swift` - 协议定义
-- `Shared/FluentWorkCore/Debug/BootstrapSurfaceExamples.swift` - 示例实现
-- `Shared/FluentWorkCore/Debug/DebugBootstrapConfiguration.swift` - Debug 配置
-- `Tests/FluentWorkCoreTests/Architecture/BootstrapSurfaceProviderTests.swift` - 单元测试
-- `Tests/FluentWorkCoreTests/Architecture/LaunchToNavigationEndToEndTests.swift` - 端到端测试
-
-## FAQ
-
-### Q: 如何跳过 Bootstrap 直接进入主应用？
-
-A: Provider 返回 `nil` 即可：
-
-```swift
-func determineBootstrapSurface() async -> BootstrapSurface? {
-    return nil
-}
-```
-
-### Q: 如何在 Debug 模式快速测试不同的 Bootstrap？
-
-A: 使用 `DebugBootstrapConfiguration` 或直接在 DI 容器中注册示例 Provider。
-
-### Q: Bootstrap 完成后如何清理状态？
-
-A: 发送 `.bootstrap(.completed)` 后，RootReducer 会自动将 `bootstrapSurface` 设置为 `nil`，状态由 Provider 管理（如 UserDefaults）。
-
-### Q: 可以有多个连续的 Bootstrap 吗？
-
-A: 可以。每次完成一个步骤后，重新调用 Provider，它会返回下一个需要显示的 surface，直到返回 `nil`。
-
-### Q: 如何处理用户跳过 Bootstrap？
-
-A: 在 UI 层提供"跳过"按钮，点击时同样调用 `store.send(.bootstrap(.completed))`，但在 Provider 逻辑中记录用户跳过了哪些步骤。
+因为直接硬读 `CommandLine.arguments` 会让测试只能依赖进程级全局状态。现在通过 `commandLineArgumentsProvider` 间接注入，测试可以稳定验证 `--workbench-first / --review-first / fallback`。

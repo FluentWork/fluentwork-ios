@@ -8,6 +8,10 @@ import FactoryKit
 /// Use these helpers to override the default bootstrap surface for development
 /// and testing. Never import this file in release builds.
 public enum DebugBootstrapConfiguration {
+    @MainActor
+    static var commandLineArgumentsProvider: @Sendable () -> [String] = {
+        CommandLine.arguments
+    }
     
     /// Configure the bootstrap surface based on launch arguments.
     ///
@@ -21,16 +25,18 @@ public enum DebugBootstrapConfiguration {
     /// Product > Scheme > Edit Scheme > Run > Arguments > Arguments Passed On Launch
     /// --workbench-first
     /// ```
+    @MainActor
     public static func configureLaunchArgumentOverride() {
+        let arguments = commandLineArgumentsProvider()
         Container.shared.preferredSurfaceProvider.register {
             {
-                if CommandLine.arguments.contains("--workbench-first") {
+                if arguments.contains("--workbench-first") {
                     return .workbench
                 }
-                if CommandLine.arguments.contains("--review-first") {
+                if arguments.contains("--review-first") {
                     return .review
                 }
-                if CommandLine.arguments.contains("--speaking-room-first") {
+                if arguments.contains("--speaking-room-first") {
                     return .speakingRoom
                 }
                 // Default
@@ -49,6 +55,7 @@ public enum DebugBootstrapConfiguration {
     /// DebugBootstrapConfiguration.forceSurface(.workbench)
     /// #endif
     /// ```
+    @MainActor
     public static func forceSurface(_ surface: WorkspaceSurface) {
         Container.shared.preferredSurfaceProvider.register {
             { surface }
@@ -62,6 +69,7 @@ public enum DebugBootstrapConfiguration {
     /// UserDefaults.standard.set("workbench", forKey: "debug.bootstrap.surface")
     /// DebugBootstrapConfiguration.configureFromUserDefaults()
     /// ```
+    @MainActor
     public static func configureFromUserDefaults(key: String = "debug.bootstrap.surface") {
         Container.shared.preferredSurfaceProvider.register {
             {
@@ -75,8 +83,12 @@ public enum DebugBootstrapConfiguration {
     }
     
     /// Reset to production default (`.speakingRoom`).
+    @MainActor
     public static func reset() {
         Container.shared.preferredSurfaceProvider.reset()
+        commandLineArgumentsProvider = {
+            CommandLine.arguments
+        }
     }
 }
 #endif
