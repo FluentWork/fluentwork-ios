@@ -7,6 +7,7 @@ public enum LogDomain: String, Sendable, CaseIterable {
     case session
     case audio
     case store
+    case clientASR
 }
 
 public protocol LoggingProtocol: Sendable {

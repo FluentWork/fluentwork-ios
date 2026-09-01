@@ -14,6 +14,22 @@ public enum AudioEngineEvent: Equatable, Sendable {
     case speechEnded
     case pcmChunk(Data)
     case failed(String)
+    /// B13 — client-side ASR completed within the timeout window.
+    case clientASRCompleted(text: String, elapsedMs: Int)
+    /// B13 — client-side ASR failed or timed out before producing a result.
+    case clientASRFailed(reason: ClientASRFailureReason)
+}
+
+/// B13 — failure reasons surfaced by `ClientASRTranscriber`.
+public enum ClientASRFailureReason: Equatable, Sendable {
+    /// ASR engine is not available on this device / OS version.
+    case notAvailable
+    /// ASR timed out before producing a final transcript.
+    case timeout
+    /// The ASR engine was explicitly disabled via feature flag.
+    case engineDisabled
+    /// The ASR engine raised an error (see `underlyingError`).
+    case engineError(underlyingError: String)
 }
 
 
@@ -118,14 +134,14 @@ public struct StaticBootstrapClient: BootstrapClientProtocol {
 /// Loads flags via TGFeatureFlag `FeatureFlagResolver`, then maps into Redux domain snapshot.
 public struct ResolverBackedBootstrapClient: BootstrapClientProtocol {
     public let resolver: FeatureFlagResolver
-    public let preferredSurface: WorkspaceSurface
+    public let preferredSurfaceProvider: @Sendable () -> WorkspaceSurface
 
     public init(
         resolver: FeatureFlagResolver = FeatureFlagResolverFactory.makeFirstWaveResolver(),
-        preferredSurface: WorkspaceSurface = .speakingRoom
+        preferredSurfaceProvider: @escaping @Sendable () -> WorkspaceSurface = { .speakingRoom }
     ) {
         self.resolver = resolver
-        self.preferredSurface = preferredSurface
+        self.preferredSurfaceProvider = preferredSurfaceProvider
     }
 
     public func loadBootstrap() async throws -> BootstrapSnapshot {
@@ -133,7 +149,7 @@ public struct ResolverBackedBootstrapClient: BootstrapClientProtocol {
         let remote = resolver.snapshot(for: AppFeatureFlag.allCases)
         return BootstrapSnapshot(
             featureFlags: FeatureFlagSnapshotMapper.map(remote),
-            preferredSurface: preferredSurface
+            preferredSurface: preferredSurfaceProvider()
         )
     }
 }
@@ -208,7 +224,18 @@ public extension Container {
 
     var bootstrapClient: Factory<BootstrapClientProtocol> {
         self {
-            ResolverBackedBootstrapClient(resolver: self.featureFlagResolver())
+            ResolverBackedBootstrapClient(
+                resolver: self.featureFlagResolver(),
+                preferredSurfaceProvider: self.preferredSurfaceProvider()
+            )
+        }.singleton
+    }
+
+    var preferredSurfaceProvider: Factory<@Sendable () -> WorkspaceSurface> {
+        self {
+            // Production default: speakingRoom
+            // Debug builds can override via `container.preferredSurfaceProvider.register { { .dailyRead } }`
+            { .speakingRoom }
         }.singleton
     }
 
@@ -351,6 +378,25 @@ public extension Container {
 
     var tracker: Factory<TrackerClientProtocol> {
         self { ConsoleTracker() }.singleton
+    }
+
+    /// B13 — client ASR transcriber. Selection order:
+    ///   1. Apple Speech Framework (iOS 17+, on-device preferred)
+    ///   2. Volcengine SDK (B14+ integration point; throws `notAvailable` until then)
+    ///
+    /// Tests can override with `container.clientASRTranscriber.register { RawClientASRTranscriber() }`.
+    var clientASRTranscriber: Factory<ClientASRTranscriber> {
+        self {
+            // Try Apple Speech first; if unavailable (e.g. simulator without
+            // ASR entitlement), fall back to Volcengine placeholder.
+            if let apple = try? AppleSpeechClientASRTranscriber(logger: OSLogLogger(subsystem: "com.fluentwork.app")) {
+                return apple
+            }
+            // Volcengine placeholder — `isAvailable == false`, so middleware
+            // will emit `clientASRFailed(reason: .notAvailable)` and proceed
+            // with server-side ASR as the day-one fallback.
+            return VolcengineClientASRTranscriber()
+        }.shared
     }
 
     var secureStorage: Factory<SecureStorageProtocol> {
