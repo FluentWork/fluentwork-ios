@@ -1,6 +1,7 @@
 import FactoryKit
 import FluentWorkNetworking
 import Foundation
+import os
 import TGReduxKit
 
 /// Polling interval for the pending-status case. Backend typically finishes within
@@ -153,21 +154,15 @@ public func dailyReadAudioObserver(container: Container? = nil) -> Middleware<Ap
 }
 
 /// One-shot guard for the audio observer middleware.
-private final class ObserverStartedBox: @unchecked Sendable {
-  private let lock = NSLock()
-  private var started = false
+///
+/// `OSAllocatedUnfairLock` replaces the former `NSLock` — sync calls
+/// keep the existing `Middleware` contract happy and read more cleanly
+/// than manual `lock()` / `defer { unlock() }` pairs.
+private final class ObserverStartedBox: Sendable {
+  private let storage = OSAllocatedUnfairLock<Bool>(initialState: false)
 
-  func isStarted() -> Bool {
-    lock.lock()
-    defer { lock.unlock() }
-    return started
-  }
-
-  func markStarted() {
-    lock.lock()
-    defer { lock.unlock() }
-    started = true
-  }
+  func isStarted() -> Bool { storage.withLock { $0 } }
+  func markStarted() { storage.withLock { $0 = true } }
 }
 
 private func pollDailyReadUntilReady(

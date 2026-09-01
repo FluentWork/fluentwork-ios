@@ -1,5 +1,6 @@
 import FluentWorkNetworking
 import Foundation
+import os
 import Testing
 
 @testable import FluentWorkCore
@@ -182,73 +183,74 @@ private final class StubSessionAPIClient: SessionAPIClientProtocol, @unchecked S
   }
 }
 
+/// Test stub: in-memory implementation of `AuthTokenStoreProtocol`.
+///
+/// Uses Apple `OSAllocatedUnfairLock` (iOS 16+) instead of `NSLock`. All
+/// five stored fields live in a single `State` struct, so writes are
+/// atomic across the board — no more `lock` / `defer { unlock }`
+/// boilerplate, no more risk of forgetting to hold the lock on every
+/// read or every write.
 private final class InMemoryAuthTokenStore: AuthTokenStoreProtocol, @unchecked Sendable {
-  private let lock = NSLock()
-  private var accessTokenValue: String?
-  private var deviceIDValue: String
-  private var userIDValue: String?
-  private var isGuestValue: Bool = true
+  private struct State {
+    var accessToken: String?
+    var deviceID: String
+    var userID: String?
+    var isGuest: Bool = true
+  }
+
+  private let storage: OSAllocatedUnfairLock<State>
 
   init(seedAccessToken: String?, seedDeviceID: String) {
-    self.accessTokenValue = seedAccessToken
-    self.deviceIDValue = seedDeviceID
+    self.storage = OSAllocatedUnfairLock(
+      uncheckedState: State(accessToken: seedAccessToken, deviceID: seedDeviceID)
+    )
   }
 
   func deviceID() throws -> String {
-    lock.lock()
-    defer { lock.unlock() }
-    return deviceIDValue
+    storage.withLock { $0.deviceID }
   }
 
   func accessToken() throws -> String? {
-    lock.lock()
-    defer { lock.unlock() }
-    return accessTokenValue
+    storage.withLock { $0.accessToken }
   }
 
   func save(tokens: TokenResponse, deviceID: String) throws {
-    lock.lock()
-    defer { lock.unlock() }
-    accessTokenValue = tokens.accessToken
-    deviceIDValue = deviceID
-    userIDValue = tokens.userID
-    isGuestValue = tokens.isGuest
+    storage.withLock { state in
+      state.accessToken = tokens.accessToken
+      state.deviceID = deviceID
+      state.userID = tokens.userID
+      state.isGuest = tokens.isGuest
+    }
   }
 
   func clear() throws {
-    lock.lock()
-    defer { lock.unlock() }
-    accessTokenValue = nil
-    userIDValue = nil
-    isGuestValue = true
+    storage.withLock { state in
+      state.accessToken = nil
+      state.userID = nil
+      state.isGuest = true
+    }
   }
 
   func userID() throws -> String? {
-    lock.lock()
-    defer { lock.unlock() }
-    return userIDValue
+    storage.withLock { $0.userID }
   }
 
   func isGuest() throws -> Bool {
-    lock.lock()
-    defer { lock.unlock() }
-    return isGuestValue
+    storage.withLock { $0.isGuest }
   }
-  
+
   func loadAccessToken() throws -> AuthToken? {
-    lock.lock()
-    defer { lock.unlock() }
-    guard let token = accessTokenValue else { return nil }
-    return AuthToken(
-      value: token,
-      expiresAt: Date().addingTimeInterval(3600) // 1 hour from now
-    )
+    storage.withLock { state in
+      guard let token = state.accessToken else { return nil }
+      return AuthToken(
+        value: token,
+        expiresAt: Date().addingTimeInterval(3600) // 1 hour from now
+      )
+    }
   }
-  
+
   func saveAccessToken(_ token: AuthToken) throws {
-    lock.lock()
-    defer { lock.unlock() }
-    accessTokenValue = token.value
+    storage.withLock { $0.accessToken = token.value }
   }
 }
 

@@ -2,6 +2,7 @@ import FactoryKit
 import FluentWorkDiagnostics
 import FluentWorkNetworking
 import Foundation
+import os
 import TGReduxKit
 
 public enum SpeechSessionTaskID {
@@ -68,21 +69,17 @@ private func pendingTurnID(
 /// Sendable wrapper for the running `userTurnCount` so the audio engine
 /// loop (which runs in its own unstructured Task) can read the latest
 /// value without crossing actor boundaries.
-private final class TurnCountBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: Int = 0
+///
+/// Sync API on purpose: the middleware uses it from inside a sync
+/// `Middleware` closure (writes) while the audio loop reads it from a
+/// `Sendable` `.task` block. Apple `OSAllocatedUnfairLock` (iOS 16+) is
+/// the modern, allocation-safe replacement for `NSLock` here — same
+/// correctness, less footgun, no Foundation `import NSLock` style code.
+private final class TurnCountBox: Sendable {
+    private let storage = OSAllocatedUnfairLock<Int>(initialState: 0)
 
-    func get() -> Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return value
-    }
-
-    func set(_ newValue: Int) {
-        lock.lock()
-        defer { lock.unlock() }
-        value = newValue
-    }
+    func get() -> Int { storage.withLock { $0 } }
+    func set(_ newValue: Int) { storage.withLock { $0 = newValue } }
 }
 
 private func interpretSpeechSessionSideEffect(
