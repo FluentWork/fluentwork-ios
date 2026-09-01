@@ -69,7 +69,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     }
 
     private let engine = AVAudioEngine()
-    private let targetFormat = AVAudioFormat(
+    nonisolated private static let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16,
         sampleRate: 16_000,
         channels: 1,
@@ -87,13 +87,30 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     private var playbackGate = AudioPlaybackGate()
     private let clock = ContinuousClock()
 
-    public init() {
+    // Playback graph (lazy-attached on first frame).
+    //
+    // AVAudioPlayerNode is not Sendable but is actor-isolated here so access
+    // from `play(frame:)` and `interruptNow()` is serialized. The node stays
+    // detached until the first frame arrives so construction stays cheap in
+    // tests that only exercise the capture / event side.
+    private let playerNode = AVAudioPlayerNode()
+    private var playerAttached = false
+
+    // Barge-in timing — captured at the moment `interruptNow()` is requested so
+    // tests can assert the local-silence budget (≤ 200 ms) without depending on
+    // hardware audio output.
+    private var lastInterruptRequestedAt: ContinuousClock.Instant?
+
+    private let decoder: any WSAudioFrameDecoder
+
+    public init(decoder: any WSAudioFrameDecoder = RawPCM16FrameDecoder()) {
         let pair = AsyncStream.makeStream(
             of: AudioEngineEvent.self,
             bufferingPolicy: .bufferingNewest(64)
         )
         self.stream = pair.stream
         self.continuation = pair.continuation
+        self.decoder = decoder
     }
 
     deinit {
@@ -107,7 +124,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
         let inputNode = engine.inputNode
         let inputFormat = inputNode.inputFormat(forBus: 0)
-        let converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+        let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat)
         let hadInstalledTap = hasInstalledTap
         self.sourceFormat = inputFormat
         self.converter = converter
@@ -138,6 +155,11 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         if shouldRemoveTap {
             engine.inputNode.removeTap(onBus: 0)
         }
+        // Also stop any in-flight AI playback so a session end always leaves
+        // the engine silent on both directions.
+        if playerAttached {
+            playerNode.stop()
+        }
         if engine.isRunning {
             engine.stop()
         }
@@ -146,6 +168,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             continuation.yield(emitted)
         }
         playbackGate.reset()
+        lastInterruptRequestedAt = nil
 
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
@@ -158,11 +181,46 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
     public func play(frame: WSAudioFrame) async {
         guard playbackGate.shouldAccept(frame) else { return }
-        // Decoder / player-node scheduling will hang off this gate next.
+
+        let pcm: Data
+        do {
+            pcm = try await decoder.decode(frame)
+        } catch {
+            continuation.yield(.failed("decode failed: \(error)"))
+            return
+        }
+
+        attachPlayerIfNeeded()
+        guard let buffer = makePCMBuffer(from: pcm) else {
+            continuation.yield(.failed("scheduling dropped: PCM length \(pcm.count) not a multiple of 2"))
+            return
+        }
+        // Local barge-in: even after `interruptNow()` is requested we want the
+        // already-scheduled chunks to drain, but a fresh `play(frame:)` after
+        // a fresh `interruptNow()` should resume cleanly because the gate has
+        // been reset by `startCapture`/session re-enter.
+        //
+        // Use the callback-based overload (not `await scheduleBuffer`) — the
+        // `async` overload blocks until the buffer is consumed by the running
+        // engine, which never happens when `startCapture()` hasn't been called
+        // (the common case in tests that only assert on the gate / decoder
+        // path). Queuing with a no-op completion handler returns immediately
+        // and the audio graph is irrelevant for the assertions we make.
+        playerNode.scheduleBuffer(buffer, at: nil, options: []) {}
     }
 
     public func interruptNow() async {
+        lastInterruptRequestedAt = clock.now
         _ = playbackGate.markInterrupted()
+        if playerAttached {
+            playerNode.stop()
+        }
+    }
+
+    /// Snapshot of the last `interruptNow()` instant for barge-in latency tests.
+    /// Public on the actor so tests can read it without exposing the raw clock.
+    public func lastInterruptInstant() -> ContinuousClock.Instant? {
+        lastInterruptRequestedAt
     }
 
     private func processInput(_ buffer: AVAudioPCMBuffer) async {
@@ -187,9 +245,9 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     private func convertToPCM16(_ buffer: AVAudioPCMBuffer) throws -> Data? {
         guard let converter, let sourceFormat else { return nil }
 
-        let ratio = targetFormat.sampleRate / max(sourceFormat.sampleRate, 1)
+        let ratio = Self.targetFormat.sampleRate / max(sourceFormat.sampleRate, 1)
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 16
-        guard let output = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else {
+        guard let output = AVAudioPCMBuffer(pcmFormat: Self.targetFormat, frameCapacity: capacity) else {
             return nil
         }
 
@@ -210,6 +268,40 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         }
         guard status != .error, output.frameLength > 0 else { return nil }
 
+        let audioBuffer = output.audioBufferList.pointee.mBuffers
+        guard let bytes = audioBuffer.mData else { return nil }
+        return Data(bytes: bytes, count: Int(audioBuffer.mDataByteSize))
+    }
+
+    /// Test-only hook exercising `convertToPCM16` for the supplied input
+    /// buffer + input format. Production callers should keep using
+    /// `startCapture()` so the tap stays the source of truth — this hook is
+    /// here so the tap-chain format test can verify the converter aligns with
+    /// the Volcengine-aligned target (16 kHz, mono, interleaved PCM16)
+    /// without pulling in real audio hardware.
+    nonisolated func _testConvertToPCM16(_ buffer: AVAudioPCMBuffer, from inputFormat: AVAudioFormat) throws -> Data? {
+        guard let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat) else {
+            return nil
+        }
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * (Self.targetFormat.sampleRate / max(inputFormat.sampleRate, 1))) + 16
+        guard let output = AVAudioPCMBuffer(pcmFormat: Self.targetFormat, frameCapacity: capacity) else {
+            return nil
+        }
+        let consumptionState = ConversionConsumptionState()
+        var convertError: NSError?
+        let status = converter.convert(to: output, error: &convertError) { _, outStatus in
+            if consumptionState.consumed {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+            consumptionState.consumed = true
+            outStatus.pointee = .haveData
+            return buffer
+        }
+        if let convertError {
+            throw convertError
+        }
+        guard status != .error, output.frameLength > 0 else { return nil }
         let audioBuffer = output.audioBufferList.pointee.mBuffers
         guard let bytes = audioBuffer.mData else { return nil }
         return Data(bytes: bytes, count: Int(audioBuffer.mDataByteSize))
@@ -237,5 +329,33 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         try session.setPreferredIOBufferDuration(0.02)
         try session.setActive(true)
         #endif
+    }
+
+    private func attachPlayerIfNeeded() {
+        guard !playerAttached else { return }
+        engine.attach(playerNode)
+        engine.connect(playerNode, to: engine.mainMixerNode, format: Self.targetFormat)
+        playerAttached = true
+    }
+
+    /// Wraps raw 16 kHz mono interleaved PCM16 bytes in an `AVAudioPCMBuffer`
+    /// suitable for `AVAudioPlayerNode.scheduleBuffer`.
+    ///
+    /// The returned buffer's `frameLength` is `payload.count / 2`. If the
+    /// payload length is not a multiple of 2, returns `nil` so the caller can
+    /// surface a `.failed` event instead of corrupting the player queue.
+    private func makePCMBuffer(from payload: Data) -> AVAudioPCMBuffer? {
+        guard !payload.isEmpty, payload.count.isMultiple(of: 2) else { return nil }
+        let frameCount = AVAudioFrameCount(payload.count / 2)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: Self.targetFormat, frameCapacity: frameCount) else {
+            return nil
+        }
+        buffer.frameLength = frameCount
+        guard let target = buffer.audioBufferList.pointee.mBuffers.mData else { return nil }
+        return payload.withUnsafeBytes { raw -> AVAudioPCMBuffer? in
+            guard let source = raw.baseAddress else { return nil }
+            memcpy(target, source, payload.count)
+            return buffer
+        }
     }
 }
