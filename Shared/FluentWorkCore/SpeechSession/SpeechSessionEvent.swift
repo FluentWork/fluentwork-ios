@@ -10,8 +10,8 @@ public enum SpeechSessionEvent: Equatable, Sendable {
     case aiTurnEnd
     case vadSpeechStart
     case holdStart
-    case vadSpeechEnd
-    case holdEnd
+    case vadSpeechEnd(turnID: String?)
+    case holdEnd(turnID: String?)
     case aiFirstAudioChunk
     /// Soft degrade (e.g. transport already left the voice path) → immediate `degradedText`.
     case networkDegraded

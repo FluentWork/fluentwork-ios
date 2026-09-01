@@ -1,5 +1,15 @@
 import Foundation
 
+/// Badge hit intensity tier, sent by the backend in `feedback.badge` frames.
+///
+/// Backend schema: `enum: ["soft", "highlight", "celebrate"]`.
+/// Maps to the badge overlap score bucketed at the backend hit detector.
+public enum FeedbackBadgeTier: String, Equatable, Sendable, Codable {
+    case soft
+    case highlight
+    case celebrate
+}
+
 /// Wire-format control frames for the speaking-room WSS channel.
 ///
 /// Keep field names aligned with the backend WSS contract tests
@@ -8,12 +18,12 @@ public enum WSControlFrame: Equatable, Sendable {
     case handshake(ticket: String, sessionID: String)
     case sessionStart(SessionStartPayload)
     case userSpeechStart
-    case userSpeechEnd
+    case userSpeechEnd(text: String?, turnID: String?)
     case aiTextDelta(text: String)
     case aiAudioChunk(sequence: UInt32)
     case aiTurnEnd(turnID: String?)
     case interrupt
-    case feedbackBadge(badge: String)
+    case feedbackBadge(badge: String, phraseBlockID: String?, tier: FeedbackBadgeTier?)
     case sessionEnd(reason: String?)
 
     public struct SessionStartPayload: Equatable, Sendable, Codable {
@@ -53,6 +63,8 @@ extension WSControlFrame: Codable {
         case sequence
         case turnID = "turn_id"
         case badge
+        case phraseBlockID = "phrase_block_id"
+        case tier
         case reason
         case materialContext = "material_context"
         case scene
@@ -83,7 +95,10 @@ extension WSControlFrame: Codable {
             self = .userSpeechStart
 
         case "user.speech.end":
-            self = .userSpeechEnd
+            self = .userSpeechEnd(
+                text: try container.decodeIfPresent(String.self, forKey: .text),
+                turnID: try container.decodeIfPresent(String.self, forKey: .turnID)
+            )
 
         case "ai.text.delta":
             self = .aiTextDelta(text: try container.decode(String.self, forKey: .text))
@@ -98,7 +113,11 @@ extension WSControlFrame: Codable {
             self = .interrupt
 
         case "feedback.badge":
-            self = .feedbackBadge(badge: try container.decode(String.self, forKey: .badge))
+            self = .feedbackBadge(
+                badge: try container.decode(String.self, forKey: .badge),
+                phraseBlockID: try container.decodeIfPresent(String.self, forKey: .phraseBlockID),
+                tier: try container.decodeIfPresent(FeedbackBadgeTier.self, forKey: .tier)
+            )
 
         case "session.end":
             self = .sessionEnd(reason: try container.decodeIfPresent(String.self, forKey: .reason))
@@ -126,8 +145,10 @@ extension WSControlFrame: Codable {
         case .userSpeechStart:
             try container.encode("user.speech.start", forKey: .type)
 
-        case .userSpeechEnd:
+        case let .userSpeechEnd(text, turnID):
             try container.encode("user.speech.end", forKey: .type)
+            try container.encodeIfPresent(text, forKey: .text)
+            try container.encodeIfPresent(turnID, forKey: .turnID)
 
         case let .aiTextDelta(text):
             try container.encode("ai.text.delta", forKey: .type)
@@ -144,9 +165,11 @@ extension WSControlFrame: Codable {
         case .interrupt:
             try container.encode("interrupt", forKey: .type)
 
-        case let .feedbackBadge(badge):
+        case let .feedbackBadge(badge, phraseBlockID, tier):
             try container.encode("feedback.badge", forKey: .type)
             try container.encode(badge, forKey: .badge)
+            try container.encodeIfPresent(phraseBlockID, forKey: .phraseBlockID)
+            try container.encodeIfPresent(tier, forKey: .tier)
 
         case let .sessionEnd(reason):
             try container.encode("session.end", forKey: .type)

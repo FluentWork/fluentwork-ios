@@ -24,17 +24,23 @@ public struct SpeechSessionState: Equatable, Sendable {
     public var suspendedPhase: SpeechSessionPhase?
     public var isReconnecting: Bool
     public var failureReason: String?
+    /// Incremented each time the machine enters `.processing` from `.recording`,
+    /// i.e. once per user speaking turn. Used to populate `user.speech.end`'s
+    /// `turn_id` field so the backend can dedupe badge hits per-turn.
+    public var userTurnCount: Int
 
     public init(
         phase: SpeechSessionPhase = .idle,
         suspendedPhase: SpeechSessionPhase? = nil,
         isReconnecting: Bool = false,
-        failureReason: String? = nil
+        failureReason: String? = nil,
+        userTurnCount: Int = 0
     ) {
         self.phase = phase
         self.suspendedPhase = suspendedPhase
         self.isReconnecting = isReconnecting
         self.failureReason = failureReason
+        self.userTurnCount = userTurnCount
     }
 
     public static let initial = SpeechSessionState()

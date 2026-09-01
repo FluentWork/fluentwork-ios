@@ -142,9 +142,11 @@ private actor FailingSessionStartTransport: SocketTransportProtocol {
         return nil
     }
 
-    await transport.emitControl(.feedbackBadge(badge: "表达自然"))
+    await transport.emitControl(.feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .soft))
     let first = await task.value
-    #expect(first == .control(.feedbackBadge(badge: "表达自然")))
+    #expect(
+        first == .control(.feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .soft))
+    )
 }
 
 @MainActor
@@ -170,12 +172,17 @@ private actor FailingSessionStartTransport: SocketTransportProtocol {
         transport: transport
     )
 
-    try await client.sendSpeechBoundary(started: true)
+    try await client.sendSpeechBoundary(started: true, turnID: nil)
     try await client.sendAudioPCM(Data([0x00, 0x01, 0x02]))
-    try await client.sendSpeechBoundary(started: false)
+    try await client.sendSpeechBoundary(started: false, turnID: "turn-1")
 
+    // Day-one DefaultSpeechSessionClient takes the server-side ASR path —
+    // it always sends `text: nil` so the gateway does the hit-detection
+    // off the vendor's ASR transcript. When B12 exposes a client ASR
+    // path (B13 audio engine), `text` will be populated from a client
+    // transcript before the boundary goes out.
     let sentControls = await transport.sentControlFrames
-    #expect(sentControls == [.userSpeechStart, .userSpeechEnd])
+    #expect(sentControls == [.userSpeechStart, .userSpeechEnd(text: nil, turnID: "turn-1")])
     let sentAudio = await transport.sentAudioPayloads
     #expect(sentAudio == [Data([0x00, 0x01, 0x02])])
 }

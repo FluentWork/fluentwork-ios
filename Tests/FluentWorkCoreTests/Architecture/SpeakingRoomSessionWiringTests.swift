@@ -1,4 +1,5 @@
 import FactoryKit
+import FluentWorkDiagnostics
 import Foundation
 import Testing
 import TGReduxKitTesting
@@ -11,13 +12,15 @@ private actor StubSpeechSessionClientState {
     var audioPayloads: [Data] = []
     var transcripts: [String] = []
     var endCalls = 0
+    var boundaryTurnIDs: [String?] = []
 
     func recordStart() {
         startCalls += 1
     }
 
-    func recordBoundary(_ started: Bool) {
+    func recordBoundary(_ started: Bool, turnID: String?) {
         boundaries.append(started)
+        boundaryTurnIDs.append(turnID)
     }
 
     func recordAudioPayload(_ data: Data) {
@@ -67,11 +70,11 @@ private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unche
         await state.recordStart()
     }
 
-    func sendSpeechBoundary(started: Bool) async throws {
+    func sendSpeechBoundary(started: Bool, turnID: String?) async throws {
         if let boundaryError {
             throw boundaryError
         }
-        await state.recordBoundary(started)
+        await state.recordBoundary(started, turnID: turnID)
     }
 
     func sendAudioPCM(_ data: Data) async throws {
@@ -116,6 +119,10 @@ private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unche
 
     func snapshotTranscripts() async -> [String] {
         await state.transcripts
+    }
+
+    func snapshotBoundaryTurnIDs() async -> [String?] {
+        await state.boundaryTurnIDs
     }
 
     func snapshotEndCalls() async -> Int {
@@ -274,11 +281,13 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
     try? await Task.sleep(nanoseconds: 20_000_000)
 
-    await transport.emitControl(.feedbackBadge(badge: "表达自然"))
+    await transport.emitControl(.feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .soft))
     try? await Task.sleep(nanoseconds: 20_000_000)
 
     #expect(store.state.speakingRoom.lastBadge == "表达自然")
     #expect(store.state.speakingRoom.badgeHits == 1)
+    #expect(store.state.badgeFeedback.entries.first?.phraseBlockID == "block-1")
+    #expect(store.state.badgeFeedback.entries.first?.tier == .badgeOnly) // soft → badgeOnly
 }
 
 @MainActor
@@ -332,6 +341,105 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
 
     #expect(store.state.speakingRoom.phase == .aiSpeaking)
     #expect(store.state.speakingRoom.session.isReconnecting)
+}
+
+@MainActor
+@Test func speechSessionMiddlewareForwardsTurnIDToSpeechBoundary() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .connecting
+    }
+    store.dispatch(.speakingRoom(.session(.socketReady)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .aiSpeaking
+    }
+
+    // First turn: VAD start/stop → boundary should carry "turn-1".
+    audioEngine.emit(.speechStarted)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .recording
+    }
+    audioEngine.emit(.speechEnded)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await speechClient.snapshotBoundaries() == [true, false]
+    }
+    let turnIDsAfterFirst = await speechClient.snapshotBoundaryTurnIDs()
+    #expect(turnIDsAfterFirst == [nil, "turn-1"])
+    #expect(store.state.speakingRoom.session.userTurnCount == 1)
+
+    // Drive the machine back to `waitingUser` so a second turn can start.
+    let frame = WSAudioFrame(sequence: 1, opusPayload: Data([0x01]))
+    speechClient.emit(.audio(frame))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .aiSpeaking
+    }
+    speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1")))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .waitingUser
+    }
+
+    // Second turn → "turn-2".
+    audioEngine.emit(.speechStarted)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .recording
+    }
+    audioEngine.emit(.speechEnded)
+    // Wait for the userTurnCount increment to land — boundary count races
+    // with the dispatch of `.vadSpeechEnd(turnID:)` in the audio loop.
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.session.userTurnCount == 2
+    }
+    #expect(await speechClient.snapshotBoundaries() == [true, false, true, false])
+    let turnIDsAfterSecond = await speechClient.snapshotBoundaryTurnIDs()
+    #expect(turnIDsAfterSecond == [nil, "turn-1", nil, "turn-2"])
+}
+
+@MainActor
+@Test func speechSessionMiddlewareEmitsSchemaAlignedTurnEndedEvent() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    let tracker = CapturingTracker()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+    container.tracker.register { tracker }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .connecting
+    }
+    store.dispatch(.speakingRoom(.session(.socketReady)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .aiSpeaking
+    }
+
+    audioEngine.emit(.speechStarted)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .recording
+    }
+    audioEngine.emit(.speechEnded)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.session.userTurnCount == 1
+    }
+
+    // The schema-aligned observability event should carry the same
+    // `turn_id` the boundary frame sent, plus `source=ios` so backend
+    // and iOS can correlate one turn end-to-end.
+    let events = await tracker.events
+    let turnEnded = events.first(where: { $0.name == "speech_turn_ended" })
+    #expect(turnEnded?.properties["turn_id"] == "turn-1")
+    #expect(turnEnded?.properties["source"] == "ios")
+    #expect(turnEnded?.properties["stage"] == "asr")
 }
 
 @MainActor

@@ -1,4 +1,5 @@
 import FluentWorkDiagnostics
+import FluentWorkNetworking
 import Foundation
 import TGReduxKit
 
@@ -22,10 +23,30 @@ public struct BadgeFeedEntry: Equatable, Sendable, Identifiable, Hashable {
         case badgeOnly
         /// Resolved tier not yet known (pre-B12 main-line).
         case unknown
+
+        /// Maps the wire-format `FeedbackBadgeTier` (B12 display weight) into
+        /// the iOS display tier. The two value sets describe different axes
+        /// (B12 = visual weight, B7 = confirmation level), so the mapping is
+        /// intentionally lossy and documented here as the single source of
+        /// truth.
+        ///
+        /// - `soft`      → `.badgeOnly`        (lightest visual, no extra confirm)
+        /// - `highlight` → `.nextTurnConfirm`  (mid visual, matches "next-turn"
+        ///                                     confirm in the original B7 model)
+        /// - `celebrate` → `.sameTurnConfirm`  (highest visual, matches
+        ///                                     "same-turn" confirm in B7)
+        public static func from(transport tier: FeedbackBadgeTier) -> Tier {
+            switch tier {
+            case .soft: return .badgeOnly
+            case .highlight: return .nextTurnConfirm
+            case .celebrate: return .sameTurnConfirm
+            }
+        }
     }
 
     public let id: UUID
     public let badge: String
+    public let phraseBlockID: String?
     public let turnID: String?
     public let tier: Tier
     public let receivedAt: Date
@@ -33,12 +54,14 @@ public struct BadgeFeedEntry: Equatable, Sendable, Identifiable, Hashable {
     public init(
         id: UUID = UUID(),
         badge: String,
+        phraseBlockID: String? = nil,
         turnID: String? = nil,
         tier: Tier = .unknown,
         receivedAt: Date
     ) {
         self.id = id
         self.badge = badge
+        self.phraseBlockID = phraseBlockID
         self.turnID = turnID
         self.tier = tier
         self.receivedAt = receivedAt
@@ -94,11 +117,17 @@ public struct BadgeFeedbackState: Equatable, Sendable, State {
     /// In-place ingest helper — exposed so cross-cutting reducers that don't
     /// have a `(inout, Action)` two-argument shape (e.g. inside
     /// `appCrossCuttingReducer`) can still apply the same semantics.
+    ///
+    /// `phraseBlockID` is the corpus-side identifier the backend attached to
+    /// the `feedback.badge` frame. When present it extends the dedupe key
+    /// so the same badge for the same phrase block cannot re-render inside
+    /// the dedupe window even if the turnID was missed.
     public mutating func ingest(
         badge: String,
         turnID: String?,
         tier: BadgeFeedEntry.Tier,
-        at: Date
+        at: Date,
+        phraseBlockID: String? = nil
     ) {
         guard !badge.isEmpty else { return }
 
@@ -106,13 +135,15 @@ public struct BadgeFeedbackState: Equatable, Sendable, State {
         let isDuplicate = entries.contains { existing in
             guard existing.receivedAt >= dedupeCutoff else { return false }
             if existing.badge != badge { return false }
-            return existing.turnID == turnID
+            if existing.turnID != turnID { return false }
+            return existing.phraseBlockID == phraseBlockID
         }
         guard !isDuplicate else { return }
 
         entries.append(
             BadgeFeedEntry(
                 badge: badge,
+                phraseBlockID: phraseBlockID,
                 turnID: turnID,
                 tier: tier,
                 receivedAt: at

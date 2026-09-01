@@ -1,4 +1,5 @@
 import Foundation
+import FluentWorkNetworking
 import TGReduxKit
 import TGReduxKitTesting
 import Testing
@@ -189,7 +190,7 @@ import Testing
 @Test func speakingRoomBadgeHitTriggersBadgeFeedbackIngest() throws {
     let store = TestStore(initialState: AppState.initial, reducer: appReducer)
 
-    store.send(.speakingRoom(.badgeHit("表达自然")))
+    store.send(.speakingRoom(.badgeHit(badge: "表达自然")))
 
     // Equality on `Date` would force us to mirror the unknown wall-clock;
     // instead compare by field.
@@ -201,4 +202,69 @@ import Testing
     #expect(store.state.badgeFeedback.entries.first?.badge == "表达自然")
     #expect(store.state.badgeFeedback.entries.first?.tier == .unknown)
     #expect(store.state.badgeFeedback.entries.first?.turnID == nil)
+    #expect(store.state.badgeFeedback.entries.first?.phraseBlockID == nil)
+}
+
+@Test func speakingRoomBadgeHitWithEnrichmentIsForwardedToBadgeFeedbackIngest() throws {
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+
+    store.send(
+        .speakingRoom(.badgeHit(
+            badge: "节奏稳定",
+            phraseBlockID: "block-42",
+            tier: .nextTurnConfirm,
+            turnID: "turn-1"
+        ))
+    )
+
+    // The cross-cutting mirror must keep the structured payload all the way
+    // to the display layer so a single source of truth is maintained.
+    #expect(store.state.badgeFeedback.entries.count == 1)
+    #expect(store.state.badgeFeedback.entries.first?.phraseBlockID == "block-42")
+    #expect(store.state.badgeFeedback.entries.first?.turnID == "turn-1")
+    #expect(store.state.badgeFeedback.entries.first?.tier == .nextTurnConfirm)
+}
+
+@Test func badgeFeedbackDedupeRespectsPhraseBlockID() {
+    var state = AppState.initial.badgeFeedback
+    state.dedupeWindowSeconds = 5.0
+
+    let base = Date(timeIntervalSinceReferenceDate: 20_000)
+
+    // Same badge + same turnID + same phraseBlock → duplicate.
+    state.ingest(
+        badge: "X",
+        turnID: "turn-1",
+        tier: .unknown,
+        at: base,
+        phraseBlockID: "block-A"
+    )
+    state.ingest(
+        badge: "X",
+        turnID: "turn-1",
+        tier: .unknown,
+        at: base.addingTimeInterval(1),
+        phraseBlockID: "block-A"
+    )
+    #expect(state.entries.count == 1)
+
+    // Different phraseBlockID → not a duplicate, accepted.
+    state.ingest(
+        badge: "X",
+        turnID: "turn-1",
+        tier: .unknown,
+        at: base.addingTimeInterval(2),
+        phraseBlockID: "block-B"
+    )
+    #expect(state.entries.count == 2)
+    #expect(state.entries.map(\.phraseBlockID) == ["block-A", "block-B"])
+}
+
+@Test func badgeFeedEntryTierFromTransportMapping() {
+    // The mapping is intentionally lossy and documented in
+    // `BadgeFeedEntry.Tier.from(transport:)`. Pin the contract so any
+    // accidental change is caught at the reducer / bridge boundary.
+    #expect(BadgeFeedEntry.Tier.from(transport: .soft) == .badgeOnly)
+    #expect(BadgeFeedEntry.Tier.from(transport: .highlight) == .nextTurnConfirm)
+    #expect(BadgeFeedEntry.Tier.from(transport: .celebrate) == .sameTurnConfirm)
 }

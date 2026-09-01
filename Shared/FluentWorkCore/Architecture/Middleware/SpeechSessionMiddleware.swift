@@ -15,6 +15,12 @@ public enum SpeechSessionTaskID {
 /// Flow: `.speakingRoom(.session(event))` → pure reduce → `.applySession` + Effects.
 public func speechSessionMiddleware(container: Container? = nil) -> Middleware<AppState, AppAction> {
     let resolvedContainer = container ?? Container.shared
+    // Shared between the session event handler (writer, runs on @MainActor
+    // via the middleware call) and the audio engine loop (reader, runs in
+    // a detached `.task` block). Keeping the count here means the audio
+    // loop never has to reach into the @MainActor store from a Sendable
+    // closure.
+    let turnCounter = TurnCountBox()
 
     return { store, action, next in
         guard case let .speakingRoom(.session(event)) = action else {
@@ -22,23 +28,69 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
         }
 
         var session = store.state.speakingRoom.session
+        let preEventCount = session.userTurnCount
         let effects = SpeechSessionMachine.reduce(&session, event: event)
+        // Keep the audio loop's "current count" in sync. The audio loop
+        // computes `turnID = "turn-\(count + 1)"` at speech-end time —
+        // this is the same value the machine's reduce will use to do the
+        // transition's count increment, so the two never drift.
+        turnCounter.set(session.userTurnCount)
         let apply = next(.speakingRoom(.applySession(session)))
         let interpreted = effects.map {
             interpretSpeechSessionSideEffect(
                 $0,
                 container: resolvedContainer,
-                dispatch: { store.dispatch($0) }
+                dispatch: { store.dispatch($0) },
+                pendingTurnID: pendingTurnID(for: event, currentCount: preEventCount),
+                turnCounter: turnCounter
             )
         }
         return .merge([apply] + interpreted)
     }
 }
 
+/// Computes the turnID the middleware should send to the backend for an
+/// end-of-utterance boundary (`vadSpeechEnd` / `holdEnd`). Other events
+/// return `nil`; the rule lives here so the wire format and the
+/// `userTurnCount` increment in the machine stay in lockstep.
+private func pendingTurnID(
+    for event: SpeechSessionEvent,
+    currentCount: Int
+) -> String? {
+    switch event {
+    case .vadSpeechEnd, .holdEnd:
+        return "turn-\(currentCount + 1)"
+    default:
+        return nil
+    }
+}
+
+/// Sendable wrapper for the running `userTurnCount` so the audio engine
+/// loop (which runs in its own unstructured Task) can read the latest
+/// value without crossing actor boundaries.
+private final class TurnCountBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Int = 0
+
+    func get() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func set(_ newValue: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        value = newValue
+    }
+}
+
 private func interpretSpeechSessionSideEffect(
     _ effect: SpeechSessionSideEffect,
     container: Container,
-    dispatch: @escaping @MainActor (AppAction) -> Void
+    dispatch: @escaping @MainActor (AppAction) -> Void,
+    pendingTurnID: String?,
+    turnCounter: TurnCountBox
 ) -> Effect<AppAction> {
     let audioEngine = container.audioEngine()
     let speechClient = container.speechSessionClient()
@@ -87,7 +139,12 @@ private func interpretSpeechSessionSideEffect(
                     switch event {
                     case .speechStarted:
                         do {
-                            try await speechClient.sendSpeechBoundary(started: true)
+                            // No turnID on start — backend uses the next
+                            // user.speech.end's turnID as the dedupe scope.
+                            try await speechClient.sendSpeechBoundary(
+                                started: true,
+                                turnID: nil
+                            )
                             await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechStart)))
                         } catch {
                             await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
@@ -96,8 +153,27 @@ private func interpretSpeechSessionSideEffect(
 
                     case .speechEnded:
                         do {
-                            try await speechClient.sendSpeechBoundary(started: false)
-                            await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechEnd)))
+                            // `turnCounter` is updated by the session event
+                            // handler *after* every reduce, so by the time
+                            // `.speechEnded` arrives the box already holds
+                            // the post-`.vadSpeechStart` count (which
+                            // matches the count BEFORE the just-finished
+                            // turn's increment). The turn we just finished
+                            // is therefore `count + 1`.
+                            let turnID = "turn-\(turnCounter.get() + 1)"
+                            try await speechClient.sendSpeechBoundary(
+                                started: false,
+                                turnID: turnID
+                            )
+                            tracker.track(
+                                event: "speech_turn_ended",
+                                properties: [
+                                    "turn_id": turnID,
+                                    "source": "ios",
+                                    "stage": "asr",
+                                ]
+                            )
+                            await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechEnd(turnID: turnID))))
                         } catch {
                             await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
                             return nil

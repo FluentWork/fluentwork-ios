@@ -12,8 +12,17 @@ public enum SocketTransportEventMapper {
         case .stateChanged(.connected):
             return .socketReady
 
-        case let .control(.feedbackBadge(badge)):
-            return .badgeHit(badge)
+        case let .control(.feedbackBadge(badge, phraseBlockID, tier)):
+            // The mapper sits in FluentWorkNetworking, so it hands the raw
+            // `FeedbackBadgeTier` (transport enum) to FluentWorkCore, which
+            // owns `BadgeFeedEntry.Tier`. The display reducer maps the two
+            // value sets together — see `BadgeFeedEntry.Tier.from(transport:)`.
+            return .badgeHit(
+                badge: badge,
+                phraseBlockID: phraseBlockID,
+                tier: tier,
+                turnID: nil
+            )
 
         case .failure(.pingTimedOut), .stateChanged(.disconnected):
             return .networkLost
@@ -30,7 +39,12 @@ public enum SocketTransportEventMapper {
 /// Transport → feature action surface without forcing FluentWorkNetworking to depend on Core.
 public enum SpeakingRoomTransportAction: Equatable, Sendable {
     case socketReady
-    case badgeHit(String)
+    case badgeHit(
+        badge: String,
+        phraseBlockID: String?,
+        tier: FeedbackBadgeTier?,
+        turnID: String?
+    )
     case failed(String)
     case networkLost
 }

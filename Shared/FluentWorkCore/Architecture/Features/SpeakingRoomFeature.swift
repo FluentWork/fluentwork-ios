@@ -49,7 +49,18 @@ public enum SpeakingRoomAction: Equatable, Sendable, Action {
     /// State snapshot applied after Middleware runs the machine.
     case applySession(SpeechSessionState)
     /// Display-only — must not enter SpeechSessionMachine (§2.2 badgeHit).
-    case badgeHit(String)
+    ///
+    /// Carries the optional B12 enrichment (`phraseBlockID`, `tier`, `turnID`)
+    /// so the cross-cutting reducer can mirror the hit into `badgeFeedback`
+    /// with the same `turnID` the backend used for dedupe. Tests + the host
+    /// debug screen still pass just a badge string; the optional fields
+    /// default to `nil`.
+    case badgeHit(
+        badge: String,
+        phraseBlockID: String? = nil,
+        tier: BadgeFeedEntry.Tier? = nil,
+        turnID: String? = nil
+    )
     case bootstrapReady(Bool)
     /// Local transcript overlay text; does not drive the session phase machine.
     case userSpeechCaptured(String)
@@ -69,7 +80,9 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
             state.badgeHits = 0
         }
 
-    case let .badgeHit(badge):
+    case let .badgeHit(badge, _, _, _):
+        // Display counter ignores enrichment; downstream `badgeFeedback.ingest`
+        // owns the structured payload (phraseBlockID / tier / turnID).
         state.lastBadge = badge
         state.badgeHits += 1
 

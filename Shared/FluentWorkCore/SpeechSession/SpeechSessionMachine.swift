@@ -55,6 +55,7 @@ public enum SpeechSessionMachine {
 
         case (.recording, .vadSpeechEnd), (.recording, .holdEnd):
             state.phase = .processing
+            state.userTurnCount += 1
 
         case (.processing, .aiFirstAudioChunk):
             state.phase = .aiSpeaking

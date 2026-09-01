@@ -7,12 +7,12 @@ import Testing
         .handshake(ticket: "t-1", sessionID: "s-1"),
         .sessionStart(.init(materialContext: "ctx", scene: "interview", voiceID: "v1")),
         .userSpeechStart,
-        .userSpeechEnd,
+        .userSpeechEnd(text: "thank you", turnID: "turn-1"),
         .aiTextDelta(text: "你好"),
         .aiAudioChunk(sequence: 42),
         .aiTurnEnd(turnID: "turn-42"),
         .interrupt,
-        .feedbackBadge(badge: "表达自然"),
+        .feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .soft),
         .sessionEnd(reason: "completed"),
     ]
 
@@ -102,9 +102,16 @@ import Testing
 
 @Test func feedbackBadgeMapsToBadgeHit() {
     let mapped = SocketTransportEventMapper.speakingRoomAction(
-        for: .control(.feedbackBadge(badge: "表达自然"))
+        for: .control(.feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .highlight))
     )
-    #expect(mapped == .badgeHit("表达自然"))
+    #expect(
+        mapped == .badgeHit(
+            badge: "表达自然",
+            phraseBlockID: "block-1",
+            tier: .highlight,
+            turnID: nil
+        )
+    )
 }
 
 @Test func transportDisconnectedMapsToNetworkLost() {
