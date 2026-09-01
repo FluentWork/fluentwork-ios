@@ -260,6 +260,58 @@ import Testing
     #expect(state.entries.map(\.phraseBlockID) == ["block-A", "block-B"])
 }
 
+// Mock-mode coverage of runbook §3 Case 2 — backend hit-detection lands
+// `feedback.badge` at the iOS boundary more than once for the same
+// (turn, phrase_block) pair within the 5s dedupe window. iOS local
+// dedupe must collapse those to a single entry; once the window elapses,
+// the next ingest becomes a fresh entry. Pin both halves so a future
+// change to `dedupeWindowSeconds` semantics surfaces in CI.
+@Test func badgeFeedbackDedupeHonorsTimeWindowTTL() {
+    var state = AppState.initial.badgeFeedback
+    state.dedupeWindowSeconds = 5.0
+
+    let base = Date(timeIntervalSinceReferenceDate: 30_000)
+
+    state.ingest(
+        badge: "表达自然",
+        turnID: "turn-1",
+        tier: .unknown,
+        at: base,
+        phraseBlockID: "block-X"
+    )
+    // Same key 2s later — still inside TTL → dropped.
+    state.ingest(
+        badge: "表达自然",
+        turnID: "turn-1",
+        tier: .unknown,
+        at: base.addingTimeInterval(2),
+        phraseBlockID: "block-X"
+    )
+    #expect(state.entries.count == 1)
+
+    // Same key 6s later — TTL expired → new entry.
+    state.ingest(
+        badge: "表达自然",
+        turnID: "turn-1",
+        tier: .unknown,
+        at: base.addingTimeInterval(6),
+        phraseBlockID: "block-X"
+    )
+    #expect(state.entries.count == 2)
+    #expect(state.entries.map(\.phraseBlockID) == ["block-X", "block-X"])
+
+    // Next turn — turn_id bumps → dedupe key no longer matches.
+    state.ingest(
+        badge: "表达自然",
+        turnID: "turn-2",
+        tier: .unknown,
+        at: base.addingTimeInterval(6.5),
+        phraseBlockID: "block-X"
+    )
+    #expect(state.entries.count == 3)
+    #expect(state.entries.last?.turnID == "turn-2")
+}
+
 @Test func badgeFeedEntryTierFromTransportMapping() {
     // The mapping is intentionally lossy and documented in
     // `BadgeFeedEntry.Tier.from(transport:)`. Pin the contract so any

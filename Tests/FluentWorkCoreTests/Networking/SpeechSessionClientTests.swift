@@ -149,6 +149,59 @@ private actor FailingSessionStartTransport: SocketTransportProtocol {
     )
 }
 
+// Mock-mode coverage of runbook §3 Case 1 — turn_id monotonic across multiple
+// speech boundaries. Mirrors what a real device + Charles capture would prove:
+// two consecutive `user.speech.end` frames must carry turn_id "turn-1" then
+// "turn-2" with no gaps and no duplicates. Day-one DefaultSpeechSessionClient
+// always sends `text: nil` because client ASR lands in B13; once B13 ships,
+// this test extends to also assert `text: "..."` is carried.
+@MainActor
+@Test func defaultSpeechSessionClientSendsMonotonicTurnIDsAcrossMultipleTurns() async throws {
+    let transport = InMemorySocketTransport()
+    try await transport.connect(
+        url: URL(string: "ws://127.0.0.1/ws")!,
+        sessionID: "s-1",
+        ticket: "ticket"
+    )
+    let storage = InMemorySecureStorage()
+    let tokenStore = SecureAuthTokenStore(
+        storage: storage,
+        idGenerator: FixedIDGenerator(value: UUID(uuidString: "77777777-7777-7777-7777-777777777777")!)
+    )
+
+    let client = DefaultSpeechSessionClient(
+        api: SessionAPIClient(
+            network: StubNetworkClient { _ in Data() },
+            baseURL: URL(string: "http://127.0.0.1:8080/api/v1")!
+        ),
+        tokens: tokenStore,
+        transport: transport
+    )
+
+    // Turn 1.
+    try await client.sendSpeechBoundary(started: true, turnID: nil)
+    try await client.sendAudioPCM(Data([0x10, 0x11]))
+    try await client.sendSpeechBoundary(started: false, turnID: "turn-1")
+
+    // Turn 2 (no client ASR yet → text: nil per B13-not-shipped contract).
+    try await client.sendSpeechBoundary(started: true, turnID: nil)
+    try await client.sendAudioPCM(Data([0x20, 0x21]))
+    try await client.sendSpeechBoundary(started: false, turnID: "turn-2")
+
+    let sentControls = await transport.sentControlFrames
+    #expect(
+        sentControls == [
+            .userSpeechStart,
+            .userSpeechEnd(text: nil, turnID: "turn-1"),
+            .userSpeechStart,
+            .userSpeechEnd(text: nil, turnID: "turn-2"),
+        ]
+    )
+
+    let sentAudio = await transport.sentAudioPayloads
+    #expect(sentAudio == [Data([0x10, 0x11]), Data([0x20, 0x21])])
+}
+
 @MainActor
 @Test func defaultSpeechSessionClientSendsSpeechBoundaryAndPCM() async throws {
     let transport = InMemorySocketTransport()
