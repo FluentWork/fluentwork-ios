@@ -46,14 +46,19 @@ import TGReduxKitTesting
 @Test func speakingRoomBadgeHitFeedsWorkspaceProjection() throws {
     let store = TestStore(initialState: AppState.initial, reducer: appReducer)
 
-    var expected = AppState.initial
-    expected.speakingRoom.lastBadge = "表达自然"
-    expected.speakingRoom.badgeHits = 1
-    expected.workspace.highlightedBadge = "表达自然"
-    expected.workspace.badgeFeedCount = 1
-
     store.send(.speakingRoom(.badgeHit("表达自然")))
-    try store.assert(equals: expected)
+
+    // Speaking-room + workspace mirrors are unchanged by `I11`.
+    #expect(store.state.speakingRoom.lastBadge == "表达自然")
+    #expect(store.state.speakingRoom.badgeHits == 1)
+    #expect(store.state.workspace.highlightedBadge == "表达自然")
+    #expect(store.state.workspace.badgeFeedCount == 1)
+    // `I11`: badge display layer also receives the hit (UUID makes
+    // struct-level equality unstable, compare by field).
+    #expect(store.state.badgeFeedback.entries.count == 1)
+    #expect(store.state.badgeFeedback.entries.first?.badge == "表达自然")
+    #expect(store.state.badgeFeedback.entries.first?.tier == .unknown)
+    #expect(store.state.badgeFeedback.entries.first?.turnID == nil)
 }
 
 @Test func guestIdentityCanPromoteToRegisteredWithoutLosingFlow() throws {

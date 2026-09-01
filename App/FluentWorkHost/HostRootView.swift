@@ -69,8 +69,25 @@ struct HostRootView: View {
     private func routeDestination(_ route: AppRoute) -> some View {
         switch route {
         case let .speakingRoom(sessionID):
-            Text("说的房间（骨架）\(sessionID.map { " · \($0)" } ?? "")")
-                .navigationTitle("说的房间")
+            ZStack(alignment: .top) {
+                Text("说的房间（骨架）\(sessionID.map { " · \($0)" } ?? "")")
+                    .navigationTitle("说的房间")
+
+                // `I11` lightweight badge feedback — non-modal, top of the
+                // surface, renders only the entries currently inside the
+                // visible window. The wrapper uses TimelineView so expired
+                // entries fade without forcing a state dispatch.
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    BadgeFeedbackOverlay(
+                        model: makeBadgeFeedbackViewModel(
+                            from: store.state.badgeFeedback,
+                            now: context.date
+                        )
+                    )
+                    .allowsHitTesting(false)
+                }
+                .padding(.top, 4)
+            }
         case let .review(sessionID):
             ReviewRootView(
                 model: makeReviewViewModel(from: store.state.review),
@@ -202,6 +219,33 @@ struct HostRootView: View {
             canLoadMore: state.nextCursor != nil,
             errorMessage: state.lastErrorMessage
         )
+    }
+
+    private func makeBadgeFeedbackViewModel(
+        from state: BadgeFeedbackState,
+        now: Date
+    ) -> BadgeFeedbackViewModel {
+        let visible = state.visibleEntries(at: now)
+        let rows = visible.map { entry in
+            BadgeFeedbackRow(
+                id: entry.id.uuidString,
+                badge: entry.badge,
+                tier: mapTier(entry.tier)
+            )
+        }
+        return BadgeFeedbackViewModel(
+            badges: rows,
+            maxVisible: state.maxVisibleEntries
+        )
+    }
+
+    private func mapTier(_ tier: BadgeFeedEntry.Tier) -> BadgeFeedbackRow.BadgeTier {
+        switch tier {
+        case .sameTurnConfirm: return .sameTurnConfirm
+        case .nextTurnConfirm: return .nextTurnConfirm
+        case .badgeOnly: return .badgeOnly
+        case .unknown: return .unknown
+        }
     }
 
     private func makeDailyReadViewModel(
@@ -520,6 +564,69 @@ struct HostRootView: View {
                 Button("Simulate Transcript") {
                     store.dispatch(.speakingRoom(.userSpeechCaptured("你好，FluentWork")))
                 }
+            }
+
+            Section("Badge Feedback (I11)") {
+                LabeledContent(
+                    "Total Entries",
+                    value: "\(store.state.badgeFeedback.entries.count)"
+                )
+                LabeledContent(
+                    "Visible Window",
+                    value: String(format: "%.1fs", store.state.badgeFeedback.visibleWindowSeconds)
+                )
+                LabeledContent(
+                    "Max Visible",
+                    value: "\(store.state.badgeFeedback.maxVisibleEntries)"
+                )
+
+                HStack {
+                    Button("Hit 表达自然") {
+                        store.dispatch(
+                            .badgeFeedback(
+                                .ingest(
+                                    badge: "表达自然",
+                                    turnID: "host-1",
+                                    tier: .nextTurnConfirm,
+                                    at: Date()
+                                )
+                            )
+                        )
+                    }
+                    Button("Hit 节奏稳定") {
+                        store.dispatch(
+                            .badgeFeedback(
+                                .ingest(
+                                    badge: "节奏稳定",
+                                    turnID: "host-2",
+                                    tier: .badgeOnly,
+                                    at: Date()
+                                )
+                            )
+                        )
+                    }
+                    Button("Hit 用词地道") {
+                        store.dispatch(
+                            .badgeFeedback(
+                                .ingest(
+                                    badge: "用词地道",
+                                    turnID: "host-3",
+                                    tier: .unknown,
+                                    at: Date()
+                                )
+                            )
+                        )
+                    }
+                }
+                .buttonStyle(.bordered)
+
+                Button("Tick (sweep)") {
+                    store.dispatch(.badgeFeedback(.tick(at: Date())))
+                }
+                Button("Clear Feed") {
+                    store.dispatch(.badgeFeedback(.clear))
+                }
+                .disabled(store.state.badgeFeedback.entries.isEmpty)
             }
         }
         .navigationTitle("FluentWork Host")

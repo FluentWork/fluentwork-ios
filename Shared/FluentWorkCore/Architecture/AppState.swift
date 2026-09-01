@@ -36,6 +36,7 @@ public struct AppState: Equatable, Sendable, State {
   public var corpus: CorpusState
   public var dailyRead: DailyReadState
   public var workspace: WorkspaceState
+  public var badgeFeedback: BadgeFeedbackState
   public var network: NetworkConnectivityState
   public var navigation: AppNavigationState
 
@@ -49,6 +50,7 @@ public struct AppState: Equatable, Sendable, State {
     corpus: CorpusState = CorpusState(),
     dailyRead: DailyReadState = DailyReadState(),
     workspace: WorkspaceState = WorkspaceState(),
+    badgeFeedback: BadgeFeedbackState = BadgeFeedbackState(),
     network: NetworkConnectivityState = NetworkConnectivityState(),
     navigation: AppNavigationState = AppNavigationState()
   ) {
@@ -61,6 +63,7 @@ public struct AppState: Equatable, Sendable, State {
     self.corpus = corpus
     self.dailyRead = dailyRead
     self.workspace = workspace
+    self.badgeFeedback = badgeFeedback
     self.network = network
     self.navigation = navigation
   }
@@ -84,6 +87,7 @@ public enum AppAction: Equatable, Sendable, Action {
   case corpus(CorpusAction)
   case dailyRead(DailyReadAction)
   case workspace(WorkspaceAction)
+  case badgeFeedback(BadgeFeedbackAction)
   case network(NetworkConnectivityAction)
   case navigation(AppNavigationAction)
 }

@@ -1,5 +1,6 @@
 import FluentWorkFeatureFlags
 import FluentWorkPluginSupport
+import Foundation
 import TGReduxKit
 
 public let appReducer: Reducer<AppState, AppAction> = combineReducers(
@@ -67,6 +68,15 @@ public let appReducer: Reducer<AppState, AppAction> = combineReducers(
     }
   ),
   pullback(
+    badgeFeedbackReducer,
+    state: \.badgeFeedback,
+    action: AppAction.badgeFeedback,
+    extract: {
+      guard case .badgeFeedback(let action) = $0 else { return nil }
+      return action
+    }
+  ),
+  pullback(
     networkConnectivityReducer,
     state: \.network,
     action: AppAction.network,
@@ -120,6 +130,18 @@ public let appCrossCuttingReducer: Reducer<AppState, AppAction> = { state, actio
   case .speakingRoom(.badgeHit(let badge)):
     state.workspace.highlightedBadge = badge
     state.workspace.badgeFeedCount += 1
+    // Mirror into the badge display layer (`I11`). Timestamp source is
+    // always "now" — display lifecycle is short (<= `visibleWindowSeconds`)
+    // and tolerates coarse wall-clock granularity. Tests for the display
+    // reducer exercise the pure reducer directly with fixed dates; the
+    // cross-cutting mirror only needs to keep the workspace projection in
+    // step with what the UI actually shows.
+    state.badgeFeedback.ingest(
+      badge: badge,
+      turnID: nil,
+      tier: .unknown,
+      at: Date()
+    )
 
   case .auth(.signedInAsGuest), .auth(.mergedIntoRegistered):
     state.corpus = CorpusState()
