@@ -1,5 +1,5 @@
 import Foundation
-import Speech
+@preconcurrency import Speech
 import OSLog
 
 /// Client ASR transcriber using Apple's Speech framework.
@@ -64,7 +64,7 @@ public final class AppleSpeechClientASRTranscriber: ClientASRTranscriber {
         }
         
         // Create task
-        return try await withCheckedThrowingContinuation { continuation in
+        return try await withCheckedThrowingContinuation { [logger] continuation in
             var resumed = false
             var recognitionTask: SFSpeechRecognitionTask?
             
@@ -72,7 +72,7 @@ public final class AppleSpeechClientASRTranscriber: ClientASRTranscriber {
                 if let error = error {
                     if !resumed {
                         resumed = true
-                        self.logger.error("Speech recognition error: \(error.localizedDescription)")
+                        logger.error("Speech recognition error: \(error.localizedDescription)")
                         continuation.resume(throwing: ClientASRError.engineError(error.localizedDescription))
                     }
                     return
@@ -82,14 +82,14 @@ public final class AppleSpeechClientASRTranscriber: ClientASRTranscriber {
                     if !resumed {
                         resumed = true
                         let transcript = result.bestTranscription.formattedString
-                        self.logger.info("Speech recognition completed: \(transcript.count) chars")
+                        logger.info("Speech recognition completed: \(transcript.count) chars")
                         continuation.resume(returning: transcript)
                     }
                 }
             }
             
             // Feed PCM data to the recognizer
-            Task {
+            Task { [logger] in
                 do {
                     for try await chunk in pcm {
                         // Convert PCM data to AVAudioPCMBuffer
@@ -124,7 +124,7 @@ public final class AppleSpeechClientASRTranscriber: ClientASRTranscriber {
                 } catch {
                     if !resumed {
                         resumed = true
-                        self.logger.error("Error feeding PCM data: \(error.localizedDescription)")
+                        logger.error("Error feeding PCM data: \(error.localizedDescription)")
                         continuation.resume(throwing: ClientASRError.engineError(error.localizedDescription))
                     }
                     recognitionTask?.cancel()

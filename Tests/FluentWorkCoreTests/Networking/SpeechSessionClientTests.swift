@@ -179,14 +179,14 @@ private actor FailingSessionStartTransport: SocketTransportProtocol {
     )
 
     // Turn 1.
-    try await client.sendSpeechBoundary(started: true, turnID: nil)
+    try await client.sendSpeechBoundary(started: true, turnID: nil, text: nil)
     try await client.sendAudioPCM(Data([0x10, 0x11]))
-    try await client.sendSpeechBoundary(started: false, turnID: "turn-1")
+    try await client.sendSpeechBoundary(started: false, turnID: "turn-1", text: nil)
 
     // Turn 2 (no client ASR yet → text: nil per B13-not-shipped contract).
-    try await client.sendSpeechBoundary(started: true, turnID: nil)
+    try await client.sendSpeechBoundary(started: true, turnID: nil, text: nil)
     try await client.sendAudioPCM(Data([0x20, 0x21]))
-    try await client.sendSpeechBoundary(started: false, turnID: "turn-2")
+    try await client.sendSpeechBoundary(started: false, turnID: "turn-2", text: nil)
 
     let sentControls = await transport.sentControlFrames
     #expect(
@@ -225,9 +225,9 @@ private actor FailingSessionStartTransport: SocketTransportProtocol {
         transport: transport
     )
 
-    try await client.sendSpeechBoundary(started: true, turnID: nil)
+    try await client.sendSpeechBoundary(started: true, turnID: nil, text: nil)
     try await client.sendAudioPCM(Data([0x00, 0x01, 0x02]))
-    try await client.sendSpeechBoundary(started: false, turnID: "turn-1")
+    try await client.sendSpeechBoundary(started: false, turnID: "turn-1", text: nil)
 
     // Day-one DefaultSpeechSessionClient takes the server-side ASR path —
     // it always sends `text: nil` so the gateway does the hit-detection

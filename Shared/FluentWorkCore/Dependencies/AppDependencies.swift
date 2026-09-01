@@ -90,7 +90,9 @@ public protocol SpeechSessionClientProtocol: Sendable {
     /// Sends a `user.speech.start` or `user.speech.end` frame to the backend.
     /// `turnID` is the current user turn identifier (e.g. "turn-1") used by the
     /// backend for badge hit dedupe. Pass `nil` when `started` is true.
-    func sendSpeechBoundary(started: Bool, turnID: String?) async throws
+    /// `text` is the optional client ASR transcription result (B13). Pass `nil`
+    /// to fall back to server-side ASR.
+    func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws
     func sendAudioPCM(_ data: Data) async throws
     func submitTranscript(_ text: String) async
     func transportEvents() -> AsyncStream<SocketTransportEvent>
@@ -175,7 +177,7 @@ public final class PlaceholderSpeechSessionClient: SpeechSessionClientProtocol, 
 
     public func submitTranscript(_ text: String) async {}
 
-    public func sendSpeechBoundary(started: Bool, turnID: String?) async throws {}
+    public func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {}
 
     public func sendAudioPCM(_ data: Data) async throws {}
 
@@ -378,5 +380,13 @@ public extension Container {
 
     var appEnvironment: Factory<AppEnvironment> {
         self { AppEnvironment.current }.singleton
+    }
+
+    var clientASRTranscriber: Factory<ClientASRTranscriber> {
+        self {
+            // B13: Default to Apple Speech (iOS 13+) for production
+            // Debug builds can override via `container.clientASRTranscriber.register { RawClientASRTranscriber() }`
+            AppleSpeechClientASRTranscriber()
+        }.singleton
     }
 }

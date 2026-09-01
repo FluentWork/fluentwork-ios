@@ -72,12 +72,12 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         try? await transport.send(control: .interrupt)
     }
 
-    public func sendSpeechBoundary(started: Bool, turnID: String?) async throws {
+    public func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {
         if started {
             try await transport.send(control: .userSpeechStart)
         } else {
-            // Backend uses turnID for badge hit dedupe. Schema accepts nil (server-side ASR path).
-            try await transport.send(control: .userSpeechEnd(text: nil, turnID: turnID))
+            // Backend uses turnID for badge hit dedupe. text is optional client ASR result (B13).
+            try await transport.send(control: .userSpeechEnd(text: text, turnID: turnID))
         }
     }
 
