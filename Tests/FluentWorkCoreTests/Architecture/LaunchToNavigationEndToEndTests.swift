@@ -52,6 +52,30 @@ private func waitForBootstrap(
     #expect(AppRoute(entryRoute: "/drill") == nil)
 }
 
+@Test func appRouteBuildsWorkbenchNavigationActions() {
+    #expect(
+        AppRoute.speakingRoom(sessionID: nil).defaultWorkbenchNavigationAction
+            == .workbench(.present(.speakingRoom(sessionID: nil), style: .fullScreenCover))
+    )
+    #expect(
+        AppRoute.review(sessionID: "review-1").defaultWorkbenchNavigationAction
+            == .workbench(.present(.review(sessionID: "review-1"), style: .fullScreenCover))
+    )
+    #expect(
+        AppRoute.dailyRead(sessionID: "daily-1").defaultWorkbenchNavigationAction
+            == .workbench(.push(.dailyRead(sessionID: "daily-1")))
+    )
+    #expect(
+        AppRoute.workbenchNavigationAction(entryRoute: "/speaking-room", sessionID: "room-1")
+            == .workbench(.present(.speakingRoom(sessionID: "room-1"), style: .fullScreenCover))
+    )
+    #expect(
+        AppRoute.workbenchNavigationAction(entryRoute: "/daily-read", sessionID: "daily-2")
+            == .workbench(.push(.dailyRead(sessionID: "daily-2")))
+    )
+    #expect(AppRoute.workbenchNavigationAction(entryRoute: "/drill") == nil)
+}
+
 @Test func pluginCatalogEntryRoutesAlignWithAppRoute() {
     let catalog = FeaturePluginCatalog.firstWave
     for descriptor in catalog {

@@ -7,23 +7,11 @@ struct HostRootView: View {
     @State private var store = AppStoreFactory.make()
     @State private var didLaunch = false
 
-    private var speakingRoomFlagEnabled: Bool {
-        store.state.featureFlags.isEnabled(.speakingRoom)
-    }
-
-    private var workspaceReviewFlagEnabled: Bool {
-        store.state.featureFlags.isEnabled(.workspaceReview)
-    }
-
-    private var dailyReadFlagEnabled: Bool {
-        store.state.featureFlags.isEnabled(.dailyRead)
-    }
-
     var body: some View {
         AppRootTabView(
             navigation: store.state.navigation,
             dispatch: { store.dispatch($0) },
-            workbenchRoot: { debugRootList },
+            workbenchRoot: { workbenchRoot },
             flashRoot: {
                 Text("闪测（占位）")
                     .foregroundStyle(.secondary)
@@ -349,325 +337,117 @@ struct HostRootView: View {
         }
     }
 
-    private var debugRootList: some View {
-        List {
-            Section("Bootstrap") {
-                LabeledContent("Status", value: store.state.bootstrapStatus.rawValue)
-                LabeledContent("Active Surface", value: store.state.workspace.activeSurface.rawValue)
-                LabeledContent(
-                    "Remote Loaded",
-                    value: store.state.featureFlags.isRemoteLoaded ? "yes" : "no"
-                )
-                LabeledContent(
-                    "Network",
-                    value: store.state.network.isConnected ? "online" : "offline"
-                )
-
-                if let message = store.state.lastErrorMessage {
-                    Text(message)
-                        .foregroundStyle(.red)
-                }
-
-                Button("Trigger Bootstrap") {
-                    store.dispatch(.lifecycle(.appLaunched))
-                }
+    private var workbenchRoot: some View {
+        WorkbenchHomeView(
+            model: makeWorkbenchHomeViewModel(),
+            onModuleTapped: openWorkbenchModule,
+            onRetryTapped: {
+                store.dispatch(.lifecycle(.appLaunched))
             }
+        )
+    }
 
-            Section("Navigation") {
-                Button("Present Speaking Room") {
-                    store.dispatch(
-                        .navigation(
-                            .workbench(.present(.speakingRoom(sessionID: nil), style: .fullScreenCover))
-                        )
-                    )
-                }
-                .disabled(!speakingRoomFlagEnabled)
-
-                Button("Present Review") {
-                    store.dispatch(
-                        .navigation(
-                            .workbench(.present(.review(sessionID: nil), style: .fullScreenCover))
-                        )
-                    )
-                }
-                .disabled(!workspaceReviewFlagEnabled)
-
-                Button("Present Daily Read") {
-                    store.dispatch(
-                        .navigation(
-                            .workbench(.present(.dailyRead(sessionID: nil), style: .fullScreenCover))
-                        )
-                    )
-                }
-                .disabled(!dailyReadFlagEnabled)
-
-                Button("切到语料库 Tab") {
-                    store.dispatch(.navigation(.selectTab(.corpus)))
-                }
-            }
-
-            Section("Feature Flags") {
-                LabeledContent("Speaking Room", value: speakingRoomFlagEnabled ? "on" : "off")
-                LabeledContent("Workspace Review", value: workspaceReviewFlagEnabled ? "on" : "off")
-                LabeledContent("Daily Read", value: dailyReadFlagEnabled ? "on" : "off")
-                LabeledContent(
-                    "Local Override Count",
-                    value: "\(store.state.featureFlags.localOverrides.count)"
-                )
-
-                Button(speakingRoomFlagEnabled ? "Disable Speaking Room" : "Enable Speaking Room") {
-                    store.dispatch(
-                        .featureFlags(
-                            .setLocalOverride(
-                                flag: .speakingRoom,
-                                isEnabled: !speakingRoomFlagEnabled
-                            )
-                        )
-                    )
-                }
-
-                Button(dailyReadFlagEnabled ? "Disable Daily Read" : "Enable Daily Read") {
-                    store.dispatch(
-                        .featureFlags(
-                            .setLocalOverride(
-                                flag: .dailyRead,
-                                isEnabled: !dailyReadFlagEnabled
-                            )
-                        )
-                    )
-                }
-
-                Button("Clear Local Overrides") {
-                    store.dispatch(.featureFlags(.clearLocalOverrides))
-                }
-                .disabled(store.state.featureFlags.localOverrides.isEmpty)
-            }
-
-            Section("Workspace") {
-                LabeledContent(
-                    "Bootstrap Complete",
-                    value: store.state.workspace.isBootstrapComplete ? "yes" : "no"
-                )
-                LabeledContent("Highlighted Badge", value: store.state.workspace.highlightedBadge ?? "-")
-                LabeledContent("Badge Feed Count", value: "\(store.state.workspace.badgeFeedCount)")
-
-                ForEach(store.state.workspace.availableModules) { module in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(module.moduleName)
-                            .font(.headline)
-                        Text(module.entryRoute)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                HStack {
-                    Button("Workbench") {
-                        store.dispatch(.workspace(.activate(.workbench)))
-                    }
-                    Button("Speaking") {
-                        store.dispatch(.workspace(.activate(.speakingRoom)))
-                    }
-                    Button("Review") {
-                        store.dispatch(.workspace(.activate(.review)))
-                    }
-                }
-                .buttonStyle(.bordered)
-            }
-
-            Section("Auth") {
-                LabeledContent("Mode", value: store.state.auth.mode.rawValue)
-                LabeledContent("User ID", value: store.state.auth.currentUserID ?? "-")
-                LabeledContent(
-                    "Pending Merge Device",
-                    value: store.state.auth.pendingMergeDeviceID ?? "-"
-                )
-
-                HStack {
-                    Button("Guest Sign In") {
-                        store.dispatch(
-                            .auth(.signedInAsGuest(userID: "guest-1", deviceID: "device-1"))
-                        )
-                    }
-
-                    Button("Promote") {
-                        store.dispatch(
-                            .auth(.mergedIntoRegistered(userID: "user-42", deviceID: "device-1"))
-                        )
-                    }
-                }
-                .buttonStyle(.bordered)
-
-                Button("🗑️ Clear Token (Dev)") {
-                    Task {
-                        do {
-                            let storage = KeychainSecureStorage()
-                            let tokens = SecureAuthTokenStore(
-                                storage: storage,
-                                idGenerator: SystemIDGenerator()
-                            )
-                            try tokens.clear()
-                            print("[🔑 Token] Cleared all tokens from Keychain")
-                        } catch {
-                            print("[🔑 Token] Failed to clear: \(error)")
-                        }
-                    }
-                }
-                .foregroundStyle(.red)
-            }
-
-            Section("Corpus") {
-                LabeledContent("Phase", value: store.state.corpus.phase.rawValue)
-                LabeledContent("Total Blocks", value: "\(store.state.corpus.items.count)")
-                LabeledContent("Visible Blocks", value: "\(store.state.corpus.visibleItems.count)")
-                LabeledContent("Refreshing", value: store.state.corpus.isRefreshing ? "yes" : "no")
-                LabeledContent("Replaying Outbox", value: store.state.corpus.isReplayingOutbox ? "yes" : "no")
-                LabeledContent("Next Cursor", value: store.state.corpus.nextCursor ?? "-")
-                LabeledContent("Sync Cursor", value: store.state.corpus.syncCursor ?? "-")
-                LabeledContent("Outbox Count", value: "\(store.state.corpus.outbox.count)")
-
-                if let message = store.state.corpus.lastErrorMessage {
-                    Text(message)
-                        .foregroundStyle(.red)
-                }
-
-                HStack {
-                    Button("Load Corpus") {
-                        store.dispatch(.corpus(.appear))
-                    }
-
-                    Button("Refresh") {
-                        store.dispatch(.corpus(.refreshRequested))
-                    }
-                }
-                .buttonStyle(.bordered)
-            }
-
-            Section("Daily Read") {
-                LabeledContent("Phase", value: store.state.dailyRead.phase.rawValue)
-                LabeledContent("Has Article", value: store.state.dailyRead.dailyRead != nil ? "yes" : "no")
-                LabeledContent("Gen Date", value: store.state.dailyRead.genDate ?? "-")
-                LabeledContent("Audio Phase", value: store.state.dailyRead.audioPhase.rawValue)
-                LabeledContent(
-                    "Follow-Read Phase",
-                    value: followReadPhaseLabel(store.state.dailyRead.followReadPhase)
-                )
-                LabeledContent("Has Follow Read", value: store.state.dailyRead.hasFollowRead ? "yes" : "no")
-
-                if let message = store.state.dailyRead.lastErrorMessage {
-                    Text(message)
-                        .foregroundStyle(.red)
-                }
-
-                HStack {
-                    Button("Load Daily Read") {
-                        store.dispatch(.dailyRead(.loadTriggered))
-                    }
-
-                    Button("Clear") {
-                        store.dispatch(.dailyRead(.clear))
-                    }
-                }
-                .buttonStyle(.bordered)
-            }
-
-            Section("Speaking Room") {
-                LabeledContent("Phase", value: store.state.speakingRoom.phase.rawValue)
-                LabeledContent(
-                    "Bootstrap Ready",
-                    value: store.state.speakingRoom.isBootstrapReady ? "yes" : "no"
-                )
-                LabeledContent("Transcript", value: store.state.speakingRoom.liveTranscript)
-                LabeledContent("Last Badge", value: store.state.speakingRoom.lastBadge ?? "-")
-                LabeledContent("Badge Hits", value: "\(store.state.speakingRoom.badgeHits)")
-
-                if let failureReason = store.state.speakingRoom.failureReason {
-                    Text(failureReason)
-                        .foregroundStyle(.red)
-                }
-
-                HStack {
-                    Button("Start") {
-                        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-                    }
-                    Button("Socket Ready") {
-                        store.dispatch(.speakingRoom(.session(.socketReady)))
-                    }
-                    Button("Badge Hit") {
-                        store.dispatch(.speakingRoom(.badgeHit(badge: "表达自然")))
-                    }
-                }
-                .buttonStyle(.bordered)
-
-                Button("Simulate Transcript") {
-                    store.dispatch(.speakingRoom(.userSpeechCaptured("你好，FluentWork")))
-                }
-            }
-
-            Section("Badge Feedback (I11)") {
-                LabeledContent(
-                    "Total Entries",
-                    value: "\(store.state.badgeFeedback.entries.count)"
-                )
-                LabeledContent(
-                    "Visible Window",
-                    value: String(format: "%.1fs", store.state.badgeFeedback.visibleWindowSeconds)
-                )
-                LabeledContent(
-                    "Max Visible",
-                    value: "\(store.state.badgeFeedback.maxVisibleEntries)"
-                )
-
-                HStack {
-                    Button("Hit 表达自然") {
-                        store.dispatch(
-                            .badgeFeedback(
-                                .ingest(
-                                    badge: "表达自然",
-                                    turnID: "host-1",
-                                    tier: .nextTurnConfirm,
-                                    at: Date()
-                                )
-                            )
-                        )
-                    }
-                    Button("Hit 节奏稳定") {
-                        store.dispatch(
-                            .badgeFeedback(
-                                .ingest(
-                                    badge: "节奏稳定",
-                                    turnID: "host-2",
-                                    tier: .badgeOnly,
-                                    at: Date()
-                                )
-                            )
-                        )
-                    }
-                    Button("Hit 用词地道") {
-                        store.dispatch(
-                            .badgeFeedback(
-                                .ingest(
-                                    badge: "用词地道",
-                                    turnID: "host-3",
-                                    tier: .unknown,
-                                    at: Date()
-                                )
-                            )
-                        )
-                    }
-                }
-                .buttonStyle(.bordered)
-
-                Button("Tick (sweep)") {
-                    store.dispatch(.badgeFeedback(.tick(at: Date())))
-                }
-                Button("Clear Feed") {
-                    store.dispatch(.badgeFeedback(.clear))
-                }
-                .disabled(store.state.badgeFeedback.entries.isEmpty)
-            }
+    private func makeWorkbenchHomeViewModel() -> WorkbenchHomeViewModel {
+        let modules = store.state.workspace.availableModules.map { descriptor in
+            WorkbenchHomeViewModel.Module(
+                id: descriptor.moduleName,
+                title: moduleTitle(moduleName: descriptor.moduleName, entryRoute: descriptor.entryRoute),
+                subtitle: moduleSubtitle(forEntryRoute: descriptor.entryRoute),
+                systemImage: moduleIcon(forEntryRoute: descriptor.entryRoute),
+                entryRoute: descriptor.entryRoute,
+                kind: moduleKind(forEntryRoute: descriptor.entryRoute),
+                isAvailable: AppRoute(entryRoute: descriptor.entryRoute) != nil
+            )
         }
-        .navigationTitle("FluentWork Host")
+
+        let phase: WorkbenchHomeViewModel.Phase
+        switch store.state.bootstrapStatus {
+        case .idle, .loading:
+            phase = .loading
+        case .ready:
+            phase = modules.isEmpty ? .empty : .ready
+        case .failed:
+            phase = .failed(message: store.state.lastErrorMessage)
+        }
+
+        return WorkbenchHomeViewModel(
+            phase: phase,
+            modules: modules,
+            isOffline: !store.state.network.isConnected,
+            activeModuleTitle: activeModuleTitle(from: store.state.workspace.activeSurface),
+            highlightedBadge: store.state.workspace.highlightedBadge,
+            badgeFeedCount: store.state.workspace.badgeFeedCount
+        )
+    }
+
+    private func openWorkbenchModule(_ module: WorkbenchHomeViewModel.Module) {
+        guard let action = AppRoute.workbenchNavigationAction(entryRoute: module.entryRoute) else {
+            return
+        }
+        store.dispatch(.navigation(action))
+    }
+
+    private func activeModuleTitle(from surface: WorkspaceSurface) -> String? {
+        switch surface {
+        case .workbench:
+            return nil
+        case .speakingRoom:
+            return "说的房间"
+        case .review:
+            return "回顾"
+        }
+    }
+
+    private func moduleTitle(moduleName: String, entryRoute: String) -> String {
+        switch entryRoute {
+        case "/speaking-room":
+            return "说的房间"
+        case "/review":
+            return "回顾"
+        case "/daily-read":
+            return "每日一读"
+        default:
+            return moduleName
+        }
+    }
+
+    private func moduleSubtitle(forEntryRoute entryRoute: String) -> String {
+        switch entryRoute {
+        case "/speaking-room":
+            return "进入实时口语练习，会话页使用全屏导航承载。"
+        case "/review":
+            return "查看评价、对照表达与炼句卡片，保持会话式全屏沉浸。"
+        case "/daily-read":
+            return "在工作台导航栈内进入阅读页，继续停留在当前 Tab。"
+        default:
+            return "该模块尚未接入当前 MVP 导航。"
+        }
+    }
+
+    private func moduleIcon(forEntryRoute entryRoute: String) -> String {
+        switch entryRoute {
+        case "/speaking-room":
+            return "mic.fill"
+        case "/review":
+            return "text.quote"
+        case "/daily-read":
+            return "book.fill"
+        default:
+            return "square.grid.2x2"
+        }
+    }
+
+    private func moduleKind(forEntryRoute entryRoute: String) -> WorkbenchHomeViewModel.Module.Kind {
+        switch entryRoute {
+        case "/speaking-room":
+            return .speakingRoom
+        case "/review":
+            return .review
+        case "/daily-read":
+            return .dailyRead
+        default:
+            return .unsupported
+        }
     }
 }
 
