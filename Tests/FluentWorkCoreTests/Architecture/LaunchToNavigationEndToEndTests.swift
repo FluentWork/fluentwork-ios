@@ -14,11 +14,11 @@ private func makeIsolatedLaunchContainer() -> Container {
         StubNetworkMonitor(snapshot: .connected)
     }
     container.bootstrapClient.register {
-        ResolverBackedBootstrapClient(
-            resolver: FeatureFlagResolverFactory.makeFirstWaveResolver(),
-            preferredSurfaceProvider: { .speakingRoom },
-            sessionAPI: container.sessionAPIClient(),
-            tokenStore: container.authTokenStore()
+        StaticBootstrapClient(
+            snapshot: BootstrapSnapshot(
+                featureFlags: .firstWave,
+                preferredSurface: .speakingRoom
+            )
         )
     }
     return container
