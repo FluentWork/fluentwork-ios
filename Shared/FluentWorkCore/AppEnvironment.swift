@@ -31,14 +31,33 @@ public struct AppEnvironment: Equatable, Sendable {
         minimumLogLevelIsDebug: true
     )
 
+    /// Local development environment
+    /// - Default: 127.0.0.1 (simulator)
+    /// - Override with custom IP: `AppEnvironment.local(host: "192.168.1.100")`
     public static let local = AppEnvironment(
         kind: .local,
         apiBaseURL: URL(string: "http://127.0.0.1:8080/api/v1")!,
         wssBaseURL: URL(string: "ws://127.0.0.1:8081/v1/voice")!,
         minimumLogLevelIsDebug: true
     )
+    
+    /// Create a local environment with custom host IP
+    /// - Parameter host: The local machine's IP address (e.g., "192.168.2.15")
+    /// - Returns: AppEnvironment configured for the specified host
+    public static func local(host: String) -> AppEnvironment {
+        AppEnvironment(
+            kind: .local,
+            apiBaseURL: URL(string: "http://\(host):8080/api/v1")!,
+            wssBaseURL: URL(string: "ws://\(host):8081/v1/voice")!,
+            minimumLogLevelIsDebug: true
+        )
+    }
 
     #if DEBUG
+    // MARK: - Current Environment Override
+    // To test on a physical device, change this to:
+    // public static let current: AppEnvironment = .local(host: "YOUR_LOCAL_IP")
+    // e.g., .local(host: "192.168.2.15")
     public static let current: AppEnvironment = .local
     #else
     public static let current: AppEnvironment = AppEnvironment(
