@@ -54,9 +54,12 @@ public func appBootstrapMiddleware(container: Container? = nil) -> Middleware<Ap
             base,
             .task(id: AppTaskID.bootstrap) {
                 do {
-                    let snapshot = try await bootstrapClient.loadBootstrap()
+                    let result = try await bootstrapClient.loadBootstrap()
                     guard !Task.isCancelled else { return nil }
-                    return .lifecycle(.bootstrapSucceeded(snapshot))
+                    return .lifecycle(.bootstrapSucceeded(
+                        snapshot: result.snapshot,
+                        authInfo: result.authInfo
+                    ))
                 } catch is CancellationError {
                     return nil
                 } catch {

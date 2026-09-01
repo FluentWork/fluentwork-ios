@@ -26,6 +26,30 @@ public struct BootstrapSnapshot: Equatable, Sendable {
   )
 }
 
+/// Authentication information returned from bootstrap process.
+public struct AuthInfo: Equatable, Sendable {
+  public var userID: String
+  public var isGuest: Bool
+  public var deviceID: String
+  
+  public init(userID: String, isGuest: Bool, deviceID: String) {
+    self.userID = userID
+    self.isGuest = isGuest
+    self.deviceID = deviceID
+  }
+}
+
+/// Result of bootstrap process, including snapshot and optional auth info.
+public struct BootstrapResult: Equatable, Sendable {
+  public var snapshot: BootstrapSnapshot
+  public var authInfo: AuthInfo?
+  
+  public init(snapshot: BootstrapSnapshot, authInfo: AuthInfo? = nil) {
+    self.snapshot = snapshot
+    self.authInfo = authInfo
+  }
+}
+
 public struct AppState: Equatable, Sendable, State {
   public var bootstrapStatus: BootstrapStatus
   public var lastErrorMessage: String?
@@ -74,7 +98,7 @@ public struct AppState: Equatable, Sendable, State {
 public enum LifecycleAction: Equatable, Sendable, Action {
   case appLaunched
   case bootstrapStarted
-  case bootstrapSucceeded(BootstrapSnapshot)
+  case bootstrapSucceeded(snapshot: BootstrapSnapshot, authInfo: AuthInfo?)
   case bootstrapFailed(String)
 }
 

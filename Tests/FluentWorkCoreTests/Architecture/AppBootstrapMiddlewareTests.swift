@@ -8,9 +8,10 @@ import TGReduxKit
 
 private struct MockBootstrapClient: BootstrapClientProtocol {
     let snapshot: BootstrapSnapshot
+    let authInfo: AuthInfo?
 
-    func loadBootstrap() async throws -> BootstrapSnapshot {
-        snapshot
+    func loadBootstrap() async throws -> BootstrapResult {
+        BootstrapResult(snapshot: snapshot, authInfo: authInfo)
     }
 }
 
@@ -19,7 +20,7 @@ private struct FailingBootstrapClient: BootstrapClientProtocol {
         var errorDescription: String? { "bootstrap failed for test" }
     }
 
-    func loadBootstrap() async throws -> BootstrapSnapshot {
+    func loadBootstrap() async throws -> BootstrapResult {
         throw Failure()
     }
 }
@@ -61,7 +62,8 @@ private func waitForBootstrap(
             snapshot: BootstrapSnapshot(
                 featureFlags: .firstWave,
                 preferredSurface: .speakingRoom
-            )
+            ),
+            authInfo: nil
         )
     )
 
@@ -108,12 +110,15 @@ private func waitForBootstrap(
     struct SlowBootstrapClient: BootstrapClientProtocol {
         let probe: Probe
 
-        func loadBootstrap() async throws -> BootstrapSnapshot {
+        func loadBootstrap() async throws -> BootstrapResult {
             await probe.markLoad()
             try await Task.sleep(nanoseconds: 150_000_000)
-            return BootstrapSnapshot(
-                featureFlags: .firstWave,
-                preferredSurface: .speakingRoom
+            return BootstrapResult(
+                snapshot: BootstrapSnapshot(
+                    featureFlags: .firstWave,
+                    preferredSurface: .speakingRoom
+                ),
+                authInfo: nil
             )
         }
     }

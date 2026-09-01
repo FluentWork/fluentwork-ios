@@ -182,6 +182,8 @@ private final class InMemoryAuthTokenStore: AuthTokenStoreProtocol, @unchecked S
   private let lock = NSLock()
   private var accessTokenValue: String?
   private var deviceIDValue: String
+  private var userIDValue: String?
+  private var isGuestValue: Bool = true
 
   init(seedAccessToken: String?, seedDeviceID: String) {
     self.accessTokenValue = seedAccessToken
@@ -205,12 +207,28 @@ private final class InMemoryAuthTokenStore: AuthTokenStoreProtocol, @unchecked S
     defer { lock.unlock() }
     accessTokenValue = tokens.accessToken
     deviceIDValue = deviceID
+    userIDValue = tokens.userID
+    isGuestValue = tokens.isGuest
   }
 
   func clear() throws {
     lock.lock()
     defer { lock.unlock() }
     accessTokenValue = nil
+    userIDValue = nil
+    isGuestValue = true
+  }
+
+  func userID() throws -> String? {
+    lock.lock()
+    defer { lock.unlock() }
+    return userIDValue
+  }
+
+  func isGuest() throws -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return isGuestValue
   }
 }
 

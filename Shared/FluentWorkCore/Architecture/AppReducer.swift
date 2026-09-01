@@ -107,13 +107,26 @@ public let appCrossCuttingReducer: Reducer<AppState, AppAction> = { state, actio
     state.bootstrapStatus = .loading
     state.lastErrorMessage = nil
 
-  case .lifecycle(.bootstrapSucceeded(let snapshot)):
+  case let .lifecycle(.bootstrapSucceeded(snapshot, authInfo)):
     state.bootstrapStatus = .ready
     state.workspace.isBootstrapComplete = true
     state.workspace.activeSurface = snapshot.preferredSurface
     state.featureFlags.snapshot = snapshot.featureFlags
     state.featureFlags.isRemoteLoaded = true
     applyFeatureFlagProjection(to: &state)
+    
+    // Update auth state directly if we have authentication info from bootstrap
+    if let auth = authInfo {
+      if auth.isGuest {
+        state.auth.mode = .guest
+        state.auth.currentUserID = auth.userID
+        state.auth.pendingMergeDeviceID = auth.deviceID
+      } else {
+        state.auth.mode = .registered
+        state.auth.currentUserID = auth.userID
+        state.auth.pendingMergeDeviceID = nil
+      }
+    }
 
   case .lifecycle(.bootstrapFailed(let message)):
     state.bootstrapStatus = .failed

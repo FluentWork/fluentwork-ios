@@ -7,7 +7,7 @@ import Foundation
 import TGFeatureFlag
 
 public protocol BootstrapClientProtocol: Sendable {
-    func loadBootstrap() async throws -> BootstrapSnapshot
+    func loadBootstrap() async throws -> BootstrapResult
 }
 public enum AudioEngineEvent: Equatable, Sendable {
     case speechStarted
@@ -107,13 +107,15 @@ public protocol NetworkPluginFactoryProtocol: Sendable {
 
 public struct StaticBootstrapClient: BootstrapClientProtocol {
     public let snapshot: BootstrapSnapshot
+    public let authInfo: AuthInfo?
 
-    public init(snapshot: BootstrapSnapshot = .preview) {
+    public init(snapshot: BootstrapSnapshot = .preview, authInfo: AuthInfo? = nil) {
         self.snapshot = snapshot
+        self.authInfo = authInfo
     }
 
-    public func loadBootstrap() async throws -> BootstrapSnapshot {
-        snapshot
+    public func loadBootstrap() async throws -> BootstrapResult {
+        BootstrapResult(snapshot: snapshot, authInfo: authInfo)
     }
 }
 
@@ -137,31 +139,43 @@ public struct ResolverBackedBootstrapClient: BootstrapClientProtocol {
         self.tokenStore = tokenStore
     }
 
-    public func loadBootstrap() async throws -> BootstrapSnapshot {
-        // Ensure guest token exists before proceeding
-        try await ensureGuestToken()
+    public func loadBootstrap() async throws -> BootstrapResult {
+        // Ensure guest token exists and capture auth info
+        let authInfo = try await ensureGuestToken()
         
         _ = await resolver.refresh()
         let remote = resolver.snapshot(for: AppFeatureFlag.allCases)
-        return BootstrapSnapshot(
+        let snapshot = BootstrapSnapshot(
             featureFlags: FeatureFlagSnapshotMapper.map(remote),
             preferredSurface: preferredSurfaceProvider()
         )
+        
+        return BootstrapResult(snapshot: snapshot, authInfo: authInfo)
     }
     
-    /// Ensures a valid guest token exists in the token store.
+    /// Ensures a valid guest token exists and returns auth info.
     /// If no token exists, issues a new guest token from the backend.
-    private func ensureGuestToken() async throws {
+    private func ensureGuestToken() async throws -> AuthInfo {
+        let deviceID = try tokenStore.deviceID()
+        
         // Check if we already have a valid access token
         if let existingToken = try tokenStore.accessToken(), !existingToken.isEmpty {
-            // Token exists, bootstrap can proceed
-            return
+            // Parse existing token to get user info
+            if let userID = try tokenStore.userID() {
+                let isGuest = try tokenStore.isGuest()
+                return AuthInfo(userID: userID, isGuest: isGuest, deviceID: deviceID)
+            }
         }
         
         // No token exists, issue a new guest token
-        let deviceID = try tokenStore.deviceID()
         let tokenResponse = try await sessionAPI.issueGuest(deviceID: deviceID)
         try tokenStore.save(tokens: tokenResponse, deviceID: deviceID)
+        
+        return AuthInfo(
+            userID: tokenResponse.userID,
+            isGuest: tokenResponse.isGuest,
+            deviceID: deviceID
+        )
     }
 }
 

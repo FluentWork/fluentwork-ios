@@ -39,7 +39,7 @@ import TGReduxKitTesting
     expected.featureFlags.snapshot = .firstWave
     expected.featureFlags.isRemoteLoaded = true
     expected.speakingRoom.isBootstrapReady = true
-    store.send(.lifecycle(.bootstrapSucceeded(snapshot)))
+    store.send(.lifecycle(.bootstrapSucceeded(snapshot: snapshot, authInfo: nil)))
     try store.assert(equals: expected)
 }
 
