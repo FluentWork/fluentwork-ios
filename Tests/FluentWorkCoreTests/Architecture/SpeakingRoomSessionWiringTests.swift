@@ -70,7 +70,7 @@ private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unche
         await state.recordStart()
     }
 
-    func sendSpeechBoundary(started: Bool, turnID: String?) async throws {
+    func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {
         if let boundaryError {
             throw boundaryError
         }

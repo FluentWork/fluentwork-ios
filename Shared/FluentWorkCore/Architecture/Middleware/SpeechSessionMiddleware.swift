@@ -95,6 +95,7 @@ private func interpretSpeechSessionSideEffect(
     let audioEngine = container.audioEngine()
     let speechClient = container.speechSessionClient()
     let tracker = container.tracker()
+    let clientASRTranscriber = container.clientASRTranscriber()
     let dispatchBox = MainActorActionBox(dispatch: dispatch)
 
     switch effect {
@@ -143,7 +144,8 @@ private func interpretSpeechSessionSideEffect(
                             // user.speech.end's turnID as the dedupe scope.
                             try await speechClient.sendSpeechBoundary(
                                 started: true,
-                                turnID: nil
+                                turnID: nil,
+                                text: nil
                             )
                             await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechStart)))
                         } catch {
@@ -161,9 +163,18 @@ private func interpretSpeechSessionSideEffect(
                             // turn's increment). The turn we just finished
                             // is therefore `count + 1`.
                             let turnID = "turn-\(turnCounter.get() + 1)"
+                            
+                            // B13: Attempt client-side ASR transcription
+                            let clientASRText = await transcribeWithClientASR(
+                                transcriber: clientASRTranscriber,
+                                tracker: tracker,
+                                turnID: turnID
+                            )
+                            
                             try await speechClient.sendSpeechBoundary(
                                 started: false,
-                                turnID: turnID
+                                turnID: turnID,
+                                text: clientASRText
                             )
                             tracker.track(
                                 event: "speech_turn_ended",
@@ -257,5 +268,129 @@ private final class MainActorActionBox: @unchecked Sendable {
 
     func dispatch(_ action: AppAction) async {
         await dispatch(action)
+    }
+}
+
+/// B13: Attempt client-side ASR transcription with 800ms timeout.
+/// Returns transcribed text on success, nil on failure/timeout (falls back to server-side ASR).
+private func transcribeWithClientASR(
+    transcriber: ClientASRTranscriber,
+    tracker: TrackerClientProtocol,
+    turnID: String
+) async -> String? {
+    // Create a stream of PCM chunks captured during this turn
+    // Note: This is a simplified implementation. In production, you'd need to:
+    // 1. Buffer PCM chunks from the audio engine during the turn
+    // 2. Replay them through an AsyncStream for the transcriber
+    // For now, we'll use an empty stream as a placeholder
+    let pcmStream = AsyncStream<Data> { continuation in
+        // TODO(B13): Wire actual PCM buffer from LiveAudioEngine
+        // This requires LiveAudioEngine to expose a separate PCM tap
+        // or buffer PCM chunks during the turn for replay
+        continuation.finish()
+    }
+    
+    let startTime = ContinuousClock.now
+    
+    do {
+        // 800ms timeout as per B13 spec
+        let text = try await withThrowingTaskGroup(of: String?.self) { group in
+            group.addTask {
+                try await transcriber.transcribe(pcm: pcmStream)
+            }
+            
+            group.addTask {
+                try await Task.sleep(for: .milliseconds(800))
+                return nil // Timeout sentinel
+            }
+            
+            guard let result = try await group.next() else {
+                throw ClientASRError.notAvailable
+            }
+            
+            group.cancelAll()
+            
+            if let text = result {
+                return text
+            } else {
+                // Timeout occurred
+                throw ClientASRError.notAvailable
+            }
+        }
+        
+        let elapsed = ContinuousClock.now - startTime
+        let elapsedMs = Int(elapsed.components.seconds * 1000 + Int64(elapsed.components.attoseconds) / 1_000_000_000_000_000)
+        
+        if text.isEmpty {
+            // Empty result treated as skip
+            tracker.track(
+                event: "speech_client_asr_skipped",
+                properties: [
+                    "turn_id": turnID,
+                    "reason": "empty_result",
+                    "source": "ios",
+                ]
+            )
+            return nil
+        }
+        
+        tracker.track(
+            event: "speech_client_asr_completed",
+            properties: [
+                "turn_id": turnID,
+                "elapsed_ms": "\(elapsedMs)",
+                "text_length": "\(text.count)",
+                "source": "ios",
+            ]
+        )
+        
+        return text
+        
+    } catch is CancellationError {
+        tracker.track(
+            event: "speech_client_asr_skipped",
+            properties: [
+                "turn_id": turnID,
+                "reason": "timeout",
+                "source": "ios",
+            ]
+        )
+        return nil
+        
+    } catch let error as ClientASRError {
+        let reason: String
+        switch error {
+        case .notAvailable:
+            reason = "not_available"
+        case .timeout:
+            reason = "timeout"
+        case .authorizationDenied:
+            reason = "authorization_denied"
+        case .unsupportedFormat:
+            reason = "unsupported_format"
+        case .engineError:
+            reason = "engine_error"
+        }
+        
+        tracker.track(
+            event: "speech_client_asr_failed",
+            properties: [
+                "turn_id": turnID,
+                "error_code": reason,
+                "source": "ios",
+            ]
+        )
+        return nil
+        
+    } catch {
+        tracker.track(
+            event: "speech_client_asr_failed",
+            properties: [
+                "turn_id": turnID,
+                "error_code": "unknown",
+                "source": "ios",
+            ]
+        )
+        return nil
     }
 }
