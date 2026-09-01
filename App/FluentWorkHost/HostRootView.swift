@@ -70,8 +70,16 @@ struct HostRootView: View {
         switch route {
         case let .speakingRoom(sessionID):
             ZStack(alignment: .top) {
-                Text("说的房间（骨架）\(sessionID.map { " · \($0)" } ?? "")")
-                    .navigationTitle("说的房间")
+                SpeakingRoomView(
+                    model: makeSpeakingRoomViewModel(from: store.state.speakingRoom),
+                    onStartTapped: {
+                        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+                    },
+                    onStopTapped: {
+                        store.dispatch(.speakingRoom(.session(.sessionStopTap)))
+                    }
+                )
+                .navigationTitle("说的房间")
 
                 // `I11` lightweight badge feedback — non-modal, top of the
                 // surface, renders only the entries currently inside the
@@ -88,6 +96,7 @@ struct HostRootView: View {
                 }
                 .padding(.top, 4)
             }
+            .onAppear { _ = sessionID }
         case let .review(sessionID):
             ReviewRootView(
                 model: makeReviewViewModel(from: store.state.review),
@@ -128,6 +137,18 @@ struct HostRootView: View {
             )
             .onAppear { _ = sessionID }
         }
+    }
+
+    private func makeSpeakingRoomViewModel(
+        from state: SpeakingRoomState
+    ) -> SpeakingRoomViewModel {
+        SpeakingRoomViewModel(
+            phase: state.phase,
+            liveTranscript: state.liveTranscript,
+            lastBadge: state.lastBadge,
+            badgeHits: state.badgeHits,
+            failureReason: state.failureReason
+        )
     }
 
     private func makeReviewViewModel(from state: ReviewState) -> ReviewViewModel {

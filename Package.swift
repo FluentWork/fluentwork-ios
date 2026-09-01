@@ -56,7 +56,7 @@ let package = Package(
         ),
         .target(
             name: "FluentWorkUI",
-            dependencies: [],
+            dependencies: ["FluentWorkCore"],
             path: "Shared/FluentWorkUI"
         ),
         .target(

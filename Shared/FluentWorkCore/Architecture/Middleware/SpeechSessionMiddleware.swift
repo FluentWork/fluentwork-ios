@@ -182,6 +182,11 @@ private func interpretSpeechSessionSideEffect(
                                 pcmChunks: pcmBuffer
                             )
                             
+                            // Display the transcribed text in the UI
+                            if let text = clientASRText, !text.isEmpty {
+                                await dispatchBox.dispatch(.speakingRoom(.userSpeechCaptured(text)))
+                            }
+                            
                             try await speechClient.sendSpeechBoundary(
                                 started: false,
                                 turnID: turnID,
