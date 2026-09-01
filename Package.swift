@@ -90,7 +90,10 @@ let package = Package(
                 .product(name: "TGNavigationStack", package: "TGNavigationStack"),
                 .product(name: "FactoryKit", package: "Factory"),
             ],
-            path: "Tests/FluentWorkCoreTests"
+            path: "Tests/FluentWorkCoreTests",
+            resources: [
+                .process("Architecture/README_CLIENT_ASR_TESTS.md"),
+            ]
         ),
     ]
 )
