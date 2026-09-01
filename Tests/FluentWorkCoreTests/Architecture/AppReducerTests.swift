@@ -46,7 +46,7 @@ import TGReduxKitTesting
 @Test func speakingRoomBadgeHitFeedsWorkspaceProjection() throws {
     let store = TestStore(initialState: AppState.initial, reducer: appReducer)
 
-    store.send(.speakingRoom(.badgeHit("表达自然")))
+    store.send(.speakingRoom(.badgeHit(badge: "表达自然")))
 
     // Speaking-room + workspace mirrors are unchanged by `I11`.
     #expect(store.state.speakingRoom.lastBadge == "表达自然")
@@ -59,6 +59,30 @@ import TGReduxKitTesting
     #expect(store.state.badgeFeedback.entries.first?.badge == "表达自然")
     #expect(store.state.badgeFeedback.entries.first?.tier == .unknown)
     #expect(store.state.badgeFeedback.entries.first?.turnID == nil)
+    #expect(store.state.badgeFeedback.entries.first?.phraseBlockID == nil)
+}
+
+@Test func speakingRoomBadgeHitWithEnrichmentMirrorsAllFields() throws {
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+
+    store.send(
+        .speakingRoom(.badgeHit(
+            badge: "节奏稳定",
+            phraseBlockID: "block-42",
+            tier: .nextTurnConfirm,
+            turnID: "turn-1"
+        ))
+    )
+
+    #expect(store.state.speakingRoom.lastBadge == "节奏稳定")
+    #expect(store.state.speakingRoom.badgeHits == 1)
+    #expect(store.state.workspace.highlightedBadge == "节奏稳定")
+    #expect(store.state.workspace.badgeFeedCount == 1)
+    #expect(store.state.badgeFeedback.entries.count == 1)
+    #expect(store.state.badgeFeedback.entries.first?.badge == "节奏稳定")
+    #expect(store.state.badgeFeedback.entries.first?.phraseBlockID == "block-42")
+    #expect(store.state.badgeFeedback.entries.first?.turnID == "turn-1")
+    #expect(store.state.badgeFeedback.entries.first?.tier == .nextTurnConfirm)
 }
 
 @Test func guestIdentityCanPromoteToRegisteredWithoutLosingFlow() throws {

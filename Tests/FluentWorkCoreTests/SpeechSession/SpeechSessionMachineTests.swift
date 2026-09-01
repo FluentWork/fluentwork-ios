@@ -39,7 +39,7 @@ import Testing
 
 @Test func vadSpeechEndMovesRecordingToProcessing() {
     var state = SpeechSessionState(phase: .recording)
-    _ = SpeechSessionMachine.reduce(&state, event: .vadSpeechEnd)
+    _ = SpeechSessionMachine.reduce(&state, event: .vadSpeechEnd(turnID: nil))
     #expect(state.phase == .processing)
 }
 
@@ -84,7 +84,7 @@ import Testing
     #expect(suspendEffects.contains(.stopPlayback))
 
     // Active events are ignored while suspended.
-    let ignored = SpeechSessionMachine.reduce(&state, event: .vadSpeechEnd)
+    let ignored = SpeechSessionMachine.reduce(&state, event: .vadSpeechEnd(turnID: nil))
     #expect(state.phase == .recording)
     #expect(state.suspendedPhase == .recording)
     #expect(ignored.isEmpty)
@@ -154,7 +154,7 @@ import Testing
     _ = SpeechSessionMachine.reduce(&state, event: .holdStart)
     #expect(state.phase == .recording)
 
-    _ = SpeechSessionMachine.reduce(&state, event: .holdEnd)
+    _ = SpeechSessionMachine.reduce(&state, event: .holdEnd(turnID: nil))
     #expect(state.phase == .processing)
 }
 

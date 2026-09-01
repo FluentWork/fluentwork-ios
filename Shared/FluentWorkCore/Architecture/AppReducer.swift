@@ -127,7 +127,7 @@ public let appCrossCuttingReducer: Reducer<AppState, AppAction> = { state, actio
   case .featureFlags(.setLocalOverride), .featureFlags(.clearLocalOverrides):
     applyFeatureFlagProjection(to: &state)
 
-  case .speakingRoom(.badgeHit(let badge)):
+  case .speakingRoom(.badgeHit(let badge, let phraseBlockID, let tier, let turnID)):
     state.workspace.highlightedBadge = badge
     state.workspace.badgeFeedCount += 1
     // Mirror into the badge display layer (`I11`). Timestamp source is
@@ -136,11 +136,17 @@ public let appCrossCuttingReducer: Reducer<AppState, AppAction> = { state, actio
     // reducer exercise the pure reducer directly with fixed dates; the
     // cross-cutting mirror only needs to keep the workspace projection in
     // step with what the UI actually shows.
+    //
+    // Tier falls back to `.unknown` when the speaking-room layer doesn't
+    // have one (e.g. a host debug button). The cross-cutting mirror is the
+    // only place that knows about transport `phraseBlockID`; pass it
+    // through to keep iOS-side dedupe aligned with the backend.
     state.badgeFeedback.ingest(
       badge: badge,
-      turnID: nil,
-      tier: .unknown,
-      at: Date()
+      turnID: turnID,
+      tier: tier ?? .unknown,
+      at: Date(),
+      phraseBlockID: phraseBlockID
     )
 
   case .auth(.signedInAsGuest), .auth(.mergedIntoRegistered):

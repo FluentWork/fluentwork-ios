@@ -87,7 +87,10 @@ public struct VolcengineOpusFrameDecoder: WSAudioFrameDecoder {
 
 public protocol SpeechSessionClientProtocol: Sendable {
     func startSession() async throws
-    func sendSpeechBoundary(started: Bool) async throws
+    /// Sends a `user.speech.start` or `user.speech.end` frame to the backend.
+    /// `turnID` is the current user turn identifier (e.g. "turn-1") used by the
+    /// backend for badge hit dedupe. Pass `nil` when `started` is true.
+    func sendSpeechBoundary(started: Bool, turnID: String?) async throws
     func sendAudioPCM(_ data: Data) async throws
     func submitTranscript(_ text: String) async
     func transportEvents() -> AsyncStream<SocketTransportEvent>
@@ -172,7 +175,7 @@ public final class PlaceholderSpeechSessionClient: SpeechSessionClientProtocol, 
 
     public func submitTranscript(_ text: String) async {}
 
-    public func sendSpeechBoundary(started: Bool) async throws {}
+    public func sendSpeechBoundary(started: Bool, turnID: String?) async throws {}
 
     public func sendAudioPCM(_ data: Data) async throws {}
 

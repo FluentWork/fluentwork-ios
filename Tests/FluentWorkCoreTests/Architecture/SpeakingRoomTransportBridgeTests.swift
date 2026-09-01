@@ -9,6 +9,20 @@ import Testing
 
 @Test func speakingRoomActionBridgesSocketReadyAndBadge() {
     #expect(SpeakingRoomAction(.socketReady) == .session(.socketReady))
-    #expect(SpeakingRoomAction(.badgeHit("表达自然")) == .badgeHit("表达自然"))
+    #expect(
+        SpeakingRoomAction(
+            .badgeHit(
+                badge: "表达自然",
+                phraseBlockID: "block-1",
+                tier: .highlight,
+                turnID: "turn-1"
+            )
+        ) == .badgeHit(
+            badge: "表达自然",
+            phraseBlockID: "block-1",
+            tier: .nextTurnConfirm, // highlight → nextTurnConfirm
+            turnID: "turn-1"
+        )
+    )
     #expect(SpeakingRoomAction(.networkLost) == .session(.networkLost))
 }
