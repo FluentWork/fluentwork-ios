@@ -556,7 +556,7 @@ struct HostRootView: View {
                         store.dispatch(.speakingRoom(.session(.socketReady)))
                     }
                     Button("Badge Hit") {
-                        store.dispatch(.speakingRoom(.badgeHit("表达自然")))
+                        store.dispatch(.speakingRoom(.badgeHit(badge: "表达自然")))
                     }
                 }
                 .buttonStyle(.bordered)

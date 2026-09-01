@@ -34,7 +34,7 @@ public struct AppEnvironment: Equatable, Sendable {
     public static let local = AppEnvironment(
         kind: .local,
         apiBaseURL: URL(string: "http://127.0.0.1:8080/api/v1")!,
-        wssBaseURL: URL(string: "ws://127.0.0.1:8080")!,
+        wssBaseURL: URL(string: "ws://127.0.0.1:8081/v1/voice")!,
         minimumLogLevelIsDebug: true
     )
 
