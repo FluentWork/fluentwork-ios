@@ -42,6 +42,23 @@ private func waitForBootstrap(
     }
 }
 
+@MainActor
+private func waitForSpeakingRoomPhase(
+    _ store: Store<AppState, AppAction>,
+    phase: SpeechSessionPhase,
+    timeoutNanoseconds: UInt64 = 500_000_000
+) async {
+    let step: UInt64 = 20_000_000
+    var waited: UInt64 = 0
+    while waited < timeoutNanoseconds {
+        if store.state.speakingRoom.phase == phase {
+            return
+        }
+        try? await Task.sleep(nanoseconds: step)
+        waited += step
+    }
+}
+
 @Test func appRouteBridgesPluginEntryRoutes() {
     #expect(AppRoute.speakingRoom(sessionID: nil).entryRoute == "/speaking-room")
     #expect(AppRoute.review(sessionID: "r1").entryRoute == "/review")
@@ -160,4 +177,48 @@ private func waitForBootstrap(
     #expect(store.state.navigation.workbench.path == [.review(sessionID: "on-workbench")])
     #expect(store.state.navigation.flashTest.path == [.speakingRoom(sessionID: "on-flash")])
     #expect(store.state.navigation.corpus.path.isEmpty)
+}
+
+@MainActor
+@Test func speakingRoomModalCanEndSessionThenDismiss() async {
+    let initial = AppState(
+        speakingRoom: SpeakingRoomState(
+            phase: .recording,
+            liveTranscript: "hello",
+            isBootstrapReady: true
+        ),
+        navigation: AppNavigationState(
+            workbench: NavigationState(
+                presentedRoute: .speakingRoom(sessionID: "room-active"),
+                presentationStyle: .fullScreenCover
+            )
+        )
+    )
+    let store = AppStoreFactory.make(initialState: initial)
+
+    store.dispatch(.speakingRoom(.session(.endTap)))
+    await waitForSpeakingRoomPhase(store, phase: .ended)
+    #expect(store.state.speakingRoom.phase == .ended)
+
+    store.dispatch(.navigation(.workbench(.dismiss)))
+    #expect(store.state.navigation.workbench.presentedRoute == nil)
+    #expect(store.state.navigation.workbench.presentationStyle == nil)
+}
+
+@MainActor
+@Test func reviewModalCanDismissBackToWorkbench() {
+    let initial = AppState(
+        navigation: AppNavigationState(
+            workbench: NavigationState(
+                presentedRoute: .review(sessionID: "review-active"),
+                presentationStyle: .fullScreenCover
+            )
+        )
+    )
+    let store = AppStoreFactory.make(initialState: initial)
+
+    store.dispatch(.navigation(.workbench(.dismiss)))
+
+    #expect(store.state.navigation.workbench.presentedRoute == nil)
+    #expect(store.state.navigation.workbench.presentationStyle == nil)
 }
