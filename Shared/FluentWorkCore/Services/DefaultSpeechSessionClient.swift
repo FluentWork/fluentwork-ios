@@ -118,10 +118,14 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
 
     private func ensureAccessToken(deviceID: String) async throws -> String {
         if let existing = try tokens.accessToken(), !existing.isEmpty {
+            print("[🔑 Token] Using cached token: \(existing.prefix(20))...")
             return existing
         }
+        print("[🔑 Token] No cached token, issuing guest for deviceID: \(deviceID)")
         let issued = try await api.issueGuest(deviceID: deviceID)
+        print("[🔑 Token] Received new token: \(issued.accessToken.prefix(20))...")
         try tokens.save(tokens: issued, deviceID: deviceID)
+        print("[🔑 Token] Saved token to keychain")
         return issued.accessToken
     }
 

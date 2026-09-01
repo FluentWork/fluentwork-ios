@@ -497,6 +497,23 @@ struct HostRootView: View {
                     }
                 }
                 .buttonStyle(.bordered)
+
+                Button("🗑️ Clear Token (Dev)") {
+                    Task {
+                        do {
+                            let storage = KeychainSecureStorage()
+                            let tokens = SecureAuthTokenStore(
+                                storage: storage,
+                                idGenerator: SystemIDGenerator()
+                            )
+                            try tokens.clear()
+                            print("[🔑 Token] Cleared all tokens from Keychain")
+                        } catch {
+                            print("[🔑 Token] Failed to clear: \(error)")
+                        }
+                    }
+                }
+                .foregroundStyle(.red)
             }
 
             Section("Corpus") {

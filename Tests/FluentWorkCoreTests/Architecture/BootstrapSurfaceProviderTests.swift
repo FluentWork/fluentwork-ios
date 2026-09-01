@@ -20,7 +20,9 @@ struct BootstrapSurfaceProviderTests {
         container.bootstrapClient.register {
             ResolverBackedBootstrapClient(
                 resolver: FeatureFlagResolverFactory.makeFirstWaveResolver(),
-                preferredSurfaceProvider: container.preferredSurfaceProvider()
+                preferredSurfaceProvider: container.preferredSurfaceProvider(),
+                sessionAPI: container.sessionAPIClient(),
+                tokenStore: container.authTokenStore()
             )
         }
         return container
@@ -75,7 +77,9 @@ struct BootstrapSurfaceProviderTests {
         container.bootstrapClient.register {
             ResolverBackedBootstrapClient(
                 resolver: FeatureFlagResolverFactory.makeFirstWaveResolver(),
-                preferredSurfaceProvider: container.preferredSurfaceProvider()
+                preferredSurfaceProvider: container.preferredSurfaceProvider(),
+                sessionAPI: container.sessionAPIClient(),
+                tokenStore: container.authTokenStore()
             )
         }
         

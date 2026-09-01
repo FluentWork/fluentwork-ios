@@ -63,6 +63,10 @@ struct AudioPlaybackGate: Sendable {
     }
 }
 
+public enum AudioEngineError: Error {
+    case invalidFormat(String)
+}
+
 public actor LiveAudioEngine: AudioEngineProtocol {
     private final class ConversionConsumptionState: @unchecked Sendable {
         var consumed = false
@@ -122,8 +126,19 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     public func startCapture() async throws {
         try configureAudioSessionIfNeeded()
 
+        // Start engine first to ensure inputFormat is valid
+        if !engine.isRunning {
+            try engine.start()
+        }
+
         let inputNode = engine.inputNode
         let inputFormat = inputNode.inputFormat(forBus: 0)
+        
+        // Validate format
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw AudioEngineError.invalidFormat("Invalid input format: \(inputFormat.sampleRate) Hz, \(inputFormat.channelCount) ch")
+        }
+        
         let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat)
         let hadInstalledTap = hasInstalledTap
         self.sourceFormat = inputFormat
@@ -143,10 +158,6 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             }
         }
         hasInstalledTap = true
-
-        if !engine.isRunning {
-            try engine.start()
-        }
     }
 
     public func stopCapture() async {

@@ -118,25 +118,50 @@ public struct StaticBootstrapClient: BootstrapClientProtocol {
 }
 
 /// Loads flags via TGFeatureFlag `FeatureFlagResolver`, then maps into Redux domain snapshot.
+/// Also ensures a valid guest token exists before bootstrap completes.
 public struct ResolverBackedBootstrapClient: BootstrapClientProtocol {
     public let resolver: FeatureFlagResolver
     public let preferredSurfaceProvider: @Sendable () -> WorkspaceSurface
+    public let sessionAPI: SessionAPIClientProtocol
+    public let tokenStore: AuthTokenStoreProtocol
 
     public init(
         resolver: FeatureFlagResolver = FeatureFlagResolverFactory.makeFirstWaveResolver(),
-        preferredSurfaceProvider: @escaping @Sendable () -> WorkspaceSurface = { .speakingRoom }
+        preferredSurfaceProvider: @escaping @Sendable () -> WorkspaceSurface = { .speakingRoom },
+        sessionAPI: SessionAPIClientProtocol,
+        tokenStore: AuthTokenStoreProtocol
     ) {
         self.resolver = resolver
         self.preferredSurfaceProvider = preferredSurfaceProvider
+        self.sessionAPI = sessionAPI
+        self.tokenStore = tokenStore
     }
 
     public func loadBootstrap() async throws -> BootstrapSnapshot {
+        // Ensure guest token exists before proceeding
+        try await ensureGuestToken()
+        
         _ = await resolver.refresh()
         let remote = resolver.snapshot(for: AppFeatureFlag.allCases)
         return BootstrapSnapshot(
             featureFlags: FeatureFlagSnapshotMapper.map(remote),
             preferredSurface: preferredSurfaceProvider()
         )
+    }
+    
+    /// Ensures a valid guest token exists in the token store.
+    /// If no token exists, issues a new guest token from the backend.
+    private func ensureGuestToken() async throws {
+        // Check if we already have a valid access token
+        if let existingToken = try tokenStore.accessToken(), !existingToken.isEmpty {
+            // Token exists, bootstrap can proceed
+            return
+        }
+        
+        // No token exists, issue a new guest token
+        let deviceID = try tokenStore.deviceID()
+        let tokenResponse = try await sessionAPI.issueGuest(deviceID: deviceID)
+        try tokenStore.save(tokens: tokenResponse, deviceID: deviceID)
     }
 }
 
@@ -212,7 +237,9 @@ public extension Container {
         self {
             ResolverBackedBootstrapClient(
                 resolver: self.featureFlagResolver(),
-                preferredSurfaceProvider: self.preferredSurfaceProvider()
+                preferredSurfaceProvider: self.preferredSurfaceProvider(),
+                sessionAPI: self.sessionAPIClient(),
+                tokenStore: self.authTokenStore()
             )
         }.singleton
     }

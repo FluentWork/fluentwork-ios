@@ -26,7 +26,7 @@ public actor InMemorySocketTransport: SocketTransportProtocol {
 
         continuation.yield(.stateChanged(.connecting))
         continuation.yield(
-            .control(.handshake(ticket: ticket, sessionID: sessionID))
+            .control(.auth(ticket: ticket))
         )
         continuation.yield(.stateChanged(.connected))
     }
