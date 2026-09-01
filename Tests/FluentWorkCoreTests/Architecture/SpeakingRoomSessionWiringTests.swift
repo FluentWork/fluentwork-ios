@@ -435,7 +435,7 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
     // The schema-aligned observability event should carry the same
     // `turn_id` the boundary frame sent, plus `source=ios` so backend
     // and iOS can correlate one turn end-to-end.
-    let events = await tracker.events
+    let events = tracker.events
     let turnEnded = events.first(where: { $0.name == "speech_turn_ended" })
     #expect(turnEnded?.properties["turn_id"] == "turn-1")
     #expect(turnEnded?.properties["source"] == "ios")
