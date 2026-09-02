@@ -19,7 +19,7 @@ struct AudioSpeechActivityTracker: Sendable {
 
     init(
         speechThreshold: Float = 0.015,
-        silenceHold: Duration = .milliseconds(350)
+        silenceHold: Duration = .milliseconds(1500)
     ) {
         self.speechThreshold = speechThreshold
         self.silenceHold = silenceHold
