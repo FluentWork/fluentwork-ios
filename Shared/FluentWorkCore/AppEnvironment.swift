@@ -36,8 +36,10 @@ public struct AppEnvironment: Equatable, Sendable {
     /// - Override with custom IP: `AppEnvironment.local(host: "192.168.1.100")`
     public static let local = AppEnvironment(
         kind: .local,
-        apiBaseURL: URL(string: "http://127.0.0.1:8080/api/v1")!,
-        wssBaseURL: URL(string: "ws://127.0.0.1:8081/v1/voice")!,
+//        apiBaseURL: URL(string: "http://127.0.0.1:8080/api/v1")!,
+//        wssBaseURL: URL(string: "ws://127.0.0.1:8081/v1/voice")!,
+        apiBaseURL: URL(string: "http://192.168.2.15:8080/api/v1")!,
+        wssBaseURL: URL(string: "ws://192.168.2.15:8081/v1/voice")!,
         minimumLogLevelIsDebug: true
     )
     
@@ -53,7 +55,25 @@ public struct AppEnvironment: Equatable, Sendable {
         )
     }
 
+    /// Test-only local environment using TEST_LOCAL_HOST or 127.0.0.1 fallback.
+    /// Does not affect production `.local` configuration.
     #if DEBUG
+    public static let testLocal = AppEnvironment(
+        kind: .local,
+        apiBaseURL: URL(string: "http://\(testLocalHost ?? "127.0.0.1"):8080/api/v1")!,
+        wssBaseURL: URL(string: "ws://\(testLocalHost ?? "127.0.0.1"):8081/v1/voice")!,
+        minimumLogLevelIsDebug: true
+    )
+    #endif
+
+    #if DEBUG
+    // MARK: - Test Override
+    // Set TEST_LOCAL_HOST environment variable to override .local host for unit tests.
+    // This keeps test expectations independent of actual development machine IP.
+    private static let testLocalHost: String? = {
+        ProcessInfo.processInfo.environment["TEST_LOCAL_HOST"]
+    }()
+
     // MARK: - Current Environment Override
     // Three ways to configure for physical device testing:
     //

@@ -260,8 +260,9 @@ import TGReduxKitTesting
 }
 
 @Test func appEnvironmentLocalPointsAtLoopback() {
-    #expect(AppEnvironment.local.apiBaseURL.host == "127.0.0.1")
-    #expect(AppEnvironment.local.wssBaseURL.scheme == "ws")
+    // Use testLocal which defaults to 127.0.0.1 (configurable via TEST_LOCAL_HOST)
+    #expect(AppEnvironment.testLocal.apiBaseURL.host == "127.0.0.1")
+    #expect(AppEnvironment.testLocal.wssBaseURL.scheme == "ws")
 }
 
 @Test func designTokensExposeDarkDefaultPalette() {
