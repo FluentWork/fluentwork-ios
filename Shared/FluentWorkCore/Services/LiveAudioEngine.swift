@@ -146,30 +146,39 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
         try configureAudioSessionIfNeeded()
 
-        // Start engine first to ensure inputFormat is valid
-        if !engine.isRunning {
-            try engine.start()
-        }
-
+        // Access inputNode FIRST so the audio graph has at least one node
+        // attached before `engine.start()`. On devices without an audio input
+        // (e.g., iOS simulator without host audio, Mac Catalyst without mic),
+        // starting without an attached node asserts:
+        //   `inputNode != nullptr || outputNode != nullptr`
+        // and crashes the app. Querying the input format forces lazy node
+        // creation; only then do we attempt to start.
         let inputNode = engine.inputNode
         let inputFormat = inputNode.inputFormat(forBus: 0)
-        
-        // Validate format
+
+        // Validate format before starting — empty formats mean no usable
+        // input device, which we surface as a recoverable error instead of
+        // letting AVAudioEngine's internal precondition fire.
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
-            throw AudioEngineError.invalidFormat("Invalid input format: \(inputFormat.sampleRate) Hz, \(inputFormat.channelCount) ch")
+            throw AudioEngineError.invalidFormat(
+                "No usable audio input (sampleRate=\(inputFormat.sampleRate), channels=\(inputFormat.channelCount)). Check microphone permission or device audio input."
+            )
         }
-        
-        let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat)
+
+        // Install tap BEFORE startCapture calls engine.start(). The tap must
+        // be in place when the engine comes online, otherwise the first audio
+        // buffers are lost and the speaking-room UI never sees `.speechStarted`.
         let hadInstalledTap = hasInstalledTap
+        if hadInstalledTap {
+            inputNode.removeTap(onBus: 0)
+        }
+
+        let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat)
         self.sourceFormat = inputFormat
         self.converter = converter
         self.speechTracker = AudioSpeechActivityTracker()
         self.playbackGate.reset()
         self.hasInstalledTap = false
-
-        if hadInstalledTap {
-            inputNode.removeTap(onBus: 0)
-        }
 
         inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak self] buffer, _ in
             guard let self else { return }
@@ -178,6 +187,23 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             }
         }
         hasInstalledTap = true
+
+        if !engine.isRunning {
+            do {
+                try engine.start()
+            } catch {
+                // If start fails (e.g., another app holds the audio session),
+                // tear down the tap we just installed so a retry from a clean
+                // state doesn't trip the "tap already installed" precondition.
+                if hasInstalledTap {
+                    inputNode.removeTap(onBus: 0)
+                    hasInstalledTap = false
+                }
+                throw AudioEngineError.audioSessionConflict(
+                    "Audio engine failed to start: \(error.localizedDescription)"
+                )
+            }
+        }
     }
 
     public func stopCapture() async {
@@ -201,9 +227,14 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         playbackGate.reset()
         lastInterruptRequestedAt = nil
 
-        #if os(iOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
-        #endif
+        // NOTE: Do NOT deactivate the audio session here.
+        // Deactivating while AI audio is still playing (during aiSpeaking→waitingUser
+        // transitions) uninitializes the AVAudioEngine internal graph, causing:
+        //   `required condition is false: inputNode != nullptr || outputNode != nullptr`
+        // on the next engine.start() or any node access.
+        // The session stays active across the full speaking-room session; it is
+        // only deactivated when the app explicitly ends the session or moves to
+        // background (handled by AppDelegate scene phase changes).
     }
 
     nonisolated public func events() -> AsyncStream<AudioEngineEvent> {
