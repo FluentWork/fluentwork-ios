@@ -44,17 +44,29 @@ public final class AppleSpeechClientASRTranscriber: ClientASRTranscriber {
         guard let recognizer = recognizer else {
             throw ClientASRError.notAvailable
         }
-        
+
         guard recognizer.isAvailable else {
             throw ClientASRError.notAvailable
         }
-        
-        // Check authorization
-        let authStatus = SFSpeechRecognizer.authorizationStatus()
+
+        // Check and request authorization.
+        // authorizationStatus() returns .notDetermined on first launch; we must
+        // call requestAuthorization() to trigger the system prompt. Without this,
+        // every user gets .authorizationDenied on first use without any permission dialog.
+        let authStatus: SFSpeechRecognizerAuthorizationStatus
+        if #available(iOS 13, *) {
+            authStatus = await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization { status in
+                    continuation.resume(returning: status)
+                }
+            }
+        } else {
+            authStatus = .authorized
+        }
         guard authStatus == .authorized else {
             throw ClientASRError.authorizationDenied
         }
-        
+
         // Create recognition request
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = false // Only want final result
@@ -62,7 +74,7 @@ public final class AppleSpeechClientASRTranscriber: ClientASRTranscriber {
         if #available(iOS 13.0, *) {
             request.requiresOnDeviceRecognition = true // Force on-device
         }
-        
+
         // Create task
         return try await withCheckedThrowingContinuation { [logger] continuation in
             var resumed = false

@@ -44,6 +44,7 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIBackgroundModes: audio
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "FluentWork 需要使用麦克风进行语音交互和口语练习"
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "FluentWork 需要使用语音识别来实时转录您的口语练习内容"
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         SWIFT_VERSION: 6.0
