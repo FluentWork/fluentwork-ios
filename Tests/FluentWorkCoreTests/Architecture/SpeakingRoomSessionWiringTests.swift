@@ -481,7 +481,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     let turnEnded = events.first(where: { $0.name == "speech_turn_ended" })
     #expect(turnEnded?.properties["turn_id"] == "turn-1")
     #expect(turnEnded?.properties["source"] == "ios")
-    #expect(turnEnded?.properties["stage"] == "asr")
+    #expect(turnEnded?.properties["stage"] == "turn_boundary")
 }
 
 @MainActor

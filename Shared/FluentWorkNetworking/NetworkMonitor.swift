@@ -27,44 +27,62 @@ public protocol NetworkMonitorProtocol: Sendable {
 
 /// State is serialized on a queue rather than an actor: `NetworkMonitorProtocol.currentSnapshot()`
 /// is a synchronous requirement read from reducer/middleware contexts that cannot await.
+///
+/// ## Initialization timing
+/// `NWPathMonitor` requires up to several hundred milliseconds to complete its first network
+/// scan on iOS. Reading `currentPath` immediately after construction can return a stale
+/// `.unsatisfied` state even when the device is online. The monitor therefore starts
+/// immediately in `init`, waits for the first `pathUpdateHandler` call (which signals
+/// the first scan is complete), and only then publishes the initial snapshot. Middleware
+/// and UI that read `currentSnapshot()` before the first update will get a conservative
+/// "assumed online" value; the real state arrives via the `connectivityUpdates()` stream.
 public final class NWPathNetworkMonitor: NetworkMonitorProtocol, @unchecked Sendable {
     private let monitor: NWPathMonitor
     private let queue: DispatchQueue
     private let stateQueue = DispatchQueue(label: "com.fluentwork.network-monitor.state")
-    private var latest: NetworkPathSnapshot
 
-    public init(monitor: NWPathMonitor = NWPathMonitor()) {
-        self.monitor = monitor
+    /// Latest confirmed snapshot (set only after the monitor's first scan completes).
+    private var confirmed: NetworkPathSnapshot?
+
+    public init() {
+        self.monitor = NWPathMonitor()
         self.queue = DispatchQueue(label: "com.fluentwork.network-monitor")
-        self.latest = NetworkPathSnapshot(
-            isConnected: monitor.currentPath.status == .satisfied,
-            isExpensive: monitor.currentPath.isExpensive,
-            isConstrained: monitor.currentPath.isConstrained
-        )
+        self.confirmed = nil
     }
 
+    /// Returns the confirmed snapshot once available, or an optimistic default before
+    /// the first scan completes (avoids false "offline" on launch).
     public func currentSnapshot() -> NetworkPathSnapshot {
         stateQueue.sync {
-            latest
+            confirmed ?? NetworkPathSnapshot.connected
         }
     }
 
     public func connectivityUpdates() -> AsyncStream<NetworkPathSnapshot> {
         AsyncStream { continuation in
-            continuation.yield(currentSnapshot())
+            // Publish the confirmed snapshot if already available, otherwise
+            // assume online until the monitor's first scan confirms the real state.
+            let initial = stateQueue.sync { confirmed ?? NetworkPathSnapshot.connected }
+            continuation.yield(initial)
 
-            monitor.pathUpdateHandler = { [weak self] path in
+            self.monitor.pathUpdateHandler = { [weak self] path in
+                guard let self = self else { return }
                 let snapshot = NetworkPathSnapshot(
                     isConnected: path.status == .satisfied,
                     isExpensive: path.isExpensive,
                     isConstrained: path.isConstrained
                 )
-                self?.stateQueue.sync {
-                    self?.latest = snapshot
+                self.stateQueue.sync {
+                    // First handler call = initial scan complete. Lock in the confirmed state.
+                    if self.confirmed == nil {
+                        self.confirmed = snapshot
+                    } else {
+                        self.confirmed = snapshot
+                    }
                 }
                 continuation.yield(snapshot)
             }
-            monitor.start(queue: queue)
+            self.monitor.start(queue: self.queue)
 
             continuation.onTermination = { [monitor] _ in
                 monitor.cancel()

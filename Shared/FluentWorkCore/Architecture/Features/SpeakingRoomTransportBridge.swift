@@ -23,6 +23,8 @@ extension SpeakingRoomAction {
             self = .session(.failed(message))
         case .networkLost:
             self = .session(.networkLost)
+        case let .serverASRReceived(text, turnID):
+            self = .serverASRReceived(text: text, turnID: turnID)
         }
     }
 }

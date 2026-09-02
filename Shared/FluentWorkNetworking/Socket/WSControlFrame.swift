@@ -21,6 +21,10 @@ public enum WSControlFrame: Equatable, Sendable {
     case sessionStart(SessionStartPayload)
     case userSpeechStart
     case userSpeechEnd(text: String?, turnID: String?)
+    /// B14: server → client ASR transcription relayed from the voice provider
+    /// (e.g., Volcengine Duplex). This is the authoritative transcript for the
+    /// current user turn, consistent with what the AI model heard.
+    case clientASRTranscription(text: String, turnID: String?)
     case aiTextDelta(text: String)
     case aiAudioChunk(sequence: UInt32)
     case aiTurnEnd(turnID: String?)
@@ -112,6 +116,12 @@ extension WSControlFrame: Codable {
                 turnID: try container.decodeIfPresent(String.self, forKey: .turnID)
             )
 
+        case "client.asr.transcription":
+            self = .clientASRTranscription(
+                text: try container.decode(String.self, forKey: .text),
+                turnID: try container.decodeIfPresent(String.self, forKey: .turnID)
+            )
+
         case "ai.text.delta":
             self = .aiTextDelta(text: try container.decode(String.self, forKey: .text))
 
@@ -169,6 +179,11 @@ extension WSControlFrame: Codable {
         case let .userSpeechEnd(text, turnID):
             try container.encode("user.speech.end", forKey: .type)
             try container.encodeIfPresent(text, forKey: .text)
+            try container.encodeIfPresent(turnID, forKey: .turnID)
+
+        case let .clientASRTranscription(text, turnID):
+            try container.encode("client.asr.transcription", forKey: .type)
+            try container.encode(text, forKey: .text)
             try container.encodeIfPresent(turnID, forKey: .turnID)
 
         case let .aiTextDelta(text):

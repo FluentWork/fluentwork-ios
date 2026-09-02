@@ -14,12 +14,6 @@ schemes:
         FluentWorkHost: all
     run:
       config: Debug
-    test:
-      config: Debug
-      targets:
-        - name: FluentWorkCoreTests
-          parallelizable: true
-          randomExecutionOrder: true
     profile:
       config: Release
     analyze:

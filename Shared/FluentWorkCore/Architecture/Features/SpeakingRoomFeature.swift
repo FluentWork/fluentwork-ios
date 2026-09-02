@@ -64,6 +64,11 @@ public enum SpeakingRoomAction: Equatable, Sendable, Action {
     case bootstrapReady(Bool)
     /// Local transcript overlay text; does not drive the session phase machine.
     case userSpeechCaptured(String)
+    /// B14: Server-side ASR transcript received via WSS relay from the voice provider.
+    /// When this arrives, the middleware immediately calls `sendSpeechBoundary`
+    /// with the authoritative server text (for badge hit detection) and dispatches
+    /// this action so the reducer updates `liveTranscript` for display.
+    case serverASRReceived(text: String, turnID: String?)
 }
 
 public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> = { state, action in
@@ -91,5 +96,8 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
 
     case let .userSpeechCaptured(transcript):
         state.liveTranscript = transcript
+
+    case let .serverASRReceived(text, _):
+        state.liveTranscript = text
     }
 }

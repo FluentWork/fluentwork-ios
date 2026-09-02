@@ -24,6 +24,12 @@ public enum SocketTransportEventMapper {
                 turnID: nil
             )
 
+        /// B14: Volcengine Duplex ASR transcript relayed from the backend.
+        /// Consumed by SpeechSessionMiddleware to populate the server-side
+        /// transcription for this turn, bypassing the local Apple Speech path.
+        case let .control(.clientASRTranscription(text, turnID)):
+            return .serverASRReceived(text: text, turnID: turnID)
+
         case .failure(.pingTimedOut), .stateChanged(.disconnected):
             return .networkLost
 
@@ -45,6 +51,8 @@ public enum SpeakingRoomTransportAction: Equatable, Sendable {
         tier: FeedbackBadgeTier?,
         turnID: String?
     )
+    /// B14: Server-side ASR transcription received via WSS relay from Volcengine Duplex.
+    case serverASRReceived(text: String, turnID: String?)
     case failed(String)
     case networkLost
 }

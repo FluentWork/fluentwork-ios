@@ -445,9 +445,14 @@ public extension Container {
 
     var clientASRTranscriber: Factory<ClientASRTranscriber> {
         self {
-            // B13: Default to Apple Speech (iOS 13+) for production
-            // Debug builds can override via `container.clientASRTranscriber.register { RawClientASRTranscriber() }`
-            AppleSpeechClientASRTranscriber()
+            // B13/B14: Default to server-relay ASR from the voice gateway (Volcengine Duplex).
+            // The authoritative transcript arrives via WSS `client.asr.transcription` frame
+            // and is dispatched directly to the store — this transcriber is a no-op.
+            //
+            // To run local Apple Speech instead (e.g., in environments where the voice
+            // gateway does not have Volcengine credentials):
+            //   container.clientASRTranscriber.register { AppleSpeechClientASRTranscriber() }
+            ServerRelayASRTranscriber()
         }.singleton
     }
 }

@@ -54,7 +54,9 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
 /// end-of-utterance boundary (`vadSpeechEnd` / `holdEnd`). Other events
 /// return `nil`; the rule lives here so the wire format and the
 /// `userTurnCount` increment in the machine stay in lockstep.
-private func pendingTurnID(
+/// - Note: `internal` for unit testing - remove `internal` qualifier in production
+///   if test coupling is a concern.
+internal func pendingTurnID(
     for event: SpeechSessionEvent,
     currentCount: Int
 ) -> String? {
@@ -75,7 +77,9 @@ private func pendingTurnID(
 /// `Sendable` `.task` block. Apple `OSAllocatedUnfairLock` (iOS 16+) is
 /// the modern, allocation-safe replacement for `NSLock` here — same
 /// correctness, less footgun, no Foundation `import NSLock` style code.
-private final class TurnCountBox: Sendable {
+/// - Note: `internal` for unit testing - remove `internal` qualifier in production
+///   if test coupling is a concern.
+internal final class TurnCountBox: @unchecked Sendable {
     private let storage = OSAllocatedUnfairLock<Int>(initialState: 0)
 
     func get() -> Int { storage.withLock { $0 } }
@@ -92,7 +96,6 @@ private func interpretSpeechSessionSideEffect(
     let audioEngine = container.audioEngine()
     let speechClient = container.speechSessionClient()
     let tracker = container.tracker()
-    let clientASRTranscriber = container.clientASRTranscriber()
     let dispatchBox = MainActorActionBox(dispatch: dispatch)
 
     switch effect {
@@ -118,6 +121,37 @@ private func interpretSpeechSessionSideEffect(
                 for await event in speechClient.transportEvents() {
                     if Task.isCancelled { return nil }
 
+                    // B14 debug: log all incoming transport control events to diagnose
+                    // missing feedback.badge frames. Remove after root cause is confirmed.
+                    #if DEBUG
+                    if case let .control(frame) = event {
+                        let typeTag: String
+                        switch frame {
+                        case .feedbackBadge:  typeTag = "feedback.badge"
+                        case .userSpeechStart: typeTag = "user.speech.start"
+                        case .userSpeechEnd:   typeTag = "user.speech.end"
+                        case .aiTurnEnd:      typeTag = "ai.turn.end"
+                        case .clientASRTranscription: typeTag = "client.asr.transcription"
+                        case .sessionReady:    typeTag = "session.ready"
+                        case .sessionStart:   typeTag = "session.start"
+                        case .aiTextDelta:    typeTag = "ai.text.delta"
+                        case .aiAudioChunk:   typeTag = "ai.audio.chunk"
+                        case .interrupt:       typeTag = "interrupt"
+                        case .sessionEnd:      typeTag = "session.end"
+                        case .auth, .handshake: typeTag = "<auth/handshake>"
+                        }
+                        tracker.track(event: "transport_rx", properties: [
+                            "frame_type": typeTag,
+                            "badge_count": {
+                                if case let .feedbackBadge(b, _, t) = frame {
+                                    return "badge=\(b) tier=\(t?.rawValue ?? "nil")"
+                                }
+                                return "n/a"
+                            }(),
+                        ])
+                    }
+                    #endif
+
                     switch event {
                     case let .audio(frame):
                         await dispatchBox.dispatch(.speakingRoom(.session(.aiFirstAudioChunk)))
@@ -125,6 +159,20 @@ private func interpretSpeechSessionSideEffect(
 
                     case .control(.aiTurnEnd(turnID: _)):
                         await dispatchBox.dispatch(.speakingRoom(.session(.aiTurnEnd)))
+
+                    case let .control(.clientASRTranscription(text, turnID)):
+                        await dispatchBox.dispatch(.speakingRoom(.session(.serverASRReceived(text: text, turnID: turnID))))
+                        // B14: Immediately call sendSpeechBoundary so the backend gets
+                        // the confirmed server-side text for badge hit detection.
+                        do {
+                            try await speechClient.sendSpeechBoundary(
+                                started: false,
+                                turnID: turnID,
+                                text: text
+                            )
+                        } catch {
+                            await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
+                        }
 
                     default:
                         guard let mapped = SocketTransportEventMapper.speakingRoomAction(for: event),
@@ -169,39 +217,24 @@ private func interpretSpeechSessionSideEffect(
                         do {
                             isCapturingSpeech = false
                             
-                            // `turnCounter` is updated by the session event
-                            // handler *after* every reduce, so by the time
-                            // `.speechEnded` arrives the box already holds
-                            // the post-`.vadSpeechStart` count (which
-                            // matches the count BEFORE the just-finished
-                            // turn's increment). The turn we just finished
-                            // is therefore `count + 1`.
+                            // B14 change: Server-side ASR (Volcengine Duplex relay) now provides
+                            // the authoritative transcript via WSS `client.asr.transcription` frame.
+                            // We no longer run local Apple Speech ASR here.
+                            // We still signal turn-end so the backend can track the turn boundary.
+                            // The backend will use its own Doubao transcript for badge detection.
                             let turnID = "turn-\(turnCounter.get() + 1)"
-                            
-                            // B13: Attempt client-side ASR transcription with buffered PCM
-                            let clientASRText = await transcribeWithClientASR(
-                                transcriber: clientASRTranscriber,
-                                tracker: tracker,
-                                turnID: turnID,
-                                pcmChunks: pcmBuffer
-                            )
-                            
-                            // Display the transcribed text in the UI
-                            if let text = clientASRText, !text.isEmpty {
-                                await dispatchBox.dispatch(.speakingRoom(.userSpeechCaptured(text)))
-                            }
                             
                             try await speechClient.sendSpeechBoundary(
                                 started: false,
                                 turnID: turnID,
-                                text: clientASRText
+                                text: nil
                             )
                             tracker.track(
                                 event: "speech_turn_ended",
                                 properties: [
                                     "turn_id": turnID,
                                     "source": "ios",
-                                    "stage": "asr",
+                                    "stage": "turn_boundary",
                                 ]
                             )
                             await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechEnd(turnID: turnID))))
@@ -296,126 +329,5 @@ private final class MainActorActionBox: @unchecked Sendable {
 
     func dispatch(_ action: AppAction) async {
         await dispatch(action)
-    }
-}
-
-/// B13: Attempt client-side ASR transcription with 800ms timeout.
-/// Returns transcribed text on success, nil on failure/timeout (falls back to server-side ASR).
-private func transcribeWithClientASR(
-    transcriber: ClientASRTranscriber,
-    tracker: TrackerClientProtocol,
-    turnID: String,
-    pcmChunks: [Data]
-) async -> String? {
-    // Create a stream from buffered PCM chunks
-    let pcmStream = AsyncStream<Data> { continuation in
-        for chunk in pcmChunks {
-            continuation.yield(chunk)
-        }
-        continuation.finish()
-    }
-    
-    let startTime = ContinuousClock.now
-    
-    do {
-        // 800ms timeout as per B13 spec
-        let text = try await withThrowingTaskGroup(of: String?.self) { group in
-            group.addTask {
-                try await transcriber.transcribe(pcm: pcmStream)
-            }
-            
-            group.addTask {
-                try await Task.sleep(for: .milliseconds(800))
-                return nil // Timeout sentinel
-            }
-            
-            guard let result = try await group.next() else {
-                throw ClientASRError.notAvailable
-            }
-            
-            group.cancelAll()
-            
-            if let text = result {
-                return text
-            } else {
-                // Timeout occurred
-                throw ClientASRError.notAvailable
-            }
-        }
-        
-        let elapsed = ContinuousClock.now - startTime
-        let elapsedMs = Int(elapsed.components.seconds * 1000 + Int64(elapsed.components.attoseconds) / 1_000_000_000_000_000)
-        
-        if text.isEmpty {
-            // Empty result treated as skip
-            tracker.track(
-                event: "speech_client_asr_skipped",
-                properties: [
-                    "turn_id": turnID,
-                    "reason": "empty_result",
-                    "source": "ios",
-                ]
-            )
-            return nil
-        }
-        
-        tracker.track(
-            event: "speech_client_asr_completed",
-            properties: [
-                "turn_id": turnID,
-                "elapsed_ms": "\(elapsedMs)",
-                "text_length": "\(text.count)",
-                "source": "ios",
-            ]
-        )
-        
-        return text
-        
-    } catch is CancellationError {
-        tracker.track(
-            event: "speech_client_asr_skipped",
-            properties: [
-                "turn_id": turnID,
-                "reason": "timeout",
-                "source": "ios",
-            ]
-        )
-        return nil
-        
-    } catch let error as ClientASRError {
-        let reason: String
-        switch error {
-        case .notAvailable:
-            reason = "not_available"
-        case .timeout:
-            reason = "timeout"
-        case .authorizationDenied:
-            reason = "authorization_denied"
-        case .unsupportedFormat:
-            reason = "unsupported_format"
-        case .engineError:
-            reason = "engine_error"
-        }
-        
-        tracker.track(
-            event: "speech_client_asr_failed",
-            properties: [
-                "turn_id": turnID,
-                "error_code": reason,
-                "source": "ios",
-            ]
-        )
-        return nil
-        
-    } catch {
-        tracker.track(
-            event: "speech_client_asr_failed",
-            properties: [
-                "turn_id": turnID,
-                "error_code": "unknown",
-                "source": "ios",
-            ]
-        )
-        return nil
     }
 }

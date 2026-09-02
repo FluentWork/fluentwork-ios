@@ -36,13 +36,11 @@ public struct AppEnvironment: Equatable, Sendable {
     /// - Override with custom IP: `AppEnvironment.local(host: "192.168.1.100")`
     public static let local = AppEnvironment(
         kind: .local,
-//        apiBaseURL: URL(string: "http://127.0.0.1:8080/api/v1")!,
-//        wssBaseURL: URL(string: "ws://127.0.0.1:8081/v1/voice")!,
         apiBaseURL: URL(string: "http://192.168.2.15:8080/api/v1")!,
         wssBaseURL: URL(string: "ws://192.168.2.15:8081/v1/voice")!,
         minimumLogLevelIsDebug: true
     )
-    
+
     /// Create a local environment with custom host IP
     /// - Parameter host: The local machine's IP address (e.g., "192.168.2.15")
     /// - Returns: AppEnvironment configured for the specified host
