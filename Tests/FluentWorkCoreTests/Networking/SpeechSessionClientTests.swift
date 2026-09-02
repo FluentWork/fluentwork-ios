@@ -63,6 +63,35 @@ private actor FailingSessionStartTransport: SocketTransportProtocol {
     #expect(try store.deviceID() == deviceUUID.uuidString)
 }
 
+private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @unchecked Sendable {
+    private let deviceIDValue: String
+    private(set) var savedTokenResponse: TokenResponse?
+    var seededAccessToken: AuthToken?
+
+    init(deviceID: String, seededAccessToken: AuthToken? = nil) {
+        self.deviceIDValue = deviceID
+        self.seededAccessToken = seededAccessToken
+    }
+
+    func deviceID() throws -> String { deviceIDValue }
+    func accessToken() throws -> String? { seededAccessToken?.value }
+    func save(tokens: TokenResponse, deviceID: String) throws {
+        savedTokenResponse = tokens
+        seededAccessToken = AuthToken(
+            value: tokens.accessToken,
+            expiresAt: Date().addingTimeInterval(TimeInterval(tokens.expiresIn))
+        )
+    }
+    func clear() throws {
+        seededAccessToken = nil
+        savedTokenResponse = nil
+    }
+    func userID() throws -> String? { nil }
+    func isGuest() throws -> Bool { true }
+    func loadAccessToken() throws -> AuthToken? { seededAccessToken }
+    func saveAccessToken(_ token: AuthToken) throws { seededAccessToken = token }
+}
+
 @MainActor
 @Test func defaultSpeechSessionClientCreatesSessionAndConnectsSocket() async throws {
     Container.shared.reset()
@@ -114,6 +143,53 @@ private actor FailingSessionStartTransport: SocketTransportProtocol {
     #expect(calls[0].ticket == "tik")
     let sentControls = await transport.sentControlFrames
     #expect(sentControls == [.sessionStart(.init(scene: "demo"))])
+}
+
+@MainActor
+@Test func defaultSpeechSessionClientRefreshesExpiringAccessTokenBeforeCreateSession() async throws {
+    let transport = InMemorySocketTransport()
+    let tokenStore = RecordingSpeechSessionTokenStore(
+        deviceID: "expiring-device",
+        seededAccessToken: AuthToken(
+            value: "stale-access",
+            expiresAt: Date().addingTimeInterval(30)
+        )
+    )
+
+    let guestJSON = Data(
+        """
+        {"user_id":"u-refresh","is_guest":true,"status":"active","access_token":"fresh-access","refresh_token":"r","token_type":"Bearer","expires_in":3600}
+        """.utf8
+    )
+    let sessionJSON = Data(
+        """
+        {"session_id":"s-refresh","wss_url":"ws://127.0.0.1:9/ws","ticket":"tik","ticket_expires_in":60,"ticket_expires_at":"2026-08-26T00:00:00Z","scene_type":"demo","status":"created"}
+        """.utf8
+    )
+
+    let api = SessionAPIClient(
+        network: StubNetworkClient { target in
+            switch target.path {
+            case "/auth/guest": return guestJSON
+            case "/sessions": return sessionJSON
+            default:
+                Issue.record("unexpected \(target.path)")
+                return Data()
+            }
+        },
+        baseURL: URL(string: "http://127.0.0.1:8080/api/v1")!
+    )
+
+    let client = DefaultSpeechSessionClient(
+        api: api,
+        tokens: tokenStore,
+        transport: transport
+    )
+
+    try await client.startSession()
+
+    #expect(tokenStore.savedTokenResponse?.accessToken == "fresh-access")
+    #expect(try tokenStore.accessToken() == "fresh-access")
 }
 
 @MainActor

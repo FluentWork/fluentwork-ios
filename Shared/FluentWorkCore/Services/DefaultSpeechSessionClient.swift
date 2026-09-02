@@ -117,11 +117,18 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
     }
 
     private func ensureAccessToken(deviceID: String) async throws -> String {
-        if let existing = try tokens.accessToken(), !existing.isEmpty {
-            print("[🔑 Token] Using cached token: \(existing.prefix(20))...")
-            return existing
+        // Use loadAccessToken which checks expiration; fall back to re-issuing if expired or absent.
+        if let cached = try tokens.loadAccessToken() {
+            let now = Date()
+            let buffer: TimeInterval = 60 // Refresh 60s before actual expiry
+            if cached.expiresAt.timeIntervalSince(now) > buffer {
+                print("[🔑 Token] Using cached token (expires in \(Int(cached.expiresAt.timeIntervalSince(now)))s): \(cached.value.prefix(20))...")
+                return cached.value
+            }
+            print("[🔑 Token] Cached token expired or expiring soon, re-issuing...")
+        } else {
+            print("[🔑 Token] No cached token, issuing guest for deviceID: \(deviceID)")
         }
-        print("[🔑 Token] No cached token, issuing guest for deviceID: \(deviceID)")
         let issued = try await api.issueGuest(deviceID: deviceID)
         print("[🔑 Token] Received new token: \(issued.accessToken.prefix(20))...")
         try tokens.save(tokens: issued, deviceID: deviceID)

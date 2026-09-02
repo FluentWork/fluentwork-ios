@@ -102,6 +102,13 @@ private func interpretSpeechSessionSideEffect(
                 do {
                     try await speechClient.startSession()
                     try await audioEngine.startCapture()
+                } catch let error as AudioEnginePermissionError {
+                    let message: String
+                    switch error {
+                    case .microphoneDenied:
+                        message = "无法访问麦克风，请在系统设置中允许 FluentWork 使用麦克风。"
+                    }
+                    return .speakingRoom(.session(.failed(message)))
                 } catch {
                     return .speakingRoom(.session(.failed(error.localizedDescription)))
                 }

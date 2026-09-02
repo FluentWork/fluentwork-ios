@@ -2,6 +2,15 @@
 import FluentWorkNetworking
 import Foundation
 
+public enum AudioEnginePermissionError: Error {
+    case microphoneDenied
+}
+
+public enum AudioEngineError: Error {
+    case invalidFormat(String)
+    case audioSessionConflict(String)
+}
+
 struct AudioSpeechActivityTracker: Sendable {
     private(set) var isSpeechActive = false
     private(set) var lastSpeechAt: ContinuousClock.Instant?
@@ -63,10 +72,6 @@ struct AudioPlaybackGate: Sendable {
     }
 }
 
-public enum AudioEngineError: Error {
-    case invalidFormat(String)
-}
-
 public actor LiveAudioEngine: AudioEngineProtocol {
     private final class ConversionConsumptionState: @unchecked Sendable {
         var consumed = false
@@ -106,8 +111,14 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     private var lastInterruptRequestedAt: ContinuousClock.Instant?
 
     private let decoder: any WSAudioFrameDecoder
+    private let requestMicrophonePermission: @Sendable () async -> Bool
 
-    public init(decoder: any WSAudioFrameDecoder = RawPCM16FrameDecoder()) {
+    public init(
+        decoder: any WSAudioFrameDecoder = RawPCM16FrameDecoder(),
+        requestMicrophonePermission: @escaping @Sendable () async -> Bool = {
+            await MicrophonePermission.request()
+        }
+    ) {
         let pair = AsyncStream.makeStream(
             of: AudioEngineEvent.self,
             bufferingPolicy: .bufferingNewest(64)
@@ -115,6 +126,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         self.stream = pair.stream
         self.continuation = pair.continuation
         self.decoder = decoder
+        self.requestMicrophonePermission = requestMicrophonePermission
     }
 
     deinit {
@@ -124,6 +136,14 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     }
 
     public func startCapture() async throws {
+        // Request microphone permission before activating audio session.
+        // This prevents "couldn't be completed. error 1" from setActive(true)
+        // when permission hasn't been explicitly granted yet.
+        let granted = await requestMicrophonePermission()
+        guard granted else {
+            throw AudioEnginePermissionError.microphoneDenied
+        }
+
         try configureAudioSessionIfNeeded()
 
         // Start engine first to ensure inputFormat is valid
@@ -338,7 +358,16 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
         try session.setPreferredSampleRate(16_000)
         try session.setPreferredIOBufferDuration(0.02)
-        try session.setActive(true)
+        do {
+            try session.setActive(true)
+        } catch {
+            // Error code 1: operation couldn't be completed — typically another
+            // app holds the audio session. Surface a clear message so the user
+            // knows to close other audio apps.
+            throw AudioEngineError.audioSessionConflict(
+                "Audio session could not be activated. Please close other apps using audio (e.g., music, video) and try again. Underlying error: \(error.localizedDescription)"
+            )
+        }
         #endif
     }
 

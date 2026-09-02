@@ -209,6 +209,22 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
     }
 }
 
+private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecked Sendable {
+    func startCapture() async throws {
+        throw AudioEnginePermissionError.microphoneDenied
+    }
+
+    func events() -> AsyncStream<AudioEngineEvent> {
+        AsyncStream { _ in }
+    }
+
+    func stopCapture() async {}
+
+    func play(frame: WSAudioFrame) async {}
+
+    func interruptNow() async {}
+}
+
 @Test func applySessionConnectingResetsBadgeAndTranscript() throws {
     let initial = AppState(
         speakingRoom: SpeakingRoomState(
@@ -294,6 +310,26 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
     #expect(store.state.speakingRoom.badgeHits == 1)
     #expect(store.state.badgeFeedback.entries.first?.phraseBlockID == "block-1")
     #expect(store.state.badgeFeedback.entries.first?.tier == .badgeOnly) // soft → badgeOnly
+}
+
+@MainActor
+@Test func speechSessionMiddlewareSurfacesMicrophoneDeniedMessage() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = FailingPermissionAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .failed
+    }
+
+    #expect(store.state.speakingRoom.phase == .failed)
+    #expect(store.state.speakingRoom.failureReason == "无法访问麦克风，请在系统设置中允许 FluentWork 使用麦克风。")
 }
 
 @MainActor

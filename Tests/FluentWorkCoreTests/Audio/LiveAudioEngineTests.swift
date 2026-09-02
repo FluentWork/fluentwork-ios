@@ -51,6 +51,18 @@ import Testing
 }
 
 @available(iOS 17, macOS 14, *)
+@Test func liveAudioEngineStartCaptureFailsWhenPermissionDenied() async {
+    let engine = LiveAudioEngine(
+        decoder: RawPCM16FrameDecoder(),
+        requestMicrophonePermission: { false }
+    )
+
+    await #expect(throws: AudioEnginePermissionError.microphoneDenied) {
+        try await engine.startCapture()
+    }
+}
+
+@available(iOS 17, macOS 14, *)
 @Test func liveAudioEnginePlaySurfacesDecodeFailureAsFailedEvent() async {
     let engine = LiveAudioEngine(decoder: ThrowingFrameDecoder())
     let stream = engine.events()
