@@ -43,19 +43,20 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
             )
         } catch let error as APIError {
             // Cached token rejected by backend (e.g., backend JWT secret changed
-            // between environments, or token issued by a different backend).
+            // between environments, or token issued by a different backend,
+            // or DB was reset so cached user_id no longer exists).
             // Clear and reissue a fresh guest token, then retry once.
-            if case .backend(let code, _) = error, code == "unauthorized" || code == "http_401" {
-                try await tokens.clear()
-                let freshToken = try await ensureAccessToken(deviceID: deviceID)
-                created = try await api.createSession(
-                    accessToken: freshToken,
-                    materialID: nil,
-                    sceneType: "demo"
-                )
-            } else {
+            guard case .backend(let code, _) = error, Self.isAuthFailureCode(code) else {
                 throw error
             }
+            print("[🔑 Token] Cached token rejected (\(code)), clearing keychain and reissuing...")
+            try await tokens.clear()
+            let freshToken = try await ensureAccessToken(deviceID: deviceID)
+            created = try await api.createSession(
+                accessToken: freshToken,
+                materialID: nil,
+                sceneType: "demo"
+            )
         }
         guard let wssURL = URL(string: created.wssURL) else {
             throw APIError.backend(
@@ -108,25 +109,28 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
     }
 
     public func sendDegradedTextMessage(_ text: String) async throws -> PostMessageResponse {
-        let accessToken = try await requireAccessToken()
         let sessionID = try await requireActiveSessionID()
-        return try await api.sendSessionMessage(
-            sessionID: sessionID,
-            accessToken: accessToken,
-            text: text,
-            channel: "text"
-        )
+        return try await withAuthRecovery { accessToken in
+            try await api.sendSessionMessage(
+                sessionID: sessionID,
+                accessToken: accessToken,
+                text: text,
+                channel: "text"
+            )
+        }
     }
 
     public func pollReview(sessionID: String) async throws -> ReviewPollResponse {
-        let accessToken = try await requireAccessToken()
-        return try await api.getSessionReview(sessionID: sessionID, accessToken: accessToken)
+        try await withAuthRecovery { accessToken in
+            try await api.getSessionReview(sessionID: sessionID, accessToken: accessToken)
+        }
     }
 
     public func mergeGuestAccount() async throws -> MergeResponse {
         let deviceID = try await tokens.deviceID()
-        let accessToken = try await requireAccessToken()
-        return try await api.mergeGuestAccount(deviceID: deviceID, accessToken: accessToken)
+        return try await withAuthRecovery { accessToken in
+            try await api.mergeGuestAccount(deviceID: deviceID, accessToken: accessToken)
+        }
     }
 
     public func endSession() async {
@@ -167,5 +171,31 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
             )
         }
         return sessionID
+    }
+
+    /// Wraps an authenticated session API call with automatic 401 recovery.
+    /// On UNAUTHENTICATED/http_401, clears the cached token, reissues a fresh
+    /// guest token, and retries once. Without this, a stale token (e.g., from a
+    /// previous DB environment) would surface as "invalid access token" to the UI.
+    private func withAuthRecovery<T>(_ operation: (String) async throws -> T) async throws -> T {
+        let deviceID = try await tokens.deviceID()
+        do {
+            let token = try await ensureAccessToken(deviceID: deviceID)
+            return try await operation(token)
+        } catch let error as APIError {
+            guard case .backend(let code, _) = error,
+                  Self.isAuthFailureCode(code) else {
+                throw error
+            }
+            print("[🔑 Token] Cached token rejected (\(code)), clearing keychain and reissuing...")
+            try await tokens.clear()
+            let freshToken = try await ensureAccessToken(deviceID: deviceID)
+            return try await operation(freshToken)
+        }
+    }
+
+    private static func isAuthFailureCode(_ code: String) -> Bool {
+        code == "UNAUTHENTICATED" || code == "unauthenticated"
+            || code == "unauthorized" || code == "http_401"
     }
 }
