@@ -35,22 +35,22 @@ struct AuthenticatedNetworkClientTests {
         private var _userID: String?
         private var _isGuest = false
         var savedAccessToken: AuthToken?
-        
-        func loadAccessToken() throws -> AuthToken? {
+
+        func loadAccessToken() async throws -> AuthToken? {
             savedAccessToken
         }
-        
-        func saveAccessToken(_ token: AuthToken) throws {
+
+        func saveAccessToken(_ token: AuthToken) async throws {
             savedAccessToken = token
         }
-        
-        func deviceID() throws -> String { _deviceID }
-        
-        func accessToken() throws -> String? {
+
+        func deviceID() async throws -> String { _deviceID }
+
+        func accessToken() async throws -> String? {
             savedAccessToken?.value
         }
-        
-        func save(tokens: TokenResponse, deviceID: String) throws {
+
+        func save(tokens: TokenResponse, deviceID: String) async throws {
             savedAccessToken = AuthToken(
                 value: tokens.accessToken,
                 expiresAt: Date().addingTimeInterval(3600)
@@ -59,15 +59,15 @@ struct AuthenticatedNetworkClientTests {
             _userID = tokens.userID
             _isGuest = tokens.isGuest
         }
-        
-        func clear() throws {
+
+        func clear() async throws {
             savedAccessToken = nil
             _userID = nil
             _isGuest = false
         }
-        
-        func userID() throws -> String? { _userID }
-        func isGuest() throws -> Bool { _isGuest }
+
+        func userID() async throws -> String? { _userID }
+        func isGuest() async throws -> Bool { _isGuest }
     }
     
     final class MockSessionAPI: SessionAPIClientProtocol, @unchecked Sendable {

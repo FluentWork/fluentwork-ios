@@ -83,13 +83,13 @@ import TGReduxKitTesting
     ])
 }
 
-@Test func inMemorySecureStorageRoundTripsData() throws {
+@Test func inMemorySecureStorageRoundTripsData() async throws {
     let storage = InMemorySecureStorage()
     let payload = Data("ticket".utf8)
-    try storage.write(payload, key: "session.ticket")
-    #expect(try storage.read(key: "session.ticket") == payload)
-    try storage.delete(key: "session.ticket")
-    #expect(try storage.read(key: "session.ticket") == nil)
+    try await storage.write(payload, key: "session.ticket")
+    #expect(try await storage.read(key: "session.ticket") == payload)
+    try await storage.delete(key: "session.ticket")
+    #expect(try await storage.read(key: "session.ticket") == nil)
 }
 
 @Test func capturingLoggerSupportsConcurrentWrites() async {
@@ -126,14 +126,14 @@ import TGReduxKitTesting
     try await withThrowingTaskGroup(of: Void.self) { group in
         for index in 0..<64 {
             group.addTask {
-                try storage.write(Data("value-\(index)".utf8), key: "key-\(index)")
+                try await storage.write(Data("value-\(index)".utf8), key: "key-\(index)")
             }
         }
         try await group.waitForAll()
     }
 
     for index in 0..<64 {
-        #expect(try storage.read(key: "key-\(index)") == Data("value-\(index)".utf8))
+        #expect(try await storage.read(key: "key-\(index)") == Data("value-\(index)".utf8))
     }
 }
 

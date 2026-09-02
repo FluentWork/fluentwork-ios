@@ -16,27 +16,27 @@ struct TokenRefreshCoordinatorTests {
         private var _deviceID = "test-device"
         private var _userID: String?
         private var _isGuest = false
-        
-        func loadAccessToken() throws -> AuthToken? {
+
+        func loadAccessToken() async throws -> AuthToken? {
             loadAccessTokenCallCount += 1
             return savedAccessToken
         }
-        
-        func saveAccessToken(_ token: AuthToken) throws {
+
+        func saveAccessToken(_ token: AuthToken) async throws {
             saveAccessTokenCallCount += 1
             savedAccessToken = token
         }
-        
+
         // Required by AuthTokenStoreProtocol
-        func deviceID() throws -> String {
+        func deviceID() async throws -> String {
             _deviceID
         }
-        
-        func accessToken() throws -> String? {
+
+        func accessToken() async throws -> String? {
             savedAccessToken?.value
         }
-        
-        func save(tokens: TokenResponse, deviceID: String) throws {
+
+        func save(tokens: TokenResponse, deviceID: String) async throws {
             savedAccessToken = AuthToken(
                 value: tokens.accessToken,
                 expiresAt: Date().addingTimeInterval(3600)
@@ -45,19 +45,19 @@ struct TokenRefreshCoordinatorTests {
             _userID = tokens.userID
             _isGuest = tokens.isGuest
         }
-        
-        func clear() throws {
+
+        func clear() async throws {
             clearAllTokensCallCount += 1
             savedAccessToken = nil
             _userID = nil
             _isGuest = false
         }
-        
-        func userID() throws -> String? {
+
+        func userID() async throws -> String? {
             _userID
         }
-        
-        func isGuest() throws -> Bool {
+
+        func isGuest() async throws -> Bool {
             _isGuest
         }
     }

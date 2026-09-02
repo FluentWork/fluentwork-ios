@@ -37,7 +37,7 @@ private actor FailingSessionStartTransport: SocketTransportProtocol {
     func markInterrupted() async {}
 }
 
-@Test func authTokenStorePersistsGuestTokens() throws {
+@Test func authTokenStorePersistsGuestTokens() async throws {
     let storage = InMemorySecureStorage()
     let deviceUUID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
     let store = SecureAuthTokenStore(
@@ -45,10 +45,10 @@ private actor FailingSessionStartTransport: SocketTransportProtocol {
         idGenerator: FixedIDGenerator(value: deviceUUID)
     )
 
-    let deviceID = try store.deviceID()
+    let deviceID = try await store.deviceID()
     #expect(deviceID == deviceUUID.uuidString)
 
-    try store.save(
+    try await store.save(
         tokens: TokenResponse(
             userID: "u-1",
             isGuest: true,
@@ -59,8 +59,8 @@ private actor FailingSessionStartTransport: SocketTransportProtocol {
         ),
         deviceID: deviceID
     )
-    #expect(try store.accessToken() == "a")
-    #expect(try store.deviceID() == deviceUUID.uuidString)
+    #expect(try await store.accessToken() == "a")
+    #expect(try await store.deviceID() == deviceUUID.uuidString)
 }
 
 private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @unchecked Sendable {
@@ -73,23 +73,23 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
         self.seededAccessToken = seededAccessToken
     }
 
-    func deviceID() throws -> String { deviceIDValue }
-    func accessToken() throws -> String? { seededAccessToken?.value }
-    func save(tokens: TokenResponse, deviceID: String) throws {
+    func deviceID() async throws -> String { deviceIDValue }
+    func accessToken() async throws -> String? { seededAccessToken?.value }
+    func save(tokens: TokenResponse, deviceID: String) async throws {
         savedTokenResponse = tokens
         seededAccessToken = AuthToken(
             value: tokens.accessToken,
             expiresAt: Date().addingTimeInterval(TimeInterval(tokens.expiresIn))
         )
     }
-    func clear() throws {
+    func clear() async throws {
         seededAccessToken = nil
         savedTokenResponse = nil
     }
-    func userID() throws -> String? { nil }
-    func isGuest() throws -> Bool { true }
-    func loadAccessToken() throws -> AuthToken? { seededAccessToken }
-    func saveAccessToken(_ token: AuthToken) throws { seededAccessToken = token }
+    func userID() async throws -> String? { nil }
+    func isGuest() async throws -> Bool { true }
+    func loadAccessToken() async throws -> AuthToken? { seededAccessToken }
+    func saveAccessToken(_ token: AuthToken) async throws { seededAccessToken = token }
 }
 
 @MainActor
@@ -135,7 +135,7 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
     )
 
     try await client.startSession()
-    #expect(try tokenStore.accessToken() == "access-1")
+    #expect(try await tokenStore.accessToken() == "access-1")
 
     let calls = await transport.connectCalls
     #expect(calls.count == 1)
@@ -189,7 +189,7 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
     try await client.startSession()
 
     #expect(tokenStore.savedTokenResponse?.accessToken == "fresh-access")
-    #expect(try tokenStore.accessToken() == "fresh-access")
+    #expect(try await tokenStore.accessToken() == "fresh-access")
 }
 
 @MainActor

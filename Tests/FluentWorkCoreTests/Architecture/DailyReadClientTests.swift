@@ -78,7 +78,7 @@ import Testing
   let client = DefaultDailyReadClient(api: api, sessionAPI: session, tokens: tokens)
   _ = try await client.loadToday()
 
-  let saved = try tokens.accessToken()
+  let saved = try await tokens.accessToken()
   #expect(saved == "issued-token")
 }
 
@@ -206,15 +206,15 @@ private final class InMemoryAuthTokenStore: AuthTokenStoreProtocol, @unchecked S
     )
   }
 
-  func deviceID() throws -> String {
+  func deviceID() async throws -> String {
     storage.withLock { $0.deviceID }
   }
 
-  func accessToken() throws -> String? {
+  func accessToken() async throws -> String? {
     storage.withLock { $0.accessToken }
   }
 
-  func save(tokens: TokenResponse, deviceID: String) throws {
+  func save(tokens: TokenResponse, deviceID: String) async throws {
     storage.withLock { state in
       state.accessToken = tokens.accessToken
       state.deviceID = deviceID
@@ -223,7 +223,7 @@ private final class InMemoryAuthTokenStore: AuthTokenStoreProtocol, @unchecked S
     }
   }
 
-  func clear() throws {
+  func clear() async throws {
     storage.withLock { state in
       state.accessToken = nil
       state.userID = nil
@@ -231,15 +231,15 @@ private final class InMemoryAuthTokenStore: AuthTokenStoreProtocol, @unchecked S
     }
   }
 
-  func userID() throws -> String? {
+  func userID() async throws -> String? {
     storage.withLock { $0.userID }
   }
 
-  func isGuest() throws -> Bool {
+  func isGuest() async throws -> Bool {
     storage.withLock { $0.isGuest }
   }
 
-  func loadAccessToken() throws -> AuthToken? {
+  func loadAccessToken() async throws -> AuthToken? {
     storage.withLock { state in
       guard let token = state.accessToken else { return nil }
       return AuthToken(
@@ -249,7 +249,7 @@ private final class InMemoryAuthTokenStore: AuthTokenStoreProtocol, @unchecked S
     }
   }
 
-  func saveAccessToken(_ token: AuthToken) throws {
+  func saveAccessToken(_ token: AuthToken) async throws {
     storage.withLock { $0.accessToken = token.value }
   }
 }

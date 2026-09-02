@@ -32,7 +32,7 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
     }
 
     public func startSession() async throws {
-        let deviceID = try tokens.deviceID()
+        let deviceID = try await tokens.deviceID()
         let accessToken = try await ensureAccessToken(deviceID: deviceID)
         let created = try await api.createSession(
             accessToken: accessToken,
@@ -106,7 +106,7 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
     }
 
     public func mergeGuestAccount() async throws -> MergeResponse {
-        let deviceID = try tokens.deviceID()
+        let deviceID = try await tokens.deviceID()
         let accessToken = try await requireAccessToken()
         return try await api.mergeGuestAccount(deviceID: deviceID, accessToken: accessToken)
     }
@@ -118,7 +118,7 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
 
     private func ensureAccessToken(deviceID: String) async throws -> String {
         // Use loadAccessToken which checks expiration; fall back to re-issuing if expired or absent.
-        if let cached = try tokens.loadAccessToken() {
+        if let cached = try await tokens.loadAccessToken() {
             let now = Date()
             let buffer: TimeInterval = 60 // Refresh 60s before actual expiry
             if cached.expiresAt.timeIntervalSince(now) > buffer {
@@ -131,13 +131,13 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         }
         let issued = try await api.issueGuest(deviceID: deviceID)
         print("[🔑 Token] Received new token: \(issued.accessToken.prefix(20))...")
-        try tokens.save(tokens: issued, deviceID: deviceID)
+        try await tokens.save(tokens: issued, deviceID: deviceID)
         print("[🔑 Token] Saved token to keychain")
         return issued.accessToken
     }
 
     private func requireAccessToken() async throws -> String {
-        let deviceID = try tokens.deviceID()
+        let deviceID = try await tokens.deviceID()
         return try await ensureAccessToken(deviceID: deviceID)
     }
 
