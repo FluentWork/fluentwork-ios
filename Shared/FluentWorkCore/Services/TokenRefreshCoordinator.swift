@@ -59,7 +59,7 @@ public actor TokenRefreshCoordinator {
         }
         
         // 2. 尝试从 store 获取 token
-        guard let token = try tokenStore.loadAccessToken() else {
+        guard let token = try await tokenStore.loadAccessToken() else {
             cachedTokenCheck = nil
             throw TokenError.noToken
         }
@@ -88,10 +88,10 @@ public actor TokenRefreshCoordinator {
     public func handle401Error() async throws -> AuthToken {
         cachedTokenCheck = nil // 清除缓存，因为 token 已经无效
         
-        guard let token = try tokenStore.loadAccessToken() else {
+        guard let token = try await tokenStore.loadAccessToken() else {
             throw TokenError.noToken
         }
-        
+
         // 强制刷新（忽略过期时间）
         return try await refreshTokenIfNeeded(currentToken: token, force: true)
     }
@@ -120,17 +120,17 @@ public actor TokenRefreshCoordinator {
             do {
                 // 调用 API 刷新 token
                 let newToken = try await sessionAPI.refreshToken(currentToken.value)
-                
+
                 // 保存新 token
-                try tokenStore.saveAccessToken(newToken)
-                
+                try await tokenStore.saveAccessToken(newToken)
+
                 // 更新缓存
                 cachedTokenCheck = (newToken, currentTime())
-                
+
                 return newToken
             } catch {
                 // 刷新失败，清理所有 token（强制重新登录）
-                try? tokenStore.clear()
+                try? await tokenStore.clear()
                 cachedTokenCheck = nil
                 throw TokenError.refreshFailed(underlying: error)
             }

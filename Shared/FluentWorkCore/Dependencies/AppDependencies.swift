@@ -156,21 +156,21 @@ public struct ResolverBackedBootstrapClient: BootstrapClientProtocol {
     /// Ensures a valid guest token exists and returns auth info.
     /// If no token exists, issues a new guest token from the backend.
     private func ensureGuestToken() async throws -> AuthInfo {
-        let deviceID = try tokenStore.deviceID()
-        
+        let deviceID = try await tokenStore.deviceID()
+
         // Check if we already have a valid access token
-        if let existingToken = try tokenStore.accessToken(), !existingToken.isEmpty {
+        if let existingToken = try await tokenStore.accessToken(), !existingToken.isEmpty {
             // Parse existing token to get user info
-            if let userID = try tokenStore.userID() {
-                let isGuest = try tokenStore.isGuest()
+            if let userID = try await tokenStore.userID() {
+                let isGuest = try await tokenStore.isGuest()
                 return AuthInfo(userID: userID, isGuest: isGuest, deviceID: deviceID)
             }
         }
-        
+
         // No token exists, issue a new guest token
         let tokenResponse = try await sessionAPI.issueGuest(deviceID: deviceID)
-        try tokenStore.save(tokens: tokenResponse, deviceID: deviceID)
-        
+        try await tokenStore.save(tokens: tokenResponse, deviceID: deviceID)
+
         return AuthInfo(
             userID: tokenResponse.userID,
             isGuest: tokenResponse.isGuest,

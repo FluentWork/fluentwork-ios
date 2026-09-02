@@ -40,16 +40,16 @@ public final class DefaultDailyReadClient: DailyReadClientProtocol, @unchecked S
   }
 
   private func ensureAccessToken(deviceID: String) async throws -> String {
-    if let existing = try tokens.accessToken(), !existing.isEmpty {
+    if let existing = try await tokens.accessToken(), !existing.isEmpty {
       return existing
     }
     let issued = try await sessionAPI.issueGuest(deviceID: deviceID)
-    try tokens.save(tokens: issued, deviceID: deviceID)
+    try await tokens.save(tokens: issued, deviceID: deviceID)
     return issued.accessToken
   }
 
   private func requireAccessToken() async throws -> String {
-    let deviceID = try tokens.deviceID()
+    let deviceID = try await tokens.deviceID()
     return try await ensureAccessToken(deviceID: deviceID)
   }
 }
