@@ -1,6 +1,7 @@
 import FactoryKit
 import FluentWorkNetworking
 import Foundation
+import os
 import TGReduxKit
 
 public enum AppTaskID {
@@ -38,12 +39,16 @@ public func makeAppMiddlewares(container: Container? = nil) -> [Middleware<AppSt
 
 public func appBootstrapMiddleware(container: Container? = nil) -> Middleware<AppState, AppAction> {
     let resolvedContainer = container ?? Container.shared
+    let loadGate = BootstrapLoadGate()
 
     return { store, action, next in
         guard case .lifecycle(.appLaunched) = action else {
             return next(action)
         }
         guard store.state.bootstrapStatus != .loading else {
+            return next(action)
+        }
+        guard loadGate.tryBegin() else {
             return next(action)
         }
 
@@ -53,6 +58,7 @@ public func appBootstrapMiddleware(container: Container? = nil) -> Middleware<Ap
         return .merge(
             base,
             .task(id: AppTaskID.bootstrap) {
+                defer { loadGate.end() }
                 do {
                     let result = try await bootstrapClient.loadBootstrap()
                     guard !Task.isCancelled else { return nil }
@@ -68,6 +74,26 @@ public func appBootstrapMiddleware(container: Container? = nil) -> Middleware<Ap
                 }
             }
         )
+    }
+}
+
+private final class BootstrapLoadGate: Sendable {
+    private let storage = OSAllocatedUnfairLock<Bool>(initialState: false)
+
+    func tryBegin() -> Bool {
+        storage.withLock { state in
+            guard state == false else {
+                return false
+            }
+            state = true
+            return true
+        }
+    }
+
+    func end() {
+        storage.withLock { state in
+            state = false
+        }
     }
 }
 

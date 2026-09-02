@@ -40,6 +40,16 @@ Shared topics:
 3. Root store / dependency injection wiring
 4. Release and debug bridge configuration
 
+## Testing Index
+
+Before writing or changing tests in bootstrap, audio, middleware, or navigation paths, read these docs first:
+
+1. `docs/19_测试分层与依赖隔离规范.md` — test boundary, hermetic rules, stub policy
+2. `docs/17_Bootstrap设计原理说明.md` — bootstrap layering and provider boundary
+3. `docs/12_mock_device_测试支持说明.md` — device / mock support and local doubles
+4. `docs/10_I12_audio_engine_decoder_pitfalls.md` — audio engine pitfalls and decoder constraints
+5. `docs/09_I10_smoke_test_runbook.md` — iPhone 17 Pro simulator smoke scope
+
 ## Local Review Gate
 
 1. Required before commit: run the interactive gstack review skill, normally **`/review`** in Codex/Cursor/Claude. If your gstack config enables skill prefixes, use **`/gstack-review`** instead. Then commit with `GSTACK_REVIEWED=1 git commit ...`.

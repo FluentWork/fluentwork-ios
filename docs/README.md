@@ -32,13 +32,14 @@
 13. `12_mock_device_测试支持说明.md`
 14. `13_ClientASR集成与使用指南.md`
 
-### 14-18：Bootstrap / Auth / 启动性能
+### 14-19：Bootstrap / Auth / 启动性能 / 测试规范
 
 15. `14_Bootstrap_Surface_使用指南.md`
 16. `15_游客升级注册用户流程修复方案.md`
 17. `16_Token刷新与错误处理方案.md`
 18. `17_Bootstrap设计原理说明.md`
 19. `18_启动性能优化与测量指南.md`
+20. `19_测试分层与依赖隔离规范.md`
 
 ---
 

@@ -274,15 +274,21 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
 @Test func speechSessionMiddlewareConsumesTransportBadgeEvents() async {
     let container = Container()
     container.reset()
-    let transport = InMemorySocketTransport()
-    container.socketTransport.register { transport }
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await Task.sleep(nanoseconds: 20_000_000)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await speechClient.snapshotStartCalls() == 1
+    }
 
-    await transport.emitControl(.feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .soft))
-    try? await Task.sleep(nanoseconds: 20_000_000)
+    speechClient.emit(.control(.feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .soft)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.lastBadge == "表达自然"
+    }
 
     #expect(store.state.speakingRoom.lastBadge == "表达自然")
     #expect(store.state.speakingRoom.badgeHits == 1)
