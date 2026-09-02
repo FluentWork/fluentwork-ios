@@ -22,6 +22,10 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
     // loop never has to reach into the @MainActor store from a Sendable
     // closure.
     let turnCounter = TurnCountBox()
+    let timings = SpeechSessionTimingsRecorder(
+        tracker: resolvedContainer.tracker(),
+        clock: resolvedContainer.clock().now
+    )
 
     return { store, action, next in
         guard case let .speakingRoom(.session(event)) = action else {
@@ -43,7 +47,8 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
                 container: resolvedContainer,
                 dispatch: { store.dispatch($0) },
                 pendingTurnID: pendingTurnID(for: event, currentCount: preEventCount),
-                turnCounter: turnCounter
+                turnCounter: turnCounter,
+                timings: timings
             )
         }
         return .merge([apply] + interpreted)
@@ -91,12 +96,46 @@ private func interpretSpeechSessionSideEffect(
     container: Container,
     dispatch: @escaping @MainActor (AppAction) -> Void,
     pendingTurnID: String?,
-    turnCounter: TurnCountBox
+    turnCounter: TurnCountBox,
+    timings: SpeechSessionTimingsRecorder
 ) -> Effect<AppAction> {
     let audioEngine = container.audioEngine()
     let speechClient = container.speechSessionClient()
     let tracker = container.tracker()
     let dispatchBox = MainActorActionBox(dispatch: dispatch)
+
+    // Mark session-anchor events on the recorder so the iOS log carries the
+    // wall-clock deltas next to the existing reducer transitions. The marks
+    // here are coarse-grained (session lifecycle) — finer-grained
+    // transport timing lives in `URLSessionSocketTransport.logReceiveLatency`.
+    switch effect {
+    case .createSession:
+        timings.reset()
+        timings.mark(event: "session_create", properties: ["stage": "orchestration"])
+    case .sendInterrupt:
+        timings.mark(event: "session_interrupt")
+    case .stopPlayback:
+        timings.mark(event: "playback_stop")
+    case .startReconnectWindow:
+        timings.mark(event: "reconnect_window_start")
+    case .endSession:
+        timings.mark(event: "session_end")
+    case .sendTextMessage:
+        timings.mark(event: "degraded_text_send")
+    case let .trackTransition(from, to):
+        // `trackTransition` fires alongside the reducer's `speech_session_transition`
+        // event. We piggy-back the delta timing on the same transition so the
+        // iOS log can match the backend's stage markers without a second
+        // tracker stream.
+        timings.mark(
+            event: "phase_transition",
+            properties: [
+                "from": from.rawValue,
+                "to": to.rawValue,
+                "stage": to.stageTag,
+            ]
+        )
+    }
 
     switch effect {
     case .createSession:
@@ -138,6 +177,7 @@ private func interpretSpeechSessionSideEffect(
                         case .aiAudioChunk:   typeTag = "ai.audio.chunk"
                         case .interrupt:       typeTag = "interrupt"
                         case .sessionEnd:      typeTag = "session.end"
+                        case .error:           typeTag = "error"
                         case .auth, .handshake: typeTag = "<auth/handshake>"
                         }
                         tracker.track(event: "transport_rx", properties: [
@@ -155,24 +195,62 @@ private func interpretSpeechSessionSideEffect(
                     switch event {
                     case let .audio(frame):
                         await dispatchBox.dispatch(.speakingRoom(.session(.aiFirstAudioChunk)))
+                        timings.mark(
+                            event: "ai_first_chunk",
+                            properties: [
+                                "sequence": String(frame.sequence),
+                                "payload_bytes": String(frame.opusPayload.count),
+                            ]
+                        )
                         await audioEngine.play(frame: frame)
 
-                    case .control(.aiTurnEnd(turnID: _)):
+                    case let .control(.aiTurnEnd(turnID)):
                         await dispatchBox.dispatch(.speakingRoom(.session(.aiTurnEnd)))
+                        if let turnID {
+                            timings.markTurnEnded(turnID, source: "ios", stage: "ai_turn_end")
+                        }
+                        timings.mark(
+                            event: "ai_turn_end",
+                            properties: ["turn_id": turnID ?? "nil"]
+                        )
 
                     case let .control(.clientASRTranscription(text, turnID)):
                         await dispatchBox.dispatch(.speakingRoom(.session(.serverASRReceived(text: text, turnID: turnID))))
-                        // B14: Immediately call sendSpeechBoundary so the backend gets
-                        // the confirmed server-side text for badge hit detection.
-                        do {
-                            try await speechClient.sendSpeechBoundary(
-                                started: false,
-                                turnID: turnID,
-                                text: text
-                            )
-                        } catch {
-                            await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
-                        }
+                        tracker.track(
+                            event: "server_asr_received_full",
+                            properties: [
+                                "turn_id": turnID ?? "nil",
+                                "text_bytes": String(text.utf8.count),
+                                "text": text,
+                            ]
+                        )
+                        timings.mark(
+                            event: "server_asr_received",
+                            properties: [
+                                "turn_id": turnID ?? "nil",
+                                "text_bytes": String(text.utf8.count),
+                            ]
+                        )
+                        // NOTE: We intentionally do NOT call `sendSpeechBoundary` here.
+                        // The original iOS VAD already fired `user.speech.end` when the user
+                        // actually stopped speaking, which is what triggered the Volc commit
+                        // that produced this transcript. Re-emitting `user.speech.end` on
+                        // receipt of the relay frame would start a phantom second turn with
+                        // no audio, causing the gateway to wait 60s for nothing and the
+                        // client to surface "sockettransporterror error 3".
+                        // The backend already pulls the authoritative transcript out of
+                        // `ProviderOutbound.ServerASRText` for badge hit detection, so
+                        // nothing is lost by not pushing the text again.
+
+                    case let .diagnostic(.receiveLatency(frameType, sizeBytes, elapsedMs)):
+                        tracker.track(
+                            event: "timing_socket_receive",
+                            properties: [
+                                "frame_type": frameType,
+                                "size_bytes": String(sizeBytes),
+                                "elapsed_ms": String(format: "%.3f", elapsedMs),
+                            ]
+                        )
 
                     default:
                         guard let mapped = SocketTransportEventMapper.speakingRoomAction(for: event),
@@ -199,7 +277,7 @@ private func interpretSpeechSessionSideEffect(
                             // Reset PCM buffer at the start of each turn
                             pcmBuffer.removeAll()
                             isCapturingSpeech = true
-                            
+
                             // No turnID on start — backend uses the next
                             // user.speech.end's turnID as the dedupe scope.
                             try await speechClient.sendSpeechBoundary(
@@ -207,6 +285,7 @@ private func interpretSpeechSessionSideEffect(
                                 turnID: nil,
                                 text: nil
                             )
+                            timings.mark(event: "vad_speech_start")
                             await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechStart)))
                         } catch {
                             await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
@@ -216,19 +295,20 @@ private func interpretSpeechSessionSideEffect(
                     case .speechEnded:
                         do {
                             isCapturingSpeech = false
-                            
+
                             // B14 change: Server-side ASR (Volcengine Duplex relay) now provides
                             // the authoritative transcript via WSS `client.asr.transcription` frame.
                             // We no longer run local Apple Speech ASR here.
                             // We still signal turn-end so the backend can track the turn boundary.
                             // The backend will use its own Doubao transcript for badge detection.
                             let turnID = "turn-\(turnCounter.get() + 1)"
-                            
+
                             try await speechClient.sendSpeechBoundary(
                                 started: false,
                                 turnID: turnID,
                                 text: nil
                             )
+                            timings.markTurnStarted(turnID)
                             tracker.track(
                                 event: "speech_turn_ended",
                                 properties: [
@@ -260,6 +340,7 @@ private func interpretSpeechSessionSideEffect(
                         }
 
                     case let .failed(message):
+                        timings.mark(event: "audio_engine_failed", properties: ["message": message])
                         await dispatchBox.dispatch(.speakingRoom(.session(.failed(message))))
                         return nil
                     }

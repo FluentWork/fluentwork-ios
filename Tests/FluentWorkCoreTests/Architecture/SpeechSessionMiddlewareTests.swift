@@ -101,7 +101,9 @@ struct SpeechSessionMiddlewareTests {
 ///
 /// These tests verify:
 /// 1. Server ASR transcript handling via `serverASRReceived`
-/// 2. Immediate `sendSpeechBoundary` call when server ASR arrives
+/// 2. NO phantom `sendSpeechBoundary` call when server ASR arrives (regression: the
+///    original iOS VAD is the single source of truth for `user.speech.end`; emitting
+///    another one here starts a ghost turn with no audio and the gateway hangs for 60s.)
 /// 3. Degraded text message handling
 /// 4. Transition telemetry emission
 @Suite("SpeechSessionMiddleware B14 Integration")
@@ -140,9 +142,15 @@ struct SpeechSessionMiddlewareB14Tests {
     }
 
     @MainActor
-    @Test func serverASRFromTransportSendsSpeechBoundary() async throws {
-        // When server ASR comes via transport event (clientASRTranscription),
-        // the middleware calls sendSpeechBoundary immediately for badge detection.
+    @Test func serverASRFromTransportDoesNotResendSpeechBoundary() async throws {
+        // Regression: previously the middleware called `sendSpeechBoundary` on receipt
+        // of `client.asr.transcription` for badge hit detection. That caused a phantom
+        // second turn at the gateway — the VAD-fired `user.speech.end` already produced
+        // the transcript, so a second one in 16ms committed empty audio and the gateway
+        // timed out at 60s, surfacing "sockettransporterror error 3" on the client.
+        // The authoritative transcript for badge detection now comes from
+        // `ProviderOutbound.ServerASRText` on the backend side; the iOS layer must not
+        // re-emit a `user.speech.end` here.
         let container = Container()
         container.reset()
         let audioEngine = StubAudioEngineForMiddleware()
@@ -158,19 +166,15 @@ struct SpeechSessionMiddlewareB14Tests {
         store.dispatch(.speakingRoom(.session(.socketReady)))
         try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
 
-        // Emit server ASR via transport event (this triggers sendSpeechBoundary)
+        // Emit server ASR via transport event.
         speechClient.emit(.control(.clientASRTranscription(text: "Transport transcript", turnID: "turn-1")))
 
-        // Wait for speech boundary call
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-            await speechClient.getBoundaryCallCount() > 0
-        }
+        // Give the middleware a beat to process the transport event.
+        try await Task.sleep(for: .milliseconds(150))
 
-        // Verify sendSpeechBoundary was called with the text
-        let boundaryCall = await speechClient.getLastBoundaryCall()
-        #expect(boundaryCall?.started == false)
-        #expect(boundaryCall?.text == "Transport transcript")
-        #expect(boundaryCall?.turnID == "turn-1")
+        // The middleware must NOT have re-fired sendSpeechBoundary for the relay frame.
+        let boundaryCallCount = await speechClient.getBoundaryCallCount()
+        #expect(boundaryCallCount == 0)
     }
 
     // MARK: - Degraded Text Tests
