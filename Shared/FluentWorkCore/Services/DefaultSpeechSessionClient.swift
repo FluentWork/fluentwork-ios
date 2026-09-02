@@ -33,12 +33,30 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
 
     public func startSession() async throws {
         let deviceID = try await tokens.deviceID()
-        let accessToken = try await ensureAccessToken(deviceID: deviceID)
-        let created = try await api.createSession(
-            accessToken: accessToken,
-            materialID: nil,
-            sceneType: "demo"
-        )
+        let created: CreateSessionResponse
+        do {
+            let accessToken = try await ensureAccessToken(deviceID: deviceID)
+            created = try await api.createSession(
+                accessToken: accessToken,
+                materialID: nil,
+                sceneType: "demo"
+            )
+        } catch let error as APIError {
+            // Cached token rejected by backend (e.g., backend JWT secret changed
+            // between environments, or token issued by a different backend).
+            // Clear and reissue a fresh guest token, then retry once.
+            if case .backend(let code, _) = error, code == "unauthorized" || code == "http_401" {
+                try await tokens.clear()
+                let freshToken = try await ensureAccessToken(deviceID: deviceID)
+                created = try await api.createSession(
+                    accessToken: freshToken,
+                    materialID: nil,
+                    sceneType: "demo"
+                )
+            } else {
+                throw error
+            }
+        }
         guard let wssURL = URL(string: created.wssURL) else {
             throw APIError.backend(
                 code: "invalid_wss_url",
