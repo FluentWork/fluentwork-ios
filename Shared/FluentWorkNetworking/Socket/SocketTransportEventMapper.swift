@@ -30,13 +30,20 @@ public enum SocketTransportEventMapper {
         case let .control(.clientASRTranscription(text, turnID)):
             return .serverASRReceived(text: text, turnID: turnID)
 
+        /// Backend error frame. Surfaces provider failures, ASR gate rejections,
+        /// and other transient transport-level conditions that should drop the
+        /// session into `.failed` with a stable code for downstream branching.
+        case let .control(.error(code, message)):
+            let detail = message?.isEmpty == false ? "[\(code)] \(message ?? "")" : "[\(code)]"
+            return .failed(detail)
+
         case .failure(.pingTimedOut), .stateChanged(.disconnected):
             return .networkLost
 
         case let .failure(error):
             return .failed(error.userFacingMessage)
 
-        case .stateChanged, .control, .audio:
+        case .stateChanged, .control, .audio, .diagnostic:
             return nil
         }
     }

@@ -24,6 +24,22 @@ public enum SocketTransportEvent: Equatable, Sendable {
     case control(WSControlFrame)
     case audio(WSAudioFrame)
     case failure(SocketTransportError)
+    /// Non-control observation emitted by the transport for timing /
+    /// observability purposes. Always optional to consume; reducer layers
+    /// outside `FluentWorkNetworking` can ignore it without breaking the
+    /// speaking-room state machine.
+    case diagnostic(SocketTransportDiagnostic)
+}
+
+/// Side-channel events the transport emits for observability. Kept off the
+/// `control` / `audio` channels so the speaking-room reducer doesn't have
+/// to filter timing samples out of its inbound frame stream.
+public enum SocketTransportDiagnostic: Equatable, Sendable {
+    /// Wall-clock duration of a single `URLSessionWebSocketTask.receive()`
+    /// → `handle(message:)` cycle. Captured by the receive loop on every
+    /// successful frame so timing regressions in the decode / dispatch path
+    /// show up next to the frame type instead of being averaged out.
+    case receiveLatency(frameType: String, sizeBytes: Int, elapsedMs: Double)
 }
 
 public protocol SocketTransportProtocol: Sendable {

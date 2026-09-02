@@ -26,3 +26,29 @@ import Testing
     )
     #expect(SpeakingRoomAction(.networkLost) == .session(.networkLost))
 }
+
+@Test func mapperConvertsBackendErrorFrameToFailedAction() {
+    // Mirrors the production payload emitted by voicegateway.handler when a
+    // volc-duplex audio forward fails (the connection died mid-turn).
+    let event = SocketTransportEvent.control(
+        .error(code: "provider_audio_failed", message: "use of closed network connection")
+    )
+    let action = SocketTransportEventMapper.speakingRoomAction(for: event)
+    #expect(action == .failed("[provider_audio_failed] use of closed network connection"))
+}
+
+@Test func mapperConvertsBackendErrorFrameWithoutMessage() {
+    let event = SocketTransportEvent.control(
+        .error(code: "client_asr_required", message: nil)
+    )
+    let action = SocketTransportEventMapper.speakingRoomAction(for: event)
+    #expect(action == .failed("[client_asr_required]"))
+}
+
+@Test func mapperConvertsClientASRTranscriptionToServerASRReceived() {
+    let event = SocketTransportEvent.control(
+        .clientASRTranscription(text: "we should ship it today", turnID: "turn-1")
+    )
+    let action = SocketTransportEventMapper.speakingRoomAction(for: event)
+    #expect(action == .serverASRReceived(text: "we should ship it today", turnID: "turn-1"))
+}

@@ -16,7 +16,10 @@ import TGReduxKitTesting
     #expect(tracker.register(energy: 0.02, at: start) == .speechStarted)
     #expect(tracker.register(energy: 0.02, at: start + .milliseconds(50)) == nil)
     #expect(tracker.register(energy: 0.0, at: start + .milliseconds(200)) == nil)
-    #expect(tracker.register(energy: 0.0, at: start + .milliseconds(400)) == .speechEnded)
+    // Below silenceHold (1500ms default) — must NOT emit.
+    #expect(tracker.register(energy: 0.0, at: start + .milliseconds(1400)) == nil)
+    // At or beyond silenceHold — must emit speechEnded.
+    #expect(tracker.register(energy: 0.0, at: start + .milliseconds(1600)) == .speechEnded)
 }
 
 @available(iOS 17, macOS 14, *)

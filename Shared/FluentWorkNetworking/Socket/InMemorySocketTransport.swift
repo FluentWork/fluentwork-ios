@@ -60,6 +60,10 @@ public actor InMemorySocketTransport: SocketTransportProtocol {
         continuation.yield(.failure(error))
     }
 
+    public func emitDiagnostic(_ diagnostic: SocketTransportDiagnostic) async {
+        continuation.yield(.diagnostic(diagnostic))
+    }
+
     public func emitControl(_ frame: WSControlFrame) async {
         continuation.yield(.control(frame))
     }

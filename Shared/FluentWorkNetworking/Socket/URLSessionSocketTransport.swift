@@ -170,17 +170,34 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
 
     private func receiveLoop(_ task: URLSessionWebSocketTask) async {
         while !Task.isCancelled {
+            let receivedAt = ContinuousClock.now
             do {
                 let message = try await task.receive()
+                let decodedAt = ContinuousClock.now
+                let receiveElapsedMs = Self.elapsedMs(from: receivedAt, to: decodedAt)
                 try handle(message: message)
+                logReceiveLatency(message: message, elapsedMs: receiveElapsedMs)
             } catch is CancellationError {
                 break
             } catch {
-                emit(.failure(mapError(error)))
+                emit(.failure(mapError(error, receivePhase: true)))
                 emit(.stateChanged(.disconnected))
                 break
             }
         }
+    }
+
+    /// Converts a `ContinuousClock.Duration` to fractional milliseconds.
+    /// Centralized here so the receive-loop latency column has the same
+    /// granularity as the session-level `SpeechSessionTimingsRecorder`.
+    private static func elapsedMs(
+        from start: ContinuousClock.Instant,
+        to end: ContinuousClock.Instant
+    ) -> Double {
+        let duration = end - start
+        let components = duration.components
+        return Double(components.seconds) * 1000
+            + Double(components.attoseconds) / 1_000_000_000_000_000
     }
 
     private func pingLoop(_ task: URLSessionWebSocketTask) async {
@@ -217,13 +234,21 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         switch message {
         case let .string(text):
             guard let data = text.data(using: .utf8) else {
-                throw SocketTransportError.decodingFailed("control frame text is not UTF-8")
+                throw SocketTransportError.decodingFailed(
+                    "control frame text is not UTF-8 (bytes=\(text.utf8.count))"
+                )
             }
             do {
                 let frame = try WSControlFrameCodec.decode(data)
                 emit(.control(frame))
+            } catch let error as WSControlFrameCodingError {
+                throw SocketTransportError.decodingFailed(
+                    "control frame decode failed: \(describe(error)) (bytes=\(data.count))"
+                )
             } catch {
-                throw SocketTransportError.decodingFailed(error.localizedDescription)
+                throw SocketTransportError.decodingFailed(
+                    "control frame decode failed: \(error.localizedDescription) (bytes=\(data.count))"
+                )
             }
 
         case let .data(data):
@@ -234,12 +259,57 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
                     emit(.audio(frame))
                 }
             } catch {
-                throw SocketTransportError.decodingFailed(error.localizedDescription)
+                throw SocketTransportError.decodingFailed(
+                    "audio frame decode failed: \(error.localizedDescription) (bytes=\(data.count))"
+                )
             }
 
         @unknown default:
             throw SocketTransportError.decodingFailed("unsupported websocket message")
         }
+    }
+
+    /// Pretty-prints a `WSControlFrameCodingError` so the iOS log doesn't
+    /// fall back to NSError's default "the operation couldn't be completed"
+    /// bridge (`framecodingerror error 0`) when the backend sends a frame
+    /// type iOS doesn't know about.
+    private func describe(_ error: WSControlFrameCodingError) -> String {
+        switch error {
+        case let .unknownType(type):
+            return "unknown type \"\(type)\""
+        case let .missingField(field):
+            return "missing required field \"\(field)\""
+        }
+    }
+
+    /// Emits a transport-level timing marker (`timing_socket_receive`)
+    /// once per inbound frame so the iOS log shows the wall-clock time
+    /// between `URLSessionWebSocketTask.receive()` returning and `handle()`
+    /// finishing. The `frame_type` tag is sourced from the parsed message
+    /// when possible so the log can be filtered on `.string` vs `.data`
+    /// (audio decode cost is the dominant contributor in the audio path).
+    private nonisolated func logReceiveLatency(
+        message: URLSessionWebSocketTask.Message,
+        elapsedMs: Double
+    ) {
+        let (frameType, sizeBytes): (String, Int) = {
+            switch message {
+            case let .string(text):
+                let firstQuote = text.firstIndex(of: "\"") ?? text.startIndex
+                let afterQuote = text.index(after: firstQuote)
+                let endQuote = text[afterQuote...].firstIndex(of: "\"") ?? text.endIndex
+                let type = String(text[afterQuote..<endQuote])
+                return (type.isEmpty ? "unknown" : type, text.utf8.count)
+            case let .data(data):
+                return ("audio_binary", data.count)
+            @unknown default:
+                return ("unknown", 0)
+            }
+        }()
+
+        continuation.yield(.diagnostic(
+            .receiveLatency(frameType: frameType, sizeBytes: sizeBytes, elapsedMs: elapsedMs)
+        ))
     }
 
     private func emit(_ event: SocketTransportEvent) {
@@ -249,13 +319,24 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         continuation.yield(event)
     }
 
-    private func mapError(_ error: Error) -> SocketTransportError {
+    private func mapError(_ error: Error, receivePhase: Bool = false) -> SocketTransportError {
         if error is CancellationError {
             return .cancelled
         }
         if let transportError = error as? SocketTransportError {
             return transportError
         }
-        return .network(error.localizedDescription)
+        // Preserve `NSError` domain + code so the iOS log shows what the
+        // system actually returned. Without this, the bare
+        // `localizedDescription` collapses to "the operation couldn't be
+        // completed framecodingerror error 0" and the underlying domain /
+        // code (which is the only way to tell whether it's a transport
+        // reset, a frame-protocol violation, or a server-initiated close)
+        // is lost.
+        let nsError = error as NSError
+        if receivePhase {
+            return .network("[\(nsError.domain) \(nsError.code)] \(nsError.localizedDescription)")
+        }
+        return .network(nsError.localizedDescription)
     }
 }

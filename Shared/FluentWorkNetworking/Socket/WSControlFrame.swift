@@ -31,6 +31,12 @@ public enum WSControlFrame: Equatable, Sendable {
     case interrupt
     case feedbackBadge(badge: String, phraseBlockID: String?, tier: FeedbackBadgeTier?)
     case sessionEnd(reason: String?)
+    /// Backend → client non-fatal error notice. Carries a stable machine code
+    /// (e.g. `provider_audio_failed`, `provider_control_failed`,
+    /// `client_asr_required`, `activate_failed`, `provider_open_failed`) plus a
+    /// human-readable message. The transport mapper converts this into the
+    /// `.failed` action so the session state machine degrades to `.failed`.
+    case error(code: String, message: String?)
 
     public struct SessionStartPayload: Equatable, Sendable, Codable {
         public var materialContext: String?
@@ -76,6 +82,8 @@ extension WSControlFrame: Codable {
         case materialContext = "material_context"
         case scene
         case voiceID = "voice_id"
+        case code
+        case message
     }
 
     public init(from decoder: Decoder) throws {
@@ -144,6 +152,15 @@ extension WSControlFrame: Codable {
         case "session.end":
             self = .sessionEnd(reason: try container.decodeIfPresent(String.self, forKey: .reason))
 
+        case "error":
+            // Backend error notice (e.g. provider_audio_failed,
+            // client_asr_required). `code` is required and stable so iOS can
+            // branch on it; `message` is best-effort human text.
+            self = .error(
+                code: try container.decode(String.self, forKey: .code),
+                message: try container.decodeIfPresent(String.self, forKey: .message)
+            )
+
         default:
             throw WSControlFrameCodingError.unknownType(type)
         }
@@ -210,6 +227,11 @@ extension WSControlFrame: Codable {
         case let .sessionEnd(reason):
             try container.encode("session.end", forKey: .type)
             try container.encodeIfPresent(reason, forKey: .reason)
+
+        case let .error(code, message):
+            try container.encode("error", forKey: .type)
+            try container.encode(code, forKey: .code)
+            try container.encodeIfPresent(message, forKey: .message)
         }
     }
 }

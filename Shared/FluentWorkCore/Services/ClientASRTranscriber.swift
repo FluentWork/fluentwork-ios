@@ -9,7 +9,6 @@ import Foundation
 ///
 /// - `AppleSpeechClientASRTranscriber`: Uses Apple's Speech framework (iOS 17+)
 /// - `VolcengineClientASRTranscriber`: Uses Volcengine SDK for ASR
-/// - `RawClientASRTranscriber`: Debug implementation that returns empty string
 ///
 /// ## Usage
 ///

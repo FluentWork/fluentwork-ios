@@ -12,7 +12,7 @@ public struct WSAudioFrame: Equatable, Sendable {
 }
 
 public enum WSAudioFrameCodecError: Error, Equatable, Sendable {
-    case truncatedHeader
+    case truncatedHeader(byteCount: Int)
 }
 
 /// Binary layout: `UInt32` big-endian sequence + Opus payload bytes.
@@ -30,7 +30,7 @@ public enum WSAudioFrameCodec: Sendable {
 
     public static func decode(_ data: Data) throws -> WSAudioFrame {
         guard data.count >= headerByteCount else {
-            throw WSAudioFrameCodecError.truncatedHeader
+            throw WSAudioFrameCodecError.truncatedHeader(byteCount: data.count)
         }
 
         let sequence = data.prefix(headerByteCount).withUnsafeBytes { buffer -> UInt32 in
@@ -38,5 +38,21 @@ public enum WSAudioFrameCodec: Sendable {
         }
         let payload = data.dropFirst(headerByteCount)
         return WSAudioFrame(sequence: sequence, opusPayload: Data(payload))
+    }
+}
+
+extension WSAudioFrameCodecError: LocalizedError {
+    /// Stable, human-readable detail for the receiving side. The default
+    /// Swift→NSError bridge would render this as
+    /// `"the operation couldn't be completed. (FluentWorkNetworking.WSAudioFrameCodecError error 0.)"`,
+    /// which is what the iOS console currently shows as `framecodingerror error 0`.
+    /// Adding `LocalizedError` makes the iOS surface readable and lets the
+    /// `SocketTransportError.decodingFailed` carry the byte count alongside
+    /// the error case so the source is identifiable in logs.
+    public var errorDescription: String? {
+        switch self {
+        case let .truncatedHeader(byteCount):
+            return "audio frame header is missing or truncated (received \(byteCount) bytes, header requires \(WSAudioFrameCodec.headerByteCount))"
+        }
     }
 }

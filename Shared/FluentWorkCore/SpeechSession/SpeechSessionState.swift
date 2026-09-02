@@ -15,6 +15,26 @@ public enum SpeechSessionPhase: String, Equatable, Sendable {
     case degradedText
     case ended
     case failed
+
+    /// Maps the iOS-side phase to the backend's `stage` log tag so the iOS
+    /// `timing_phase_transition` log lines up with the backend's
+    /// `voice user speech frame`, `voice session ready`, and `session.end
+    /// persisted` events when they share the same session id. Mirrors the
+    /// voice-gateway handler's `stage` field on
+    /// `voiceproto.ProviderOutbound.Control` payloads.
+    public var stageTag: String {
+        switch self {
+        case .idle:           return "idle"
+        case .connecting:     return "orchestration"
+        case .aiSpeaking:     return "tts"
+        case .waitingUser:    return "waiting_user"
+        case .recording:      return "vad_capture"
+        case .processing:     return "asr"
+        case .degradedText:   return "text_fallback"
+        case .ended:          return "ended"
+        case .failed:         return "failed"
+        }
+    }
 }
 
 public struct SpeechSessionState: Equatable, Sendable {

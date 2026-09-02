@@ -68,11 +68,25 @@ public struct RawPCM16FrameDecoder: WSAudioFrameDecoder {
 
 /// Decoder that targets the Volcengine Opus pipeline.
 ///
-/// This is a deliberate stub — the real implementation lands in B13 once the
-/// Volcengine SDK is on the SDK dependency list and the SDK wrapper type is
-/// selected. Until then, constructing this decoder and asking it to decode
-/// surfaces a clear `notAvailable` error so the engine can degrade instead of
-/// crashing the speaking room.
+/// **Status (2026-09-02)**: deliberate stub. The backend
+/// (`provider_volc_duplex.go`) currently relays only `ai.text.delta` and the
+/// `client.asr.transcription` control frame — it does **not** forward
+/// `response.output_audio.delta` as binary WS frames, so iOS never receives
+/// Opus data in production and this decoder is never invoked.
+///
+/// This stub stays in place because:
+///
+/// 1. The day AI audio relay ships (B15+), the iOS path will activate with
+///    zero protocol changes — only the decoder body needs swapping.
+/// 2. The `WSAudioFrame` / `WSAudioFrameCodec` framing layer (sequence-gated
+///    drop, `UInt32` BE header) is the **transport** abstraction, separate
+///    from the codec. Removing the framing now would force a larger rewrite
+///    the moment backend starts sending audio bytes again.
+///
+/// If you need to wire the real Volcengine Opus decoder, replace `decode`
+/// with a call into the Volcengine SDK's `OpusDecoder` and remove the
+/// `notAvailable` error case. The protocol shape (`WSAudioFrame` →
+/// `Data` PCM16) does not need to change.
 public struct VolcengineOpusFrameDecoder: WSAudioFrameDecoder {
     public enum Error: Swift.Error, Equatable {
         case notAvailable
@@ -441,18 +455,5 @@ public extension Container {
 
     var appEnvironment: Factory<AppEnvironment> {
         self { AppEnvironment.current }.singleton
-    }
-
-    var clientASRTranscriber: Factory<ClientASRTranscriber> {
-        self {
-            // B13/B14: Default to server-relay ASR from the voice gateway (Volcengine Duplex).
-            // The authoritative transcript arrives via WSS `client.asr.transcription` frame
-            // and is dispatched directly to the store — this transcriber is a no-op.
-            //
-            // To run local Apple Speech instead (e.g., in environments where the voice
-            // gateway does not have Volcengine credentials):
-            //   container.clientASRTranscriber.register { AppleSpeechClientASRTranscriber() }
-            ServerRelayASRTranscriber()
-        }.singleton
     }
 }

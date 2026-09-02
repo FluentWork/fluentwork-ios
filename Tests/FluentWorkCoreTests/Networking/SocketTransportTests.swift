@@ -16,6 +16,8 @@ import Testing
         .interrupt,
         .feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .soft),
         .sessionEnd(reason: "completed"),
+        .error(code: "provider_audio_failed", message: "use of closed network connection"),
+        .error(code: "client_asr_required", message: nil),
     ]
 
     for frame in frames {
@@ -23,6 +25,31 @@ import Testing
         let decoded = try WSControlFrameCodec.decode(encoded)
         #expect(decoded == frame)
     }
+}
+
+@Test func controlFrameCodecDecodesBackendErrorFrame() throws {
+    // Mirrors the real backend payload emitted by voicegateway.handler
+    // (e.g. provider_audio_failed, provider_control_failed, client_asr_required).
+    let data = Data(#"{"type":"error","code":"provider_audio_failed","message":"use of closed network connection"}"#.utf8)
+    let decoded = try WSControlFrameCodec.decode(data)
+    #expect(decoded == .error(code: "provider_audio_failed", message: "use of closed network connection"))
+}
+
+@Test func controlFrameCodecRejectsErrorFrameMissingCode() throws {
+    // `code` is the stable machine identifier; it must be required so iOS can
+    // branch on it without resorting to message-string sniffing. Swift's
+    // KeyedDecodingContainer surfaces a missing required field as
+    // `DecodingError.keyNotFound`, which the Codec propagates unchanged.
+    let data = Data(#"{"type":"error","message":"no code here"}"#.utf8)
+    #expect(throws: DecodingError.self) {
+        _ = try WSControlFrameCodec.decode(data)
+    }
+}
+
+@Test func controlFrameCodecAcceptsErrorFrameWithoutMessage() throws {
+    let data = Data(#"{"type":"error","code":"client_asr_required"}"#.utf8)
+    let decoded = try WSControlFrameCodec.decode(data)
+    #expect(decoded == .error(code: "client_asr_required", message: nil))
 }
 
 @Test func controlFrameCodecRejectsUnknownType() throws {
@@ -42,9 +69,17 @@ import Testing
 }
 
 @Test func audioFrameCodecRejectsTruncatedHeader() {
-    #expect(throws: WSAudioFrameCodecError.truncatedHeader) {
-        _ = try WSAudioFrameCodec.decode(Data([0x00, 0x01]))
+    let bytes = Data([0x00, 0x01])
+    #expect(throws: WSAudioFrameCodecError.truncatedHeader(byteCount: bytes.count)) {
+        _ = try WSAudioFrameCodec.decode(bytes)
     }
+}
+
+@Test func audioFrameCodecTruncatedHeaderExposesLocalizedDescription() {
+    let error = WSAudioFrameCodecError.truncatedHeader(byteCount: 2)
+    let description = (error as LocalizedError).errorDescription
+    #expect(description?.contains("2") == true)
+    #expect(description?.contains("4") == true)
 }
 
 @Test func dropPolicyNeverDropsWithoutInterruptWatermark() {
