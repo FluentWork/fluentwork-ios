@@ -7,25 +7,60 @@ import UIKit
 
 // MARK: - View Model
 
+public struct SpeakingRoomTimelineHit: Equatable, Sendable, Identifiable {
+    public let id: String
+    public let badge: String
+
+    public init(id: String, badge: String) {
+        self.id = id
+        self.badge = badge
+    }
+}
+
+public struct SpeakingRoomTimelineRow: Equatable, Sendable, Identifiable {
+    public let id: String
+    public let isUser: Bool
+    public let text: String
+    public let isListening: Bool
+    public let hits: [SpeakingRoomTimelineHit]
+
+    public init(
+        id: String,
+        isUser: Bool,
+        text: String,
+        isListening: Bool,
+        hits: [SpeakingRoomTimelineHit]
+    ) {
+        self.id = id
+        self.isUser = isUser
+        self.text = text
+        self.isListening = isListening
+        self.hits = hits
+    }
+}
+
 public struct SpeakingRoomViewModel: Equatable, Sendable {
     public var phase: SpeechSessionPhase
     public var liveTranscript: String
     public var lastBadge: String?
     public var badgeHits: Int
     public var failureReason: String?
+    public var timeline: [SpeakingRoomTimelineRow]
 
     public init(
         phase: SpeechSessionPhase,
         liveTranscript: String = "",
         lastBadge: String? = nil,
         badgeHits: Int = 0,
-        failureReason: String? = nil
+        failureReason: String? = nil,
+        timeline: [SpeakingRoomTimelineRow] = []
     ) {
         self.phase = phase
         self.liveTranscript = liveTranscript
         self.lastBadge = lastBadge
         self.badgeHits = badgeHits
         self.failureReason = failureReason
+        self.timeline = timeline
     }
 
     public var isRecording: Bool {
@@ -155,8 +190,20 @@ public struct SpeakingRoomView: View {
     let onStopTapped: () -> Void
     let requestMicrophonePermission: @Sendable () async -> Bool
     let openSettingsAction: @Sendable () -> Void
+    /// DEBUG-only — wired by `HostRootView` to dispatch a `.speakingRoom(.badgeHit(...))`
+    /// action so the I11 overlay can be visually verified without needing a real
+    /// B12 corpus match. Production builds leave this `nil` and the debug footer
+    /// is hidden.
+    let onDebugBadgeInjected: ((BadgeFeedEntry.Tier, Int) -> Void)?
 
     @State private var showPermissionDeniedAlert = false
+    #if DEBUG
+    /// 0 = unknown, 1 = badgeOnly, 2 = nextTurnConfirm, 3 = sameTurnConfirm.
+    /// Cycles on every inject tap so the developer can compare all four visual
+    /// weights without leaving DEBUG.
+    @State private var debugBadgeTierIndex: Int = 0
+    @State private var debugBadgeHitCount: Int = 0
+    #endif
 
     public init(
         model: SpeakingRoomViewModel,
@@ -171,13 +218,15 @@ public struct SpeakingRoomView: View {
                 UIApplication.shared.open(url)
             }
             #endif
-        }
+        },
+        onDebugBadgeInjected: ((BadgeFeedEntry.Tier, Int) -> Void)? = nil
     ) {
         self.model = model
         self.onStartTapped = onStartTapped
         self.onStopTapped = onStopTapped
         self.requestMicrophonePermission = requestMicrophonePermission
         self.openSettingsAction = openSettingsAction
+        self.onDebugBadgeInjected = onDebugBadgeInjected
     }
 
     public var body: some View {
@@ -188,8 +237,13 @@ public struct SpeakingRoomView: View {
             recordingButton
                 .padding(.horizontal, 32)
 
-            // Live transcript
-            if !model.liveTranscript.isEmpty {
+            // Turn timeline (design 22) — fall back to the legacy single
+            // transcript while a session has not produced timeline rows yet.
+            if !model.timeline.isEmpty {
+                timelineView
+                    .frame(maxHeight: 260)
+                    .padding(.horizontal, 8)
+            } else if !model.liveTranscript.isEmpty {
                 transcriptView
                     .padding(.horizontal, 24)
             }
@@ -199,6 +253,19 @@ public struct SpeakingRoomView: View {
                 .padding(.horizontal, 24)
 
             Spacer()
+
+            #if DEBUG
+            // B12 / I11 debug surface. Hidden in release. The footer cycles
+            // through all four badge tiers (unknown / soft / highlight /
+            // celebrate) on every tap so the developer can confirm the
+            // overlay visually renders each visual weight without depending
+            // on real B12 corpus hits. Wired in `HostRootView` to dispatch
+            // `.speakingRoom(.badgeHit(...))` — i.e. the same action the
+            // backend `feedback.badge` frame lands in.
+            if let onDebugBadgeInjected {
+                debugBadgeFooter(onTap: onDebugBadgeInjected)
+            }
+            #endif
         }
         .padding()
         .alert("需要麦克风权限", isPresented: $showPermissionDeniedAlert) {
@@ -210,6 +277,50 @@ public struct SpeakingRoomView: View {
             Text("FluentWork 需要麦克风权限来进行英语口语练习。请在设置中允许访问麦克风。")
         }
     }
+
+    #if DEBUG
+    private func debugBadgeFooter(
+        onTap: @escaping (BadgeFeedEntry.Tier, Int) -> Void
+    ) -> some View {
+        let tier: BadgeFeedEntry.Tier
+        switch debugBadgeTierIndex {
+        case 1: tier = .badgeOnly
+        case 2: tier = .nextTurnConfirm
+        case 3: tier = .sameTurnConfirm
+        default: tier = .unknown
+        }
+        return VStack(spacing: 4) {
+            Divider().opacity(0.3)
+            HStack {
+                Image(systemName: "ladybug.fill")
+                    .foregroundStyle(.orange)
+                Text("DEBUG · 注入徽章 (\(tierName(tier)))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("× \(debugBadgeHitCount)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 24)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                debugBadgeTierIndex = (debugBadgeTierIndex + 1) % 4
+                debugBadgeHitCount += 1
+                onTap(tier, debugBadgeHitCount)
+            }
+        }
+    }
+
+    private func tierName(_ tier: BadgeFeedEntry.Tier) -> String {
+        switch tier {
+        case .unknown: return "unknown"
+        case .badgeOnly: return "soft"
+        case .nextTurnConfirm: return "highlight"
+        case .sameTurnConfirm: return "celebrate"
+        }
+    }
+    #endif
 
     // MARK: - Recording Button
 
@@ -282,6 +393,74 @@ public struct SpeakingRoomView: View {
     }
 
     // MARK: - Transcript View
+
+    private var timelineView: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    ForEach(model.timeline) { row in
+                        timelineRow(row)
+                            .id(row.id)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .onChange(of: model.timeline.count) { _, _ in
+                if let lastID = model.timeline.last?.id {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(lastID, anchor: .bottom)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func timelineRow(_ row: SpeakingRoomTimelineRow) -> some View {
+        HStack(spacing: 8) {
+            if row.isUser {
+                Spacer(minLength: 48)
+            }
+
+            VStack(alignment: row.isUser ? .trailing : .leading, spacing: 4) {
+                Text(row.text)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(row.isUser ? .trailing : .leading)
+
+                if row.isListening {
+                    Text("正在听…")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+
+                if !row.hits.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(row.hits) { hit in
+                            Label(hit.badge, systemImage: "sparkles")
+                                .font(.caption2.weight(.medium))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color.orange.opacity(0.14), in: Capsule())
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                row.isUser
+                    ? AnyShapeStyle(Color.blue.opacity(0.12))
+                    : AnyShapeStyle(Color.secondary.opacity(0.12)),
+                in: RoundedRectangle(cornerRadius: 14)
+            )
+
+            if !row.isUser {
+                Spacer(minLength: 48)
+            }
+        }
+    }
 
     private var transcriptView: some View {
         VStack(alignment: .leading, spacing: 8) {

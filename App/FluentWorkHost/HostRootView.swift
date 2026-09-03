@@ -247,7 +247,21 @@ struct HostRootView: View {
             liveTranscript: state.liveTranscript,
             lastBadge: state.lastBadge,
             badgeHits: state.badgeHits,
-            failureReason: state.failureReason
+            failureReason: state.failureReason,
+            timeline: state.timeline.map { item in
+                SpeakingRoomTimelineRow(
+                    id: item.id.uuidString,
+                    isUser: item.speaker == .user,
+                    text: item.text,
+                    isListening: item.status == .listening,
+                    hits: item.hits.map { hit in
+                        SpeakingRoomTimelineHit(
+                            id: "\(hit.phraseBlockID ?? "badge")-\(item.id.uuidString)",
+                            badge: hit.badge
+                        )
+                    }
+                )
+            }
         )
     }
 
