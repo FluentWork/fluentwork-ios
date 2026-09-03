@@ -206,12 +206,18 @@ private func interpretSpeechSessionSideEffect(
 
                     case let .control(.aiTurnEnd(turnID)):
                         await dispatchBox.dispatch(.speakingRoom(.session(.aiTurnEnd)))
+                        await dispatchBox.dispatch(.speakingRoom(.aiTurnFinalized(turnID: turnID)))
                         if let turnID {
                             timings.markTurnEnded(turnID, source: "ios", stage: "ai_turn_end")
                         }
                         timings.mark(
                             event: "ai_turn_end",
                             properties: ["turn_id": turnID ?? "nil"]
+                        )
+
+                    case let .control(.aiTextDelta(text)):
+                        await dispatchBox.dispatch(
+                            .speakingRoom(.aiTurnTextDelta(text: text, turnID: nil))
                         )
 
                     case let .control(.clientASRTranscription(text, turnID)):
@@ -318,6 +324,7 @@ private func interpretSpeechSessionSideEffect(
                                 ]
                             )
                             await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechEnd(turnID: turnID))))
+                            await dispatchBox.dispatch(.speakingRoom(.userTurnStarted(turnID: turnID)))
                             
                             // Clear buffer after use
                             pcmBuffer.removeAll()
