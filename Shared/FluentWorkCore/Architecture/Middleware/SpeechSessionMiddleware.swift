@@ -9,7 +9,17 @@ public enum SpeechSessionTaskID {
     public static let reconnectWindow: CancellationID = "speechSession.reconnectWindow"
     public static let transportEvents: CancellationID = "speechSession.transportEvents"
     public static let audioEngineEvents: CancellationID = "speechSession.audioEngineEvents"
+    // B15: turn-level timeout — fires when the backend's 60s collectTurn window
+    // expires without an ai.turn.end. iOS uses this as a client-side fallback so
+    // we don't hang indefinitely if the backend fails to surface the outcome.
+    public static let turnTimeout: CancellationID = "speechSession.turnTimeout"
 }
+
+/// Default timeout for a single user turn (backend defaultVolcTurnWait=60s + 10s buffer).
+/// B15: iOS uses this as a client-side fallback. When this fires, we cancel the
+/// transport event loop (stop sending audio), stop capture, and end the session.
+/// If ai.turn.end arrives first, the timer is cancelled via its CancellationID.
+private let defaultTurnTimeoutSeconds: Double = 70
 
 /// Owns SpeechSessionMachine invocation + SideEffect interpretation.
 ///
@@ -26,6 +36,10 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
         tracker: resolvedContainer.tracker(),
         clock: resolvedContainer.clock().now
     )
+    // B15: turn-level timeout tracking — set when we enter .processing, cleared
+    // when ai.turn.end arrives or the session ends. Lives here so both the
+    // middleware dispatch path and the transport task can access it.
+    let turnTimeoutTracking = TurnTimeoutTracking()
 
     return { store, action, next in
         guard case let .speakingRoom(.session(event)) = action else {
@@ -34,12 +48,20 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
 
         var session = store.state.speakingRoom.session
         let preEventCount = session.userTurnCount
+        let previousPhase = session.phase
         let effects = SpeechSessionMachine.reduce(&session, event: event)
         // Keep the audio loop's "current count" in sync. The audio loop
         // computes `turnID = "turn-\(count + 1)"` at speech-end time —
         // this is the same value the machine's reduce will use to do the
         // transition's count increment, so the two never drift.
         turnCounter.set(session.userTurnCount)
+
+        // B15: flag to start the turn timeout when we enter .processing from
+        // .recording. The timer is started inside the transport task so that
+        // cancellation of the transport task also cancels the timer (same
+        // CancellationID = turnTimeout).
+        let enteredProcessing = previousPhase == .recording && session.phase == .processing
+
         let apply = next(.speakingRoom(.applySession(session)))
         let interpreted = effects.map {
             interpretSpeechSessionSideEffect(
@@ -48,7 +70,9 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
                 dispatch: { store.dispatch($0) },
                 pendingTurnID: pendingTurnID(for: event, currentCount: preEventCount),
                 turnCounter: turnCounter,
-                timings: timings
+                timings: timings,
+                startTurnTimeout: enteredProcessing,
+                turnTimeoutTracking: turnTimeoutTracking
             )
         }
         return .merge([apply] + interpreted)
@@ -91,13 +115,44 @@ internal final class TurnCountBox: @unchecked Sendable {
     func set(_ newValue: Int) { storage.withLock { $0 = newValue } }
 }
 
+/// B15: Tracks whether a turn-level timeout is currently armed.
+/// Used to prevent double-firing when both the timeout task and ai.turn.end
+/// race at the boundary. Cancelation is stored as a bool (not a Task) so the
+/// transport loop can check it without awaiting.
+internal final class TurnTimeoutTracking: @unchecked Sendable {
+    private let storage = OSAllocatedUnfairLock<Bool>(initialState: false)
+
+    /// Returns true if the timeout was successfully armed (no prior armed timeout).
+    @discardableResult
+    func arm() -> Bool {
+        storage.withLock {
+            if $0 { return false }
+            $0 = true
+            return true
+        }
+    }
+
+    /// Disarms any armed timeout. Safe to call multiple times.
+    func disarm() {
+        storage.withLock { $0 = false }
+    }
+
+    var isArmed: Bool {
+        storage.withLock { $0 }
+    }
+}
+
 private func interpretSpeechSessionSideEffect(
     _ effect: SpeechSessionSideEffect,
     container: Container,
     dispatch: @escaping @MainActor (AppAction) -> Void,
     pendingTurnID: String?,
     turnCounter: TurnCountBox,
-    timings: SpeechSessionTimingsRecorder
+    timings: SpeechSessionTimingsRecorder,
+    // B15: turn timeout parameters — startTurnTimeout signals that the transport
+    // task should arm a 70s timer; turnTimeoutTracking records the armed state.
+    startTurnTimeout: Bool = false,
+    turnTimeoutTracking: TurnTimeoutTracking? = nil
 ) -> Effect<AppAction> {
     let audioEngine = container.audioEngine()
     let speechClient = container.speechSessionClient()
@@ -118,6 +173,8 @@ private func interpretSpeechSessionSideEffect(
         timings.mark(event: "playback_stop")
     case .startReconnectWindow:
         timings.mark(event: "reconnect_window_start")
+    case .turnTimeoutExpired:
+        timings.mark(event: "turn_timeout_expired", properties: ["stage": "turn_boundary"])
     case .endSession:
         timings.mark(event: "session_end")
     case .sendTextMessage:
@@ -139,6 +196,12 @@ private func interpretSpeechSessionSideEffect(
 
     switch effect {
     case .createSession:
+        // B15: arm the turn timeout if we are entering .processing immediately
+        // (e.g., session.start triggered a pre-existing processing state). In
+        // the normal path the timeout is armed when we transition .recording→.processing.
+        if startTurnTimeout {
+            turnTimeoutTracking?.arm()
+        }
         return .merge(
             .task {
                 do {
@@ -157,6 +220,23 @@ private func interpretSpeechSessionSideEffect(
                 return nil
             },
             .task(id: SpeechSessionTaskID.transportEvents) {
+                // B15: start the turn timeout timer if we entered .processing as part
+                // of this session start (e.g., immediately after session.start).
+                // The timer is part of the transport task so cancellation of the
+                // transport task cancels the timer via the same CancellationID.
+                if startTurnTimeout, let tracking = turnTimeoutTracking {
+                    Task {
+                        try? await Task.sleep(for: .seconds(defaultTurnTimeoutSeconds))
+                        // Check if still armed (ai.turn.end didn't cancel it) before firing.
+                        guard tracking.isArmed else { return }
+                        guard !Task.isCancelled else { return }
+                        tracker.track(
+                            event: "turn_timeout_fired",
+                            properties: ["timeout_sec": String(defaultTurnTimeoutSeconds)]
+                        )
+                        await dispatchBox.dispatch(.speakingRoom(.session(.failed("turn_timeout"))))
+                    }
+                }
                 for await event in speechClient.transportEvents() {
                     if Task.isCancelled { return nil }
 
@@ -169,7 +249,8 @@ private func interpretSpeechSessionSideEffect(
                         case .feedbackBadge:  typeTag = "feedback.badge"
                         case .userSpeechStart: typeTag = "user.speech.start"
                         case .userSpeechEnd:   typeTag = "user.speech.end"
-                        case .aiTurnEnd:      typeTag = "ai.turn.end"
+                        case let .aiTurnEnd(_, outcome):
+                            typeTag = "ai.turn.end" + (outcome.map { "(\($0.rawValue))" } ?? "")
                         case .ping:            typeTag = "ping"
                         case .pong:            typeTag = "pong"
                         case .clientASRTranscription: typeTag = "client.asr.transcription"
@@ -206,16 +287,31 @@ private func interpretSpeechSessionSideEffect(
                         )
                         await audioEngine.play(frame: frame)
 
-                    case let .control(.aiTurnEnd(turnID)):
-                        await dispatchBox.dispatch(.speakingRoom(.session(.aiTurnEnd)))
-                        await dispatchBox.dispatch(.speakingRoom(.aiTurnFinalized(turnID: turnID)))
-                        if let turnID {
-                            timings.markTurnEnded(turnID, source: "ios", stage: "ai_turn_end")
+                    case let .control(.aiTurnEnd(turnID, outcome)):
+                        // B15: ai.turn.end arrived — cancel the turn timeout timer so it
+                        // doesn't fire and cause a duplicate session.end. Safe to call
+                        // even if the timer was never started.
+                        turnTimeoutTracking?.disarm()
+                        // B15: when backend explicitly reports outcome=timeout, dispatch
+                        // the same .failed("turn_timeout") as the 70s client-side fallback.
+                        // This makes the explicit timeout path consistent with the implicit
+                        // 70s timer path — both end the session identically.
+                        if outcome == .timeout {
+                            await dispatchBox.dispatch(.speakingRoom(.session(.failed("turn_timeout"))))
+                        } else {
+                            await dispatchBox.dispatch(.speakingRoom(.session(.aiTurnEnd)))
+                            await dispatchBox.dispatch(.speakingRoom(.aiTurnFinalized(turnID: turnID)))
+                            if let turnID {
+                                timings.markTurnEnded(turnID, source: "ios", stage: "ai_turn_end")
+                            }
+                            timings.mark(
+                                event: "ai_turn_end",
+                                properties: [
+                                    "turn_id": turnID ?? "nil",
+                                    "outcome": outcome?.rawValue ?? "nil", // B15: log outcome
+                                ]
+                            )
                         }
-                        timings.mark(
-                            event: "ai_turn_end",
-                            properties: ["turn_id": turnID ?? "nil"]
-                        )
 
                     case let .control(.aiTextDelta(text)):
                         await dispatchBox.dispatch(
@@ -381,7 +477,21 @@ private func interpretSpeechSessionSideEffect(
             return nil
         }
 
+    // B15: turn timeout fired — backend's 60s collectTurn window expired.
+    // Dispatch a failed event so the machine transitions to .failed, which
+    // then triggers endSession. disarm() is called in endSession too but
+    // we disarm here for safety in case endSession is never reached.
+    case .turnTimeoutExpired:
+        turnTimeoutTracking?.disarm()
+        return .task {
+            await dispatchBox.dispatch(.speakingRoom(.session(.failed("turn_timeout"))))
+            return nil
+        }
+
     case .endSession:
+        // B15: cancel all session-scoped tasks including the turn timeout.
+        // disarm() is safe to call even if the timer was never started.
+        turnTimeoutTracking?.disarm()
         return .merge(
             .cancel(id: SpeechSessionTaskID.transportEvents),
             .cancel(id: SpeechSessionTaskID.audioEngineEvents),

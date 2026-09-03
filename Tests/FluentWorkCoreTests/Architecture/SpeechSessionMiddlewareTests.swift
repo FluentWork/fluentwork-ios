@@ -300,7 +300,7 @@ struct SpeechSessionMiddlewareB14Tests {
         speechClient.emit(.audio(frame))
         try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
 
-        speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1")))
+        speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: nil)))
         try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
 
         // Second turn

@@ -45,6 +45,12 @@ public enum SocketTransportEventMapper {
         case let .failure(error):
             return .failed(error.userFacingMessage)
 
+        /// B15: ai.turn.end with explicit outcome. Maps to aiTurnEndReceived so
+        /// the middleware can branch on the outcome value (e.g., outcome=timeout
+        /// dispatches .failed("turn_timeout")).
+        case let .control(.aiTurnEnd(turnID, outcome)):
+            return .aiTurnEndReceived(turnID: turnID, outcome: outcome)
+
         case .stateChanged, .control, .audio, .diagnostic:
             return nil
         }
@@ -78,6 +84,9 @@ public enum SpeakingRoomTransportAction: Equatable, Sendable {
     )
     /// B14: Server-side ASR transcription received via WSS relay from Volcengine Duplex.
     case serverASRReceived(text: String, turnID: String?)
+    /// B15: ai.turn.end received. `outcome` carries the explicit backend status
+    /// (ok / partial / timeout / error); nil outcome means the old pre-B15 protocol.
+    case aiTurnEndReceived(turnID: String?, outcome: WSControlFrame.TurnOutcome?)
     case failed(String)
     case networkLost
 }

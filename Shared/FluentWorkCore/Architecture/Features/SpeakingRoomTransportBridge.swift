@@ -25,6 +25,12 @@ extension SpeakingRoomAction {
             self = .session(.networkLost)
         case let .serverASRReceived(text, turnID):
             self = .serverASRReceived(text: text, turnID: turnID)
+        // B15: ai.turn.end with explicit outcome. The bridge exists to satisfy the
+        // Swift exhaustive switch — the actual handling is done directly in
+        // SpeechSessionMiddleware via the SocketTransportEvent.switch so the outcome
+        // value can be inspected and drive the .failed("turn_timeout") path.
+        case let .aiTurnEndReceived(turnID, outcome):
+            self = .aiTurnEndReceived(turnID: turnID, outcome: outcome)
         }
     }
 }

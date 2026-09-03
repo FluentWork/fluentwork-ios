@@ -27,7 +27,19 @@ public enum WSControlFrame: Equatable, Sendable {
     case clientASRTranscription(text: String, turnID: String?)
     case aiTextDelta(text: String)
     case aiAudioChunk(sequence: UInt32)
-    case aiTurnEnd(turnID: String?)
+    /// B15: explicit terminal status of a turn, mirroring backend voicepoc.TurnOutcome.
+    case aiTurnEnd(turnID: String?, outcome: TurnOutcome?)
+
+    public enum TurnOutcome: String, Equatable, Sendable, Codable {
+        /// Turn completed with a real AI response (response.done with content).
+        case ok = "ok"
+        /// Wait window expired but some progress was salvaged (ASR done, no TTS).
+        case partial = "partial"
+        /// Wait window expired with no progress; iOS should fall back to timeout UX.
+        case timeout = "timeout"
+        /// Provider sent an error event or recv failed.
+        case error = "error"
+    }
     case interrupt
     /// Client keepalive / server keepalive echo. `ts` mirrors the backend
     /// `voiceproto.Ping` field for diagnostics.
@@ -84,6 +96,7 @@ extension WSControlFrame: Codable {
         case text
         case sequence
         case turnID = "turn_id"
+        case outcome // B15
         case ts
         case badge
         case phraseBlockID = "phrase_block_id"
@@ -147,7 +160,10 @@ extension WSControlFrame: Codable {
             self = .aiAudioChunk(sequence: try container.decode(UInt32.self, forKey: .sequence))
 
         case "ai.turn.end":
-            self = .aiTurnEnd(turnID: try container.decodeIfPresent(String.self, forKey: .turnID))
+            self = .aiTurnEnd(
+                turnID: try container.decodeIfPresent(String.self, forKey: .turnID),
+                outcome: try container.decodeIfPresent(TurnOutcome.self, forKey: .outcome) // B15
+            )
 
         case "interrupt":
             self = .interrupt
@@ -228,9 +244,10 @@ extension WSControlFrame: Codable {
             try container.encode("ai.audio.chunk", forKey: .type)
             try container.encode(sequence, forKey: .sequence)
 
-        case let .aiTurnEnd(turnID):
+        case let .aiTurnEnd(turnID, outcome):
             try container.encode("ai.turn.end", forKey: .type)
             try container.encodeIfPresent(turnID, forKey: .turnID)
+            try container.encodeIfPresent(outcome, forKey: .outcome) // B15
 
         case .interrupt:
             try container.encode("interrupt", forKey: .type)

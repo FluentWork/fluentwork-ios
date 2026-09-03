@@ -536,7 +536,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .aiSpeaking
     }
-    speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1")))
+    speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: nil)))
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .waitingUser
     }
@@ -748,7 +748,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(await audioEngine.snapshotPlayedFrames() == [frame])
     #expect(store.state.speakingRoom.phase == .aiSpeaking)
 
-    speechClient.emit(.control(.aiTurnEnd(turnID: "turn-7")))
+    speechClient.emit(.control(.aiTurnEnd(turnID: "turn-7", outcome: nil)))
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .waitingUser
     }

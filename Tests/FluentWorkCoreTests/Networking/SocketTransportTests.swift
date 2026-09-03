@@ -12,7 +12,7 @@ import Testing
         .userSpeechEnd(text: "thank you", turnID: "turn-1"),
         .aiTextDelta(text: "你好"),
         .aiAudioChunk(sequence: 42),
-        .aiTurnEnd(turnID: "turn-42"),
+        .aiTurnEnd(turnID: "turn-42", outcome: nil),
         .interrupt,
         .ping(ts: 1_728_000_000_000),
         .pong(ts: 1_728_000_000_000),

@@ -1,4 +1,5 @@
 import Foundation
+import FluentWorkNetworking
 import TGReduxKit
 
 // MARK: - Turn timeline (design 22: A 回合时间线 + B 二段式反馈)
@@ -145,6 +146,10 @@ public enum SpeakingRoomAction: Equatable, Sendable, Action {
     /// with the authoritative server text (for badge hit detection) and dispatches
     /// this action so the reducer updates `liveTranscript` for display.
     case serverASRReceived(text: String, turnID: String?)
+    /// B15: ai.turn.end received with explicit backend outcome. When outcome is
+    /// .timeout, the middleware dispatches .failed("turn_timeout") to match the
+    /// 70s client-side fallback behavior. Nil outcome means pre-B15 protocol.
+    case aiTurnEndReceived(turnID: String?, outcome: WSControlFrame.TurnOutcome?)
 }
 
 public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> = { state, action in
@@ -262,5 +267,11 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
                 )
             )
         }
+
+    // B15: aiTurnEndReceived is handled in SpeechSessionMiddleware (dispatches
+    // .session(.aiTurnEnd) / .aiTurnFinalized when outcome != timeout). The
+    // reducer just discards it — it has no display-side effect.
+    case .aiTurnEndReceived:
+        break
     }
 }

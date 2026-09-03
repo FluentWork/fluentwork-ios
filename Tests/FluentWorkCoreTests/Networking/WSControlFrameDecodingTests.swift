@@ -65,3 +65,48 @@ private let backendDevEchoFeedbackBadgeJSON = #"""
         _ = try WSControlFrameCodec.decode(Data(json.utf8))
     }
 }
+
+// MARK: - B15: ai.turn.end with explicit outcome
+
+@Test func aiTurnEndWithOutcomeOk() throws {
+    // B15: backend stamps outcome="ok" when the turn completed normally.
+    let json = #"{"type":"ai.turn.end","turn_id":"turn-1","outcome":"ok"}"#
+    let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
+    #expect(decoded == .aiTurnEnd(turnID: "turn-1", outcome: .ok))
+}
+
+@Test func aiTurnEndWithOutcomeTimeout() throws {
+    // B15: outcome="timeout" tells iOS the backend's 60s collectTurn window
+    // expired; iOS dispatches .failed("turn_timeout") to match the 70s
+    // client-side fallback behavior.
+    let json = #"{"type":"ai.turn.end","turn_id":"turn-3","outcome":"timeout"}"#
+    let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
+    #expect(decoded == .aiTurnEnd(turnID: "turn-3", outcome: .timeout))
+}
+
+@Test func aiTurnEndWithOutcomePartial() throws {
+    let json = #"{"type":"ai.turn.end","turn_id":"turn-2","outcome":"partial"}"#
+    let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
+    #expect(decoded == .aiTurnEnd(turnID: "turn-2", outcome: .partial))
+}
+
+@Test func aiTurnEndWithOutcomeError() throws {
+    let json = #"{"type":"ai.turn.end","turn_id":"turn-4","outcome":"error"}"#
+    let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
+    #expect(decoded == .aiTurnEnd(turnID: "turn-4", outcome: .error))
+}
+
+@Test func aiTurnEndWithoutOutcomeDecodesAsNil() throws {
+    // B15: pre-B15 backend versions do not emit `outcome`. Decode must
+    // succeed with `outcome == nil` so the new field is backward-compatible.
+    let json = #"{"type":"ai.turn.end","turn_id":"turn-1"}"#
+    let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
+    #expect(decoded == .aiTurnEnd(turnID: "turn-1", outcome: nil))
+}
+
+@Test func aiTurnEndWithTurnIDOnly() throws {
+    // Minimal ai.turn.end — both outcome and turn_id optional.
+    let json = #"{"type":"ai.turn.end"}"#
+    let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
+    #expect(decoded == .aiTurnEnd(turnID: nil, outcome: nil))
+}
