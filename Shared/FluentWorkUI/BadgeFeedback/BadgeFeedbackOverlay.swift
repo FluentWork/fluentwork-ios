@@ -37,6 +37,13 @@ public struct BadgeFeedbackViewModel: Equatable, Sendable {
         Array(badges.prefix(maxVisible))
     }
 
+    /// The badge currently occupying the overlay slot. Multiple recent hits
+    /// rotate in the same position instead of stacking — `I11` 53 §2.4
+    /// "多次命中应在同一位置轮换 / 折叠显示，不刷屏".
+    public var currentVisibleBadge: BadgeFeedbackRow? {
+        visibleBadges.last
+    }
+
     public var isEmpty: Bool { visibleBadges.isEmpty }
 }
 
@@ -58,8 +65,8 @@ public struct BadgeFeedbackOverlay: View {
 
     public var body: some View {
         VStack(spacing: 6) {
-            ForEach(model.visibleBadges) { row in
-                BadgeFeedbackRowView(row: row)
+            if let badge = model.currentVisibleBadge {
+                BadgeFeedbackRowView(row: badge)
                     .transition(
                         .asymmetric(
                             insertion: .move(edge: .top).combined(with: .opacity),
@@ -137,7 +144,7 @@ private struct BadgeFeedbackRowView: View {
       maxVisible: 3
     )
 
-    public static let previewStacked = BadgeFeedbackViewModel(
+    public static let previewRotating = BadgeFeedbackViewModel(
       badges: [
         BadgeFeedbackRow(id: "p-1", badge: "表达自然", tier: .nextTurnConfirm),
         BadgeFeedbackRow(id: "p-2", badge: "节奏稳定", tier: .badgeOnly),
