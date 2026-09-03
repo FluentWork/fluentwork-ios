@@ -223,7 +223,12 @@ private func interpretSpeechSessionSideEffect(
                         )
 
                     case let .control(.clientASRTranscription(text, turnID)):
-                        await dispatchBox.dispatch(.speakingRoom(.session(.serverASRReceived(text: text, turnID: turnID))))
+                        // Display-layer transcript (not a Machine event):
+                        // `.session(.serverASRReceived)` is intentionally a
+                        // no-op in SpeechSessionMachine.
+                        await dispatchBox.dispatch(
+                            .speakingRoom(.serverASRReceived(text: text, turnID: turnID))
+                        )
                         tracker.track(
                             event: "server_asr_received_full",
                             properties: [

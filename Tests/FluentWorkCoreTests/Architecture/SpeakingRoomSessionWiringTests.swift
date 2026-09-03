@@ -655,6 +655,47 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 }
 
 @MainActor
+@Test func transportServerASRUpdatesTimelineListeningRow() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await speechClient.snapshotStartCalls() == 1
+    }
+    store.dispatch(.speakingRoom(.session(.socketReady)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .aiSpeaking
+    }
+
+    audioEngine.emit(.speechStarted)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .recording
+    }
+    audioEngine.emit(.speechEnded)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.timeline.last?.status == .listening
+    }
+
+    speechClient.emit(.control(.clientASRTranscription(
+        text: "server transcript",
+        turnID: "volc-turn-1"
+    )))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.timeline.last?.text == "server transcript"
+    }
+
+    #expect(store.state.speakingRoom.timeline.last?.speaker == .user)
+    #expect(store.state.speakingRoom.timeline.last?.status == .finalized)
+    #expect(store.state.speakingRoom.liveTranscript == "server transcript")
+}
+
+@MainActor
 @Test func speechSessionMiddlewareConsumesAudioEngineEvents() async {
     let container = Container()
     container.reset()
