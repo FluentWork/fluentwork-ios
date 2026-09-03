@@ -14,6 +14,8 @@ import Testing
         .aiAudioChunk(sequence: 42),
         .aiTurnEnd(turnID: "turn-42"),
         .interrupt,
+        .ping(ts: 1_728_000_000_000),
+        .pong(ts: 1_728_000_000_000),
         .feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .soft, turnID: "turn-1"),
         .sessionEnd(reason: "completed"),
         .error(code: "provider_audio_failed", message: "use of closed network connection"),

@@ -14,21 +14,38 @@ private actor ActiveSessionBox {
     }
 }
 
+private actor HeartbeatTaskBox {
+    private var task: Task<Void, Never>?
+
+    func set(_ task: Task<Void, Never>) {
+        self.task = task
+    }
+
+    func cancel() {
+        task?.cancel()
+        task = nil
+    }
+}
+
 /// Speaks-room session facade: guest token → POST /sessions → WSS connect.
 public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unchecked Sendable {
     private let api: SessionAPIClientProtocol
     private let tokens: AuthTokenStoreProtocol
     private let transport: SocketTransportProtocol
     private let activeSession = ActiveSessionBox()
+    private let heartbeatTask = HeartbeatTaskBox()
+    private let heartbeatInterval: Duration
 
     public init(
         api: SessionAPIClientProtocol,
         tokens: AuthTokenStoreProtocol,
-        transport: SocketTransportProtocol
+        transport: SocketTransportProtocol,
+        heartbeatInterval: Duration = .seconds(30)
     ) {
         self.api = api
         self.tokens = tokens
         self.transport = transport
+        self.heartbeatInterval = heartbeatInterval
     }
 
     public func startSession() async throws {
@@ -78,10 +95,27 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
                 )
             )
         } catch {
+            await heartbeatTask.cancel()
             await transport.disconnect()
             await activeSession.set(nil)
             throw error
         }
+        await startHeartbeat()
+    }
+
+    private func startHeartbeat() async {
+        await heartbeatTask.cancel()
+        let transport = self.transport
+        let interval = self.heartbeatInterval
+        let task = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: interval)
+                guard !Task.isCancelled else { return }
+                let ts = UInt64(Date().timeIntervalSince1970 * 1000)
+                try? await transport.send(control: .ping(ts: ts))
+            }
+        }
+        await heartbeatTask.set(task)
     }
 
     public func activeSessionID() async -> String? {
@@ -138,6 +172,7 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
     }
 
     public func endSession() async {
+        await heartbeatTask.cancel()
         // The gateway persists the session (and enqueues the review job) only
         // when it receives an explicit `session.end` control frame. Closing the
         // socket without it leaves the session in a pending/active state.

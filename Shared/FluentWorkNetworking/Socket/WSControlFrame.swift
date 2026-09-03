@@ -29,6 +29,10 @@ public enum WSControlFrame: Equatable, Sendable {
     case aiAudioChunk(sequence: UInt32)
     case aiTurnEnd(turnID: String?)
     case interrupt
+    /// Client keepalive / server keepalive echo. `ts` mirrors the backend
+    /// `voiceproto.Ping` field for diagnostics.
+    case ping(ts: UInt64?)
+    case pong(ts: UInt64?)
     case feedbackBadge(
         badge: String,
         phraseBlockID: String?,
@@ -80,6 +84,7 @@ extension WSControlFrame: Codable {
         case text
         case sequence
         case turnID = "turn_id"
+        case ts
         case badge
         case phraseBlockID = "phrase_block_id"
         case tier
@@ -146,6 +151,12 @@ extension WSControlFrame: Codable {
 
         case "interrupt":
             self = .interrupt
+
+        case "ping":
+            self = .ping(ts: try container.decodeIfPresent(UInt64.self, forKey: .ts))
+
+        case "pong":
+            self = .pong(ts: try container.decodeIfPresent(UInt64.self, forKey: .ts))
 
         case "feedback.badge":
             self = .feedbackBadge(
@@ -223,6 +234,14 @@ extension WSControlFrame: Codable {
 
         case .interrupt:
             try container.encode("interrupt", forKey: .type)
+
+        case let .ping(ts):
+            try container.encode("ping", forKey: .type)
+            try container.encodeIfPresent(ts, forKey: .ts)
+
+        case let .pong(ts):
+            try container.encode("pong", forKey: .type)
+            try container.encodeIfPresent(ts, forKey: .ts)
 
         case let .feedbackBadge(badge, phraseBlockID, tier, turnID):
             try container.encode("feedback.badge", forKey: .type)

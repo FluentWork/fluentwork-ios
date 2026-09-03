@@ -170,6 +170,8 @@ private func interpretSpeechSessionSideEffect(
                         case .userSpeechStart: typeTag = "user.speech.start"
                         case .userSpeechEnd:   typeTag = "user.speech.end"
                         case .aiTurnEnd:      typeTag = "ai.turn.end"
+                        case .ping:            typeTag = "ping"
+                        case .pong:            typeTag = "pong"
                         case .clientASRTranscription: typeTag = "client.asr.transcription"
                         case .sessionReady:    typeTag = "session.ready"
                         case .sessionStart:   typeTag = "session.start"

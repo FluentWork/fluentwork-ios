@@ -438,6 +438,55 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
 }
 
 @MainActor
+@Test func defaultSpeechSessionClientSendsKeepalivePing() async throws {
+    let transport = RecordingEndTransport()
+    let storage = InMemorySecureStorage()
+    let tokenStore = SecureAuthTokenStore(
+        storage: storage,
+        idGenerator: FixedIDGenerator(value: UUID(uuidString: "77777777-7777-7777-7777-777777777777")!)
+    )
+
+    let guestJSON = Data(
+        """
+        {"user_id":"u-1","is_guest":true,"status":"active","access_token":"access-1","refresh_token":"r","token_type":"Bearer","expires_in":3600}
+        """.utf8
+    )
+    let sessionJSON = Data(
+        """
+        {"session_id":"s-ping","wss_url":"ws://127.0.0.1:9/ws","ticket":"tik","ticket_expires_in":60,"ticket_expires_at":"2026-08-26T00:00:00Z","scene_type":"standup","status":"created"}
+        """.utf8
+    )
+    let api = SessionAPIClient(
+        network: StubNetworkClient { target in
+            switch target.path {
+            case "/auth/guest": return guestJSON
+            case "/sessions": return sessionJSON
+            default:
+                Issue.record("unexpected \(target.path)")
+                return Data()
+            }
+        },
+        baseURL: URL(string: "http://127.0.0.1:8080/api/v1")!
+    )
+    let client = DefaultSpeechSessionClient(
+        api: api,
+        tokens: tokenStore,
+        transport: transport,
+        heartbeatInterval: .milliseconds(50)
+    )
+
+    try await client.startSession()
+    try? await Task.sleep(for: .milliseconds(180))
+    let controls = await transport.snapshotSentControls()
+    #expect(controls.contains { frame in
+        if case .ping = frame { return true }
+        return false
+    })
+
+    await client.endSession()
+}
+
+@MainActor
 @Test func defaultSpeechSessionClientClearsActiveSessionWhenStartFails() async throws {
     let transport = FailingSessionStartTransport()
     let storage = InMemorySecureStorage()
