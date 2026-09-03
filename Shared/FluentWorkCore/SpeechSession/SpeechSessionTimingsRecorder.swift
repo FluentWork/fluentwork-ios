@@ -25,6 +25,10 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
     private var lastMarkTime: Date?
     private var lastEvent: String?
     private var turnStartTimes: [String: Date] = [:]
+    // B15-I3: vendor log_id captured from the first ai.turn.end frame.
+    // Forwarded to all subsequent tracker events so the iOS trace can be
+    // correlated with the backend and vendor-side logs.
+    private var vendorLogID: String?
 
     public init(
         tracker: TrackerClientProtocol,
@@ -44,6 +48,26 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
         lastMarkTime = now
         lastEvent = nil
         turnStartTimes.removeAll()
+        vendorLogID = nil
+    }
+
+    /// B15-I3: stores the vendor log_id extracted from the first ai.turn.end frame.
+    /// Once set, all subsequent `mark()` calls automatically include `log_id`
+    /// in the tracker properties so the full iOS trace can be correlated with
+    /// the backend and Volcengine diagnostic logs.
+    public func setLogID(_ logID: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        if vendorLogID == nil {
+            vendorLogID = logID
+        }
+    }
+
+    /// Returns the current vendor log_id, if set.
+    public func logID() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return vendorLogID
     }
 
     /// Records a milestone and emits `timing_<event>` with `delta_ms` /
@@ -72,6 +96,11 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
             props["total_ms"] = Self.format(totalMs)
         }
         props["prev_event"] = snapshot.prev ?? "none"
+        // B15-I3: include vendor log_id in every tracker event so the full iOS
+        // trace can be joined with backend and vendor logs on log_id.
+        if let logID = lock.locked({ vendorLogID }) {
+            props["log_id"] = logID
+        }
 
         tracker.track(event: "timing_\(event)", properties: props)
     }

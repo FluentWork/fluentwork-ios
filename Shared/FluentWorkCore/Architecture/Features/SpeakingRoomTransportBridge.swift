@@ -29,8 +29,9 @@ extension SpeakingRoomAction {
         // Swift exhaustive switch — the actual handling is done directly in
         // SpeechSessionMiddleware via the SocketTransportEvent.switch so the outcome
         // value can be inspected and drive the .failed("turn_timeout") path.
-        case let .aiTurnEndReceived(turnID, outcome):
-            self = .aiTurnEndReceived(turnID: turnID, outcome: outcome)
+        // B15-I3: logID is forwarded so the middleware can store it in the tracker.
+        case let .aiTurnEndReceived(turnID, outcome, logID):
+            self = .aiTurnEndReceived(turnID: turnID, outcome: outcome, logID: logID)
         }
     }
 }

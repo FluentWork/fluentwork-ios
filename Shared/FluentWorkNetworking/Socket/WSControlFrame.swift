@@ -28,7 +28,9 @@ public enum WSControlFrame: Equatable, Sendable {
     case aiTextDelta(text: String)
     case aiAudioChunk(sequence: UInt32)
     /// B15: explicit terminal status of a turn, mirroring backend voicepoc.TurnOutcome.
-    case aiTurnEnd(turnID: String?, outcome: TurnOutcome?)
+    /// B15-I3: log_id carries the vendor (Volcengine) trace identifier from the
+    /// backend handshake, enabling iOS tracker events to be correlated with vendor logs.
+    case aiTurnEnd(turnID: String?, outcome: TurnOutcome?, logID: String?)
 
     public enum TurnOutcome: String, Equatable, Sendable, Codable {
         /// Turn completed with a real AI response (response.done with content).
@@ -97,6 +99,7 @@ extension WSControlFrame: Codable {
         case sequence
         case turnID = "turn_id"
         case outcome // B15
+        case logID = "log_id" // B15-I3
         case ts
         case badge
         case phraseBlockID = "phrase_block_id"
@@ -162,7 +165,8 @@ extension WSControlFrame: Codable {
         case "ai.turn.end":
             self = .aiTurnEnd(
                 turnID: try container.decodeIfPresent(String.self, forKey: .turnID),
-                outcome: try container.decodeIfPresent(TurnOutcome.self, forKey: .outcome) // B15
+                outcome: try container.decodeIfPresent(TurnOutcome.self, forKey: .outcome), // B15
+                logID: try container.decodeIfPresent(String.self, forKey: .logID) // B15-I3
             )
 
         case "interrupt":
@@ -244,10 +248,11 @@ extension WSControlFrame: Codable {
             try container.encode("ai.audio.chunk", forKey: .type)
             try container.encode(sequence, forKey: .sequence)
 
-        case let .aiTurnEnd(turnID, outcome):
+        case let .aiTurnEnd(turnID, outcome, logID):
             try container.encode("ai.turn.end", forKey: .type)
             try container.encodeIfPresent(turnID, forKey: .turnID)
             try container.encodeIfPresent(outcome, forKey: .outcome) // B15
+            try container.encodeIfPresent(logID, forKey: .logID) // B15-I3
 
         case .interrupt:
             try container.encode("interrupt", forKey: .type)

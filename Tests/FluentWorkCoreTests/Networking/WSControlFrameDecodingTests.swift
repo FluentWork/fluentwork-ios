@@ -66,47 +66,49 @@ private let backendDevEchoFeedbackBadgeJSON = #"""
     }
 }
 
-// MARK: - B15: ai.turn.end with explicit outcome
+// MARK: - B15: ai.turn.end with explicit outcome + B15-I3: log_id trace
 
 @Test func aiTurnEndWithOutcomeOk() throws {
     // B15: backend stamps outcome="ok" when the turn completed normally.
-    let json = #"{"type":"ai.turn.end","turn_id":"turn-1","outcome":"ok"}"#
+    // B15-I3: log_id carries the Volcengine vendor trace identifier.
+    let json = #"{"type":"ai.turn.end","turn_id":"turn-1","outcome":"ok","log_id":"volc-abc123"}"#
     let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
-    #expect(decoded == .aiTurnEnd(turnID: "turn-1", outcome: .ok))
+    #expect(decoded == .aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: "volc-abc123"))
 }
 
 @Test func aiTurnEndWithOutcomeTimeout() throws {
     // B15: outcome="timeout" tells iOS the backend's 60s collectTurn window
     // expired; iOS dispatches .failed("turn_timeout") to match the 70s
     // client-side fallback behavior.
-    let json = #"{"type":"ai.turn.end","turn_id":"turn-3","outcome":"timeout"}"#
+    let json = #"{"type":"ai.turn.end","turn_id":"turn-3","outcome":"timeout","log_id":"volc-xyz789"}"#
     let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
-    #expect(decoded == .aiTurnEnd(turnID: "turn-3", outcome: .timeout))
+    #expect(decoded == .aiTurnEnd(turnID: "turn-3", outcome: .timeout, logID: "volc-xyz789"))
 }
 
 @Test func aiTurnEndWithOutcomePartial() throws {
     let json = #"{"type":"ai.turn.end","turn_id":"turn-2","outcome":"partial"}"#
     let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
-    #expect(decoded == .aiTurnEnd(turnID: "turn-2", outcome: .partial))
+    #expect(decoded == .aiTurnEnd(turnID: "turn-2", outcome: .partial, logID: nil))
 }
 
 @Test func aiTurnEndWithOutcomeError() throws {
     let json = #"{"type":"ai.turn.end","turn_id":"turn-4","outcome":"error"}"#
     let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
-    #expect(decoded == .aiTurnEnd(turnID: "turn-4", outcome: .error))
+    #expect(decoded == .aiTurnEnd(turnID: "turn-4", outcome: .error, logID: nil))
 }
 
 @Test func aiTurnEndWithoutOutcomeDecodesAsNil() throws {
     // B15: pre-B15 backend versions do not emit `outcome`. Decode must
     // succeed with `outcome == nil` so the new field is backward-compatible.
+    // B15-I3: pre-I3 backend versions also omit log_id; must decode as nil.
     let json = #"{"type":"ai.turn.end","turn_id":"turn-1"}"#
     let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
-    #expect(decoded == .aiTurnEnd(turnID: "turn-1", outcome: nil))
+    #expect(decoded == .aiTurnEnd(turnID: "turn-1", outcome: nil, logID: nil))
 }
 
 @Test func aiTurnEndWithTurnIDOnly() throws {
-    // Minimal ai.turn.end — both outcome and turn_id optional.
+    // Minimal ai.turn.end — outcome and log_id both optional.
     let json = #"{"type":"ai.turn.end"}"#
     let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
-    #expect(decoded == .aiTurnEnd(turnID: nil, outcome: nil))
+    #expect(decoded == .aiTurnEnd(turnID: nil, outcome: nil, logID: nil))
 }

@@ -149,7 +149,8 @@ public enum SpeakingRoomAction: Equatable, Sendable, Action {
     /// B15: ai.turn.end received with explicit backend outcome. When outcome is
     /// .timeout, the middleware dispatches .failed("turn_timeout") to match the
     /// 70s client-side fallback behavior. Nil outcome means pre-B15 protocol.
-    case aiTurnEndReceived(turnID: String?, outcome: WSControlFrame.TurnOutcome?)
+    /// B15-I3: log_id carries the vendor trace log_id for cross-layer correlation.
+    case aiTurnEndReceived(turnID: String?, outcome: WSControlFrame.TurnOutcome?, logID: String?)
 }
 
 public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> = { state, action in

@@ -249,7 +249,7 @@ private func interpretSpeechSessionSideEffect(
                         case .feedbackBadge:  typeTag = "feedback.badge"
                         case .userSpeechStart: typeTag = "user.speech.start"
                         case .userSpeechEnd:   typeTag = "user.speech.end"
-                        case let .aiTurnEnd(_, outcome):
+                        case let .aiTurnEnd(_, outcome, _):
                             typeTag = "ai.turn.end" + (outcome.map { "(\($0.rawValue))" } ?? "")
                         case .ping:            typeTag = "ping"
                         case .pong:            typeTag = "pong"
@@ -287,7 +287,10 @@ private func interpretSpeechSessionSideEffect(
                         )
                         await audioEngine.play(frame: frame)
 
-                    case let .control(.aiTurnEnd(turnID, outcome)):
+                    case let .control(.aiTurnEnd(turnID, outcome, logID)):
+                        // B15-I3: capture the vendor log_id from the first ai.turn.end.
+                        // setLogID is idempotent (only the first call stores the value).
+                        timings.setLogID(logID)
                         // B15: ai.turn.end arrived — cancel the turn timeout timer so it
                         // doesn't fire and cause a duplicate session.end. Safe to call
                         // even if the timer was never started.
@@ -304,11 +307,13 @@ private func interpretSpeechSessionSideEffect(
                             if let turnID {
                                 timings.markTurnEnded(turnID, source: "ios", stage: "ai_turn_end")
                             }
+                            // B15-I3: log_id is now included in all mark() calls automatically.
                             timings.mark(
                                 event: "ai_turn_end",
                                 properties: [
                                     "turn_id": turnID ?? "nil",
                                     "outcome": outcome?.rawValue ?? "nil", // B15: log outcome
+                                    "log_id": logID ?? "nil", // B15-I3: vendor trace log_id
                                 ]
                             )
                         }

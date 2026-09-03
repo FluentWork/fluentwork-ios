@@ -48,8 +48,10 @@ public enum SocketTransportEventMapper {
         /// B15: ai.turn.end with explicit outcome. Maps to aiTurnEndReceived so
         /// the middleware can branch on the outcome value (e.g., outcome=timeout
         /// dispatches .failed("turn_timeout")).
-        case let .control(.aiTurnEnd(turnID, outcome)):
-            return .aiTurnEndReceived(turnID: turnID, outcome: outcome)
+        /// B15-I3: log_id is also extracted here and forwarded so the middleware
+        /// can store it in the timings recorder for cross-layer trace correlation.
+        case let .control(.aiTurnEnd(turnID, outcome, logID)):
+            return .aiTurnEndReceived(turnID: turnID, outcome: outcome, logID: logID)
 
         case .stateChanged, .control, .audio, .diagnostic:
             return nil
@@ -86,7 +88,8 @@ public enum SpeakingRoomTransportAction: Equatable, Sendable {
     case serverASRReceived(text: String, turnID: String?)
     /// B15: ai.turn.end received. `outcome` carries the explicit backend status
     /// (ok / partial / timeout / error); nil outcome means the old pre-B15 protocol.
-    case aiTurnEndReceived(turnID: String?, outcome: WSControlFrame.TurnOutcome?)
+    /// B15-I3: `logID` carries the vendor trace log_id for cross-layer correlation.
+    case aiTurnEndReceived(turnID: String?, outcome: WSControlFrame.TurnOutcome?, logID: String?)
     case failed(String)
     case networkLost
 }
