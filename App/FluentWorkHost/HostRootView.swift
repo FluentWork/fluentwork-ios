@@ -189,23 +189,43 @@ struct HostRootView: View {
         case .idle, .failed:
             EmptyView()
         case .ended:
-            HStack(spacing: 12) {
-                Button {
-                    openReviewForLastSession()
-                } label: {
-                    Label("查看回顾", systemImage: "doc.text.magnifyingglass")
-                        .frame(maxWidth: .infinity)
+            VStack(spacing: 8) {
+                let hits = currentRoundHits()
+                if !hits.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("本轮要点")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(hits, id: \.self) { hit in
+                            Label(hit.badge, systemImage: "sparkles")
+                                .font(.caption)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.orange.opacity(0.14), in: Capsule())
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(store.state.speakingRoom.lastSessionID == nil)
 
-                Button {
-                    dismissWorkbenchModal()
-                } label: {
-                    Label("返回工作台", systemImage: "xmark.circle")
-                        .frame(maxWidth: .infinity)
+                HStack(spacing: 12) {
+                    Button {
+                        openReviewForLastSession()
+                    } label: {
+                        Label("查看回顾", systemImage: "doc.text.magnifyingglass")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(store.state.speakingRoom.lastSessionID == nil)
+
+                    Button {
+                        dismissWorkbenchModal()
+                    } label: {
+                        Label("返回工作台", systemImage: "xmark.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.bordered)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
@@ -223,6 +243,18 @@ struct HostRootView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
         }
+    }
+
+    private func currentRoundHits() -> [BadgeHitRef] {
+        var seen = Set<String>()
+        var unique: [BadgeHitRef] = []
+        for hit in store.state.speakingRoom.timeline.flatMap(\.hits) {
+            let key = hit.phraseBlockID ?? hit.badge
+            if seen.insert(key).inserted {
+                unique.append(hit)
+            }
+        }
+        return unique
     }
 
     private func openReviewForLastSession() {
