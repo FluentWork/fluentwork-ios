@@ -10,10 +10,12 @@ import UIKit
 public struct SpeakingRoomTimelineHit: Equatable, Sendable, Identifiable {
     public let id: String
     public let badge: String
+    public let phraseBlockID: String?
 
-    public init(id: String, badge: String) {
+    public init(id: String, badge: String, phraseBlockID: String?) {
         self.id = id
         self.badge = badge
+        self.phraseBlockID = phraseBlockID
     }
 }
 
@@ -188,6 +190,7 @@ public struct SpeakingRoomView: View {
     let model: SpeakingRoomViewModel
     let onStartTapped: () -> Void
     let onStopTapped: () -> Void
+    let onHitTapped: (SpeakingRoomTimelineHit) -> Void
     let requestMicrophonePermission: @Sendable () async -> Bool
     let openSettingsAction: @Sendable () -> Void
     /// DEBUG-only — wired by `HostRootView` to dispatch a `.speakingRoom(.badgeHit(...))`
@@ -209,6 +212,7 @@ public struct SpeakingRoomView: View {
         model: SpeakingRoomViewModel,
         onStartTapped: @escaping () -> Void,
         onStopTapped: @escaping () -> Void,
+        onHitTapped: @escaping (SpeakingRoomTimelineHit) -> Void = { _ in },
         requestMicrophonePermission: @escaping @Sendable () async -> Bool = {
             await MicrophonePermission.request()
         },
@@ -224,6 +228,7 @@ public struct SpeakingRoomView: View {
         self.model = model
         self.onStartTapped = onStartTapped
         self.onStopTapped = onStopTapped
+        self.onHitTapped = onHitTapped
         self.requestMicrophonePermission = requestMicrophonePermission
         self.openSettingsAction = openSettingsAction
         self.onDebugBadgeInjected = onDebugBadgeInjected
@@ -437,12 +442,18 @@ public struct SpeakingRoomView: View {
                 if !row.hits.isEmpty {
                     HStack(spacing: 6) {
                         ForEach(row.hits) { hit in
-                            Label(hit.badge, systemImage: "sparkles")
-                                .font(.caption2.weight(.medium))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(Color.orange.opacity(0.14), in: Capsule())
-                                .foregroundStyle(.orange)
+                            Button {
+                                onHitTapped(hit)
+                            } label: {
+                                Label(hit.badge, systemImage: "sparkles")
+                                    .font(.caption2.weight(.medium))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Color.orange.opacity(0.14), in: Capsule())
+                                    .foregroundStyle(.orange)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("收藏命中表达 \(hit.badge)")
                         }
                     }
                 }

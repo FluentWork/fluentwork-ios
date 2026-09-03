@@ -66,6 +66,15 @@ struct HostRootView: View {
                     onStopTapped: {
                         store.dispatch(.speakingRoom(.session(.endTap)))
                     },
+                    onHitTapped: { hit in
+                        guard let blockID = hit.phraseBlockID,
+                              !blockID.isEmpty else { return }
+                        store.dispatch(.corpus(.favoriteToggled(
+                            blockID: blockID,
+                            isFavorite: true,
+                            pinned: true
+                        )))
+                    },
                     onDebugBadgeInjected: { tier, hitNumber in
                         // DEBUG-only B12 / I11 verification path. Mirrors the
                         // shape of the backend `feedback.badge` frame so the
@@ -289,7 +298,8 @@ struct HostRootView: View {
                     hits: item.hits.map { hit in
                         SpeakingRoomTimelineHit(
                             id: "\(hit.phraseBlockID ?? "badge")-\(item.id.uuidString)",
-                            badge: hit.badge
+                            badge: hit.badge,
+                            phraseBlockID: hit.phraseBlockID
                         )
                     }
                 )
