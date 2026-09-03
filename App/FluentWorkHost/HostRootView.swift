@@ -142,12 +142,19 @@ struct HostRootView: View {
                     store.dispatch(.review(.acceptRefineCardTapped(cardID: cardID)))
                 }
             )
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("关闭") {
-                        dismissWorkbenchModal()
-                    }
+            .overlay(alignment: .topLeading) {
+                Button {
+                    dismissWorkbenchModal()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(10)
+                        .background(.ultraThinMaterial, in: Circle())
                 }
+                .padding(.leading, 16)
+                .padding(.top, 8)
+                .accessibilityLabel("关闭回顾")
             }
         case let .dailyRead(sessionID):
             DailyReadRootView(
