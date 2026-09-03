@@ -39,7 +39,7 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
             created = try await api.createSession(
                 accessToken: accessToken,
                 materialID: nil,
-                sceneType: "demo"
+                sceneType: "standup"
             )
         } catch let error as APIError {
             // Cached token rejected by backend (e.g., backend JWT secret changed
@@ -55,7 +55,7 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
             created = try await api.createSession(
                 accessToken: freshToken,
                 materialID: nil,
-                sceneType: "demo"
+                sceneType: "standup"
             )
         }
         guard let wssURL = URL(string: created.wssURL) else {
@@ -74,7 +74,7 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
             )
             try await transport.send(
                 control: .sessionStart(
-                    .init(scene: "demo")
+                    .init(scene: "standup")
                 )
             )
         } catch {

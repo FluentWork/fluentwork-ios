@@ -178,7 +178,7 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
     #expect(calls[0].sessionID == "s-9")
     #expect(calls[0].ticket == "tik")
     let sentControls = await transport.sentControlFrames
-    #expect(sentControls == [.sessionStart(.init(scene: "demo"))])
+    #expect(sentControls == [.sessionStart(.init(scene: "standup"))])
 }
 
 @MainActor
