@@ -34,7 +34,7 @@ import Testing
         .error(code: "provider_audio_failed", message: "use of closed network connection")
     )
     let action = SocketTransportEventMapper.speakingRoomAction(for: event)
-    #expect(action == .failed("[provider_audio_failed] use of closed network connection"))
+    #expect(action == .failed("语音服务连接中断，请重试"))
 }
 
 @Test func mapperConvertsBackendErrorFrameWithoutMessage() {
@@ -42,7 +42,7 @@ import Testing
         .error(code: "client_asr_required", message: nil)
     )
     let action = SocketTransportEventMapper.speakingRoomAction(for: event)
-    #expect(action == .failed("[client_asr_required]"))
+    #expect(action == .failed("当前无法识别语音，请重试"))
 }
 
 @Test func mapperConvertsClientASRTranscriptionToServerASRReceived() {

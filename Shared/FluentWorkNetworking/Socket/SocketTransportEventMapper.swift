@@ -37,8 +37,7 @@ public enum SocketTransportEventMapper {
         /// and other transient transport-level conditions that should drop the
         /// session into `.failed` with a stable code for downstream branching.
         case let .control(.error(code, message)):
-            let detail = message?.isEmpty == false ? "[\(code)] \(message ?? "")" : "[\(code)]"
-            return .failed(detail)
+            return .failed(userFacingErrorText(code: code, rawMessage: message))
 
         case .failure(.pingTimedOut), .stateChanged(.disconnected):
             return .networkLost
@@ -49,6 +48,22 @@ public enum SocketTransportEventMapper {
         case .stateChanged, .control, .audio, .diagnostic:
             return nil
         }
+    }
+}
+
+/// Stable provider/transport failures must not surface raw socket text (e.g.
+/// "write tcp ... broken pipe") to the learner. Known codes get a concise,
+/// actionable message; unknown codes keep the raw detail for diagnostics.
+private func userFacingErrorText(code: String, rawMessage: String?) -> String {
+    switch code {
+    case "provider_audio_failed", "provider_control_failed", "provider_open_failed":
+        return "语音服务连接中断，请重试"
+    case "activate_failed":
+        return "会话激活失败，请重试"
+    case "client_asr_required":
+        return "当前无法识别语音，请重试"
+    default:
+        return rawMessage?.isEmpty == false ? "[\(code)] \(rawMessage ?? "")" : "[\(code)]"
     }
 }
 
