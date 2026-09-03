@@ -61,7 +61,7 @@ struct HostRootView: View {
                 SpeakingRoomView(
                     model: makeSpeakingRoomViewModel(from: store.state.speakingRoom),
                     onStartTapped: {
-                        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+                        restartOrStartSpeakingSession()
                     },
                     onStopTapped: {
                         store.dispatch(.speakingRoom(.session(.endTap)))
@@ -567,6 +567,17 @@ struct HostRootView: View {
             store.dispatch(.speakingRoom(.session(.endTap)))
         }
         dismissWorkbenchModal()
+    }
+
+    private func restartOrStartSpeakingSession() {
+        // SpeechSessionMachine only starts from `.idle`; ended/failed surfaces
+        // expose "重新开始/重试", so reset the session snapshot first without
+        // touching the frozen machine itself.
+        let phase = store.state.speakingRoom.phase
+        if phase == .ended || phase == .failed {
+            store.dispatch(.speakingRoom(.applySession(.initial)))
+        }
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
     }
 
     private func dismissWorkbenchModal() {

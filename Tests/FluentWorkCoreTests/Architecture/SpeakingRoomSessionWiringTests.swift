@@ -623,6 +623,38 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 }
 
 @MainActor
+@Test func restartAfterEndResetsToConnectingAndStartsNewSession() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await speechClient.snapshotStartCalls() == 1
+    }
+
+    store.dispatch(.speakingRoom(.session(.endTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .ended
+    }
+
+    // Host-level restart path: reset snapshot back to idle, then start tap.
+    store.dispatch(.speakingRoom(.applySession(.initial)))
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await speechClient.snapshotStartCalls() == 2
+            && store.state.speakingRoom.phase == .connecting
+    }
+
+    #expect(store.state.speakingRoom.phase == .connecting)
+    #expect(await speechClient.snapshotStartCalls() == 2)
+}
+
+@MainActor
 @Test func speechSessionMiddlewareConsumesAudioEngineEvents() async {
     let container = Container()
     container.reset()
