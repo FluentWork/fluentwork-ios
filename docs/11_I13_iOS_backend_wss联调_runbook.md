@@ -125,9 +125,15 @@ voicegateway.handler voice user speech frame session_id=... type=user.speech.end
 
 ```bash
 swift test --filter badgeFeedbackDedupeHonorsTimeWindowTTL
+swift test --filter backendFeedbackBadgeJSONDecodesIntoStoreEntries
 ```
 
-测试直接驱动 `BadgeFeedback.state.ingest()` 三次（TTL 内重复 → 1 条、TTL 过期 → 2 条、跨 turn_id → 3 条），不依赖 transport 层或 Charles。
+前一条直接驱动 `BadgeFeedback.state.ingest()` 三次（TTL 内重复 → 1 条、TTL 过期 → 2 条、跨 turn_id → 3 条）；后一条用后端 dev-echo e2e 产出的真实 JSON 帧走 decode → middleware → store。Backend 侧的完整 WSS 真帧证据：
+
+```bash
+cd fluentwork-backend
+go test ./internal/voicegateway/ -run TestDevEcho_EndToEnd_FiresBadgeOnSeededCorpus -count=1
+```
 
 **真机 + Charles 步骤**：同一 (session, turn, phrase_block) 的命中只产生一次 `feedback.badge`，跨 turn 不 dedupe。
 
@@ -176,6 +182,7 @@ swift test --filter badgeFeedbackDedupeHonorsTimeWindowTTL
 // iOS 测试覆盖：
 - badgeFeedbackDedupeRespectsPhraseBlockID
 - speakingRoomBadgeHitWithEnrichmentIsForwardedToBadgeFeedbackIngest
+- backendFeedbackBadgeJSONDecodesIntoStoreEntries  // 真实帧进入 entries 且 turnID 保留
 ```
 
 ### Case 4 — Schema mirror 与 wire-format 同步
@@ -194,7 +201,17 @@ swift test --filter badgeFeedbackDedupeHonorsTimeWindowTTL
 预期：
 
 - 三处 `$defs.feedbackBadge.properties` 都含 `phrase_block_id` 和 `tier`（enum = `["soft", "highlight", "celebrate"]`）
-- iOS 的 `WSControlFrame` decode 成功，`phraseBlockID` / `tier` 都非空
+- 三处 mirror 字节级一致（含 `session_id` / `turn_id` / `dedupe_key` 可选字段）
+- iOS 的 `WSControlFrame` decode 成功，`phraseBlockID` / `tier` / `turnID` 都解码
+
+**Mock 覆盖**（wire JSON 解码契约）：
+
+```bash
+swift test --filter feedbackBadgeDecodesBackendWireFrame
+swift test --filter feedbackBadgeMissingTierFallsBackToNil
+swift test --filter feedbackBadgeMissingTurnIDDecodesAsNil
+swift test --filter feedbackBadgeRejectsMisspelledTier
+```
 
 **如果 iOS 收到 `feedback.badge` 但 store 没更新**：
 
@@ -232,11 +249,19 @@ backend 旧版本（pre-B12）会发 `feedback.badge` 但不带 `tier`。iOS 必
 
 抓帧 → `tier` 字段缺失 → iOS 端 entry 的 `tier` 应为 `BadgeFeedEntry.Tier.unknown`。
 
+```bash
+swift test --filter backendPreB12FeedbackBadgeJSONLandsWithUnknownTier
+```
+
 #### 6.2 后端 tier 拼写错（`Soft` / `SOFT`）
 
 iOS 的 `FeedbackBadgeTier` 是严格 enum，decode 会失败 → 整条 `feedback.badge` 丢失。
 
 期望日志：iOS console 有 `WSControlFrameCodingError.unknownType` 或 `DecodingError`。**这是后端 bug，必须修。**
+
+```bash
+swift test --filter feedbackBadgeRejectsMisspelledTier
+```
 
 #### 6.3 客户端 ASR 文本回灌（`text` 字段）
 
@@ -313,6 +338,11 @@ swift test 2>&1 | grep -E "✘|fail" | head
 - `badgeFeedEntryTierFromTransportMapping`
 - `feedbackBadgeMapsToBadgeHit`
 - `speakingRoomActionBridgesSocketReadyAndBadge`
+- `feedbackBadgeDecodesBackendWireFrame`
+- `feedbackBadgeMissingTierFallsBackToNil`
+- `feedbackBadgeMissingTurnIDDecodesAsNil`
+- `backendFeedbackBadgeJSONDecodesIntoStoreEntries`
+- `backendPreB12FeedbackBadgeJSONLandsWithUnknownTier`
 
 ---
 
