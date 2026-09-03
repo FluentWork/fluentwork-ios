@@ -13,6 +13,7 @@ private actor StubSpeechSessionClientState {
     var transcripts: [String] = []
     var endCalls = 0
     var boundaryTurnIDs: [String?] = []
+    var sessionID: String?
 
     func recordStart() {
         startCalls += 1
@@ -21,6 +22,10 @@ private actor StubSpeechSessionClientState {
     func recordBoundary(_ started: Bool, turnID: String?) {
         boundaries.append(started)
         boundaryTurnIDs.append(turnID)
+    }
+
+    func recordSessionID(_ sessionID: String?) {
+        self.sessionID = sessionID
     }
 
     func recordAudioPayload(_ data: Data) {
@@ -33,6 +38,7 @@ private actor StubSpeechSessionClientState {
 
     func recordEnd() {
         endCalls += 1
+        sessionID = nil
     }
 }
 
@@ -68,6 +74,11 @@ private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unche
             throw startSessionError
         }
         await state.recordStart()
+        await state.recordSessionID("s-1")
+    }
+
+    func activeSessionID() async -> String? {
+        await state.sessionID
     }
 
     func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {
@@ -584,6 +595,31 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(turnEnded?.properties["turn_id"] == "turn-1")
     #expect(turnEnded?.properties["source"] == "ios")
     #expect(turnEnded?.properties["stage"] == "turn_boundary")
+}
+
+@MainActor
+@Test func endingSessionCapturesSessionIDForReviewNavigation() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await speechClient.snapshotStartCalls() == 1
+    }
+
+    store.dispatch(.speakingRoom(.session(.endTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .ended
+            && store.state.speakingRoom.lastSessionID == "s-1"
+    }
+
+    #expect(store.state.speakingRoom.phase == .ended)
+    #expect(store.state.speakingRoom.lastSessionID == "s-1")
 }
 
 @MainActor

@@ -6,6 +6,9 @@ public struct SpeakingRoomState: Equatable, Sendable, State {
     public var isBootstrapReady: Bool
     public var lastBadge: String?
     public var badgeHits: Int
+    /// Session bound by the active `DefaultSpeechSessionClient`, captured on
+    /// session end so the UI can navigate to that session's review page.
+    public var lastSessionID: String?
 
     public var phase: SpeechSessionPhase { session.phase }
     public var failureReason: String? { session.failureReason }
@@ -15,13 +18,15 @@ public struct SpeakingRoomState: Equatable, Sendable, State {
         liveTranscript: String = "",
         isBootstrapReady: Bool = false,
         lastBadge: String? = nil,
-        badgeHits: Int = 0
+        badgeHits: Int = 0,
+        lastSessionID: String? = nil
     ) {
         self.session = session
         self.liveTranscript = liveTranscript
         self.isBootstrapReady = isBootstrapReady
         self.lastBadge = lastBadge
         self.badgeHits = badgeHits
+        self.lastSessionID = lastSessionID
     }
 
     /// Test / Host helper mirroring the previous phase-centric initializer.
@@ -31,14 +36,16 @@ public struct SpeakingRoomState: Equatable, Sendable, State {
         isBootstrapReady: Bool = false,
         lastBadge: String? = nil,
         badgeHits: Int = 0,
-        failureReason: String? = nil
+        failureReason: String? = nil,
+        lastSessionID: String? = nil
     ) {
         self.init(
             session: SpeechSessionState(phase: phase, failureReason: failureReason),
             liveTranscript: liveTranscript,
             isBootstrapReady: isBootstrapReady,
             lastBadge: lastBadge,
-            badgeHits: badgeHits
+            badgeHits: badgeHits,
+            lastSessionID: lastSessionID
         )
     }
 }
@@ -61,6 +68,9 @@ public enum SpeakingRoomAction: Equatable, Sendable, Action {
         tier: BadgeFeedEntry.Tier? = nil,
         turnID: String? = nil
     )
+    /// Captures the session id bound by the speech client right before the
+    /// transport closes, so the ended-state UI can offer "查看回顾".
+    case sessionIDCaptured(String)
     case bootstrapReady(Bool)
     /// Local transcript overlay text; does not drive the session phase machine.
     case userSpeechCaptured(String)
@@ -90,6 +100,9 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
         // owns the structured payload (phraseBlockID / tier / turnID).
         state.lastBadge = badge
         state.badgeHits += 1
+
+    case let .sessionIDCaptured(sessionID):
+        state.lastSessionID = sessionID
 
     case let .bootstrapReady(isReady):
         state.isBootstrapReady = isReady

@@ -101,6 +101,8 @@ public struct VolcengineOpusFrameDecoder: WSAudioFrameDecoder {
 
 public protocol SpeechSessionClientProtocol: Sendable {
     func startSession() async throws
+    /// The session id currently bound by the client (nil before start / after end).
+    func activeSessionID() async -> String?
     /// Sends a `user.speech.start` or `user.speech.end` frame to the backend.
     /// `turnID` is the current user turn identifier (e.g. "turn-1") used by the
     /// backend for badge hit dedupe. Pass `nil` when `started` is true.
@@ -227,6 +229,8 @@ public final class PlaceholderSpeechSessionClient: SpeechSessionClientProtocol, 
     public init() {}
 
     public func startSession() async throws {}
+
+    public func activeSessionID() async -> String? { nil }
 
     public func submitTranscript(_ text: String) async {}
 

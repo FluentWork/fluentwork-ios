@@ -372,8 +372,12 @@ private func interpretSpeechSessionSideEffect(
             .cancel(id: SpeechSessionTaskID.transportEvents),
             .cancel(id: SpeechSessionTaskID.audioEngineEvents),
             .fireAndForget {
+                let sessionID = await speechClient.activeSessionID()
                 await audioEngine.stopCapture()
                 await speechClient.endSession()
+                if let sessionID {
+                    await dispatchBox.dispatch(.speakingRoom(.sessionIDCaptured(sessionID)))
+                }
             }
         )
 

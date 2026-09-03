@@ -65,6 +65,30 @@ struct HostRootView: View {
                     },
                     onStopTapped: {
                         store.dispatch(.speakingRoom(.session(.endTap)))
+                    },
+                    onDebugBadgeInjected: { tier, hitNumber in
+                        // DEBUG-only B12 / I11 verification path. Mirrors the
+                        // shape of the backend `feedback.badge` frame so the
+                        // full wiring — SpeakingRoomFeature.badgeHit →
+                        // appCrossCuttingReducer → BadgeFeedbackReducer →
+                        // BadgeFeedbackOverlay — can be exercised without a
+                        // real B12 corpus hit.
+                        let sample = [
+                            "地道表达 +1",
+                            "ship it",
+                            "let's wrap up",
+                            "表达自然"
+                        ][(hitNumber - 1) % 4]
+                        store.dispatch(
+                            .speakingRoom(
+                                .badgeHit(
+                                    badge: sample,
+                                    phraseBlockID: "debug-\(hitNumber)",
+                                    tier: tier,
+                                    turnID: "turn-debug-\(hitNumber)"
+                                )
+                            )
+                        )
                     }
                 )
                 .navigationTitle("说的房间")
@@ -84,22 +108,33 @@ struct HostRootView: View {
                 }
                 .padding(.top, 4)
             }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("关闭") {
-                        closeSpeakingRoom()
-                    }
+            .overlay(alignment: .topLeading) {
+                Button {
+                    closeSpeakingRoom()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(10)
+                        .background(.ultraThinMaterial, in: Circle())
                 }
+                .padding(.leading, 16)
+                .padding(.top, 8)
+                .accessibilityLabel("关闭说的房间")
+            }
+            .safeAreaInset(edge: .bottom) {
+                speakingRoomBottomBar
             }
             .onAppear { _ = sessionID }
         case let .review(sessionID):
+            let effectiveSessionID = sessionID ?? store.state.speakingRoom.lastSessionID
             ReviewRootView(
                 model: makeReviewViewModel(from: store.state.review),
                 onAppear: {
-                    store.dispatch(.review(.appear(sessionID: sessionID)))
+                    store.dispatch(.review(.appear(sessionID: effectiveSessionID)))
                 },
                 onRetry: {
-                    let targetSessionID = store.state.review.sessionID ?? sessionID
+                    let targetSessionID = store.state.review.sessionID ?? effectiveSessionID
                     guard let targetSessionID, !targetSessionID.isEmpty else { return }
                     store.dispatch(.review(.loadRequested(sessionID: targetSessionID)))
                 },
@@ -139,6 +174,62 @@ struct HostRootView: View {
             )
             .onAppear { _ = sessionID }
         }
+    }
+
+    @ViewBuilder
+    private var speakingRoomBottomBar: some View {
+        switch store.state.speakingRoom.phase {
+        case .idle, .failed:
+            EmptyView()
+        case .ended:
+            HStack(spacing: 12) {
+                Button {
+                    openReviewForLastSession()
+                } label: {
+                    Label("查看回顾", systemImage: "doc.text.magnifyingglass")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(store.state.speakingRoom.lastSessionID == nil)
+
+                Button {
+                    dismissWorkbenchModal()
+                } label: {
+                    Label("返回工作台", systemImage: "xmark.circle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+        case .connecting, .recording, .waitingUser, .processing, .aiSpeaking, .degradedText:
+            Button {
+                store.dispatch(.speakingRoom(.session(.endTap)))
+            } label: {
+                Label("结束本轮", systemImage: "stop.circle.fill")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+        }
+    }
+
+    private func openReviewForLastSession() {
+        guard let sessionID = store.state.speakingRoom.lastSessionID,
+              !sessionID.isEmpty else {
+            return
+        }
+        store.dispatch(.navigation(.workbench(.dismiss)))
+        store.dispatch(
+            .navigation(.workbench(.present(
+                .review(sessionID: sessionID),
+                style: .fullScreenCover
+            )))
+        )
     }
 
     private func makeSpeakingRoomViewModel(

@@ -84,6 +84,10 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         }
     }
 
+    public func activeSessionID() async -> String? {
+        await activeSession.get()
+    }
+
     public func submitTranscript(_ text: String) async {
         // Interrupt marker from SpeechSession middleware.
         guard text == "__interrupt__" else { return }

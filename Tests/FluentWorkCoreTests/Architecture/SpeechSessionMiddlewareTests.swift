@@ -557,6 +557,8 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
         }
     }
 
+    func activeSessionID() async -> String? { nil }
+
     func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {
         let call = BoundaryCall(started: started, turnID: turnID, text: text)
         await _speechBoundaryCalls.update { calls in
