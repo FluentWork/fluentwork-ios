@@ -166,15 +166,22 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
         state.lastBadge = badge
         state.badgeHits += 1
         guard !badge.isEmpty else { return }
-        if let index = state.timeline.indices.reversed().first(where: { idx in
+        let hit = BadgeHitRef(
+            badge: badge,
+            phraseBlockID: phraseBlockID,
+            tier: tier ?? .unknown
+        )
+        let index = state.timeline.indices.reversed().first(where: { idx in
             let item = state.timeline[idx]
-            return item.speaker == .user && (turnID == nil || item.turnID == turnID)
-        }) {
-            let hit = BadgeHitRef(
-                badge: badge,
-                phraseBlockID: phraseBlockID,
-                tier: tier ?? .unknown
-            )
+            guard item.speaker == .user else { return false }
+            if let turnID, let itemTurnID = item.turnID, itemTurnID != turnID {
+                return false
+            }
+            return true
+        }) ?? state.timeline.indices.reversed().first(where: {
+            state.timeline[$0].speaker == .user
+        })
+        if let index {
             if !state.timeline[index].hits.contains(where: {
                 $0.badge == hit.badge && $0.phraseBlockID == hit.phraseBlockID
             }) {
@@ -232,12 +239,28 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
         state.liveTranscript = text
         // Replace the open "正在听…" placeholder with the authoritative
         // server transcript (matches by turnID when available, else last user).
-        if let index = state.timeline.indices.reversed().first(where: { idx in
+        let exactMatch = state.timeline.indices.reversed().first(where: { idx in
             let item = state.timeline[idx]
-            return item.speaker == .user && (turnID == nil || item.turnID == turnID)
-        }) {
+            return item.speaker == .user
+                && (turnID == nil || item.turnID == turnID)
+        })
+        let listeningFallback = state.timeline.indices.reversed().first(where: { idx in
+            state.timeline[idx].speaker == .user
+                && state.timeline[idx].status == .listening
+        })
+        if let index = exactMatch ?? listeningFallback {
             state.timeline[index].text = text
             state.timeline[index].status = .finalized
+            state.timeline[index].turnID = state.timeline[index].turnID ?? turnID
+        } else {
+            state.timeline.append(
+                TurnTimelineItem(
+                    turnID: turnID,
+                    speaker: .user,
+                    text: text,
+                    status: .finalized
+                )
+            )
         }
     }
 }

@@ -19,6 +19,20 @@ import TGReduxKitTesting
     #expect(store.state.speakingRoom.liveTranscript == "Let's ship it today")
 }
 
+@Test func serverTranscriptReplacesLatestListeningWhenProviderTurnIDDiffers() {
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+
+    // Client turn numbering (turn-1) and provider volc-turn-1 differ; the open
+    // listening row must still be replaced by the authoritative transcript.
+    store.send(.speakingRoom(.userTurnStarted(turnID: "turn-1")))
+    store.send(.speakingRoom(.serverASRReceived(text: "Let's ship it today", turnID: "volc-turn-1")))
+
+    let row = store.state.speakingRoom.timeline.last
+    #expect(row?.text == "Let's ship it today")
+    #expect(row?.status == .finalized)
+    #expect(row?.turnID == "turn-1")
+}
+
 @Test func assistantTurnAccumulatesDeltasAndFinalizes() {
     let store = TestStore(initialState: AppState.initial, reducer: appReducer)
 
