@@ -107,6 +107,65 @@ import TGReduxKitTesting
 }
 
 @MainActor
+@Test func reviewMiddlewarePollsUntilReadyAfterPending() async throws {
+    let payload = try makeReadyPayload()
+
+    actor PollTurnBox {
+        private var calls = 0
+
+        func next() -> Int {
+            calls += 1
+            return calls
+        }
+    }
+
+    final class PendingThenReadySpeechClient: SpeechSessionClientProtocol, @unchecked Sendable {
+        let readyPayload: ReviewReadyPayload
+        private let box = PollTurnBox()
+
+        init(readyPayload: ReviewReadyPayload) {
+            self.readyPayload = readyPayload
+        }
+
+        func startSession() async throws {}
+        func activeSessionID() async -> String? { nil }
+        func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {}
+        func sendAudioPCM(_ data: Data) async throws {}
+        func submitTranscript(_ text: String) async {}
+        func transportEvents() -> AsyncStream<SocketTransportEvent> {
+            AsyncStream { continuation in
+                continuation.finish()
+            }
+        }
+        func pollReview(sessionID: String) async throws -> ReviewPollResponse {
+            let call = await box.next()
+            if call < 3 {
+                return ReviewPollResponse(sessionID: sessionID, status: .pending, review: nil)
+            }
+            return ReviewPollResponse(sessionID: sessionID, status: .ready, review: readyPayload)
+        }
+        func sendDegradedTextMessage(_ text: String) async throws -> PostMessageResponse {
+            PostMessageResponse(sessionID: "s-1", reply: "", channel: "text", generator: "stub")
+        }
+        func endSession() async {}
+    }
+
+    let container = Container()
+    container.speechSessionClient.register {
+        PendingThenReadySpeechClient(readyPayload: payload)
+    }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.review(.appear(sessionID: "s-1")))
+    try await waitUntil(timeoutNanoseconds: 8_000_000_000) {
+        store.state.review.phase == .ready
+    }
+
+    #expect(store.state.review.phase == .ready)
+    #expect(store.state.review.payload?.refineCards.count == 1)
+}
+
+@MainActor
 @Test func reviewMiddlewareAcceptsRefineCardIntoCorpus() async throws {
     let payload = try makeReadyPayload()
     let card = try #require(payload.refineCards.first)

@@ -151,9 +151,9 @@ private func appBootstrapErrorMessage(_ error: any Error) -> String {
 
 public func reviewMiddleware(container: Container? = nil) -> Middleware<AppState, AppAction> {
     let resolvedContainer = container ?? Container.shared
+    let speechClient = resolvedContainer.speechSessionClient()
 
     return { store, action, next in
-        let speechClient = resolvedContainer.speechSessionClient()
         let corpusClient = resolvedContainer.corpusClient()
 
         switch action {
@@ -173,16 +173,10 @@ public func reviewMiddleware(container: Container? = nil) -> Middleware<AppState
             return .merge(
                 base,
                 .task(id: AppTaskID.reviewPoll) {
-                    do {
-                        let poll = try await speechClient.pollReview(sessionID: sessionID)
-                        guard !Task.isCancelled else { return nil }
-                        return .review(.applyPoll(poll))
-                    } catch is CancellationError {
-                        return nil
-                    } catch {
-                        guard !Task.isCancelled else { return nil }
-                        return .review(.loadFailed(error.localizedDescription))
-                    }
+                    await pollReviewUntilReady(
+                        speechClient: speechClient,
+                        sessionID: sessionID
+                    )
                 }
             )
 
@@ -234,6 +228,38 @@ public func reviewMiddleware(container: Container? = nil) -> Middleware<AppState
             return next(action)
         }
     }
+}
+
+private let reviewPollInterval: Duration = .seconds(2)
+private let reviewMaxPollAttempts = 30
+
+private func pollReviewUntilReady(
+    speechClient: SpeechSessionClientProtocol,
+    sessionID: String
+) async -> AppAction? {
+    for attempt in 0..<reviewMaxPollAttempts {
+        do {
+            let poll = try await speechClient.pollReview(sessionID: sessionID)
+            guard !Task.isCancelled else { return nil }
+            switch poll.status {
+            case .pending:
+                guard attempt < reviewMaxPollAttempts - 1 else {
+                    return .review(.applyPoll(poll))
+                }
+                try? await Task.sleep(for: reviewPollInterval)
+                guard !Task.isCancelled else { return nil }
+                continue
+            case .ready, .failed:
+                return .review(.applyPoll(poll))
+            }
+        } catch is CancellationError {
+            return nil
+        } catch {
+            guard !Task.isCancelled else { return nil }
+            return .review(.loadFailed(error.localizedDescription))
+        }
+    }
+    return nil
 }
 
 public func corpusMiddleware(container: Container? = nil) -> Middleware<AppState, AppAction> {
