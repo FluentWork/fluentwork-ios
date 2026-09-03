@@ -138,6 +138,10 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
     }
 
     public func endSession() async {
+        // The gateway persists the session (and enqueues the review job) only
+        // when it receives an explicit `session.end` control frame. Closing the
+        // socket without it leaves the session in a pending/active state.
+        try? await transport.send(control: .sessionEnd(reason: "user"))
         await transport.disconnect()
         await activeSession.set(nil)
     }

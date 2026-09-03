@@ -37,6 +37,42 @@ private actor FailingSessionStartTransport: SocketTransportProtocol {
     func markInterrupted() async {}
 }
 
+private actor RecordingEndTransport: SocketTransportProtocol {
+    nonisolated let events: AsyncStream<SocketTransportEvent>
+    private let continuation: AsyncStream<SocketTransportEvent>.Continuation
+    private(set) var sentControls: [WSControlFrame] = []
+    private(set) var disconnectCount = 0
+
+    init() {
+        let pair = AsyncStream.makeStream(of: SocketTransportEvent.self)
+        self.events = pair.stream
+        self.continuation = pair.continuation
+    }
+
+    func connect(url: URL, sessionID: String, ticket: String) async throws {}
+
+    func disconnect() async {
+        disconnectCount += 1
+        continuation.finish()
+    }
+
+    func send(control frame: WSControlFrame) async throws {
+        sentControls.append(frame)
+    }
+
+    func send(audio data: Data) async throws {}
+
+    func markInterrupted() async {}
+
+    func snapshotSentControls() async -> [WSControlFrame] {
+        sentControls
+    }
+
+    func snapshotDisconnectCount() async -> Int {
+        disconnectCount
+    }
+}
+
 @Test func authTokenStorePersistsGuestTokens() async throws {
     let storage = InMemorySecureStorage()
     let deviceUUID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
@@ -374,6 +410,31 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
     } catch {
         Issue.record("unexpected error: \(error)")
     }
+}
+
+@MainActor
+@Test func defaultSpeechSessionClientSendsSessionEndBeforeDisconnect() async throws {
+    let transport = RecordingEndTransport()
+    let tokenStore = RecordingSpeechSessionTokenStore(
+        deviceID: "device-end-test",
+        seededAccessToken: AuthToken(
+            value: "access-1",
+            expiresAt: Date().addingTimeInterval(3600)
+        )
+    )
+    let client = DefaultSpeechSessionClient(
+        api: SessionAPIClient(
+            network: StubNetworkClient { _ in Data() },
+            baseURL: URL(string: "http://127.0.0.1:8080/api/v1")!
+        ),
+        tokens: tokenStore,
+        transport: transport
+    )
+
+    await client.endSession()
+
+    #expect(await transport.snapshotSentControls() == [.sessionEnd(reason: "user")])
+    #expect(await transport.snapshotDisconnectCount() == 1)
 }
 
 @MainActor
