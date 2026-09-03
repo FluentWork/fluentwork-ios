@@ -14,7 +14,7 @@ import Testing
         .aiAudioChunk(sequence: 42),
         .aiTurnEnd(turnID: "turn-42"),
         .interrupt,
-        .feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .soft),
+        .feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .soft, turnID: "turn-1"),
         .sessionEnd(reason: "completed"),
         .error(code: "provider_audio_failed", message: "use of closed network connection"),
         .error(code: "client_asr_required", message: nil),
@@ -139,14 +139,19 @@ import Testing
 
 @Test func feedbackBadgeMapsToBadgeHit() {
     let mapped = SocketTransportEventMapper.speakingRoomAction(
-        for: .control(.feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .highlight))
+        for: .control(.feedbackBadge(
+            badge: "表达自然",
+            phraseBlockID: "block-1",
+            tier: .highlight,
+            turnID: "turn-1"
+        ))
     )
     #expect(
         mapped == .badgeHit(
             badge: "表达自然",
             phraseBlockID: "block-1",
             tier: .highlight,
-            turnID: nil
+            turnID: "turn-1"
         )
     )
 }

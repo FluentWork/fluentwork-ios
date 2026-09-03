@@ -183,7 +183,7 @@ private func interpretSpeechSessionSideEffect(
                         tracker.track(event: "transport_rx", properties: [
                             "frame_type": typeTag,
                             "badge_count": {
-                                if case let .feedbackBadge(b, _, t) = frame {
+                                if case let .feedbackBadge(b, _, t, _) = frame {
                                     return "badge=\(b) tier=\(t?.rawValue ?? "nil")"
                                 }
                                 return "n/a"

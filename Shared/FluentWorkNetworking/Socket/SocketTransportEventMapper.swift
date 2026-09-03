@@ -12,16 +12,19 @@ public enum SocketTransportEventMapper {
         case .stateChanged(.connected):
             return .socketReady
 
-        case let .control(.feedbackBadge(badge, phraseBlockID, tier)):
+        case let .control(.feedbackBadge(badge, phraseBlockID, tier, turnID)):
             // The mapper sits in FluentWorkNetworking, so it hands the raw
             // `FeedbackBadgeTier` (transport enum) to FluentWorkCore, which
             // owns `BadgeFeedEntry.Tier`. The display reducer maps the two
             // value sets together — see `BadgeFeedEntry.Tier.from(transport:)`.
+            // `turn_id` is echoed back by the backend on the same user turn
+            // the client opened, so the cross-cutting reducer can mirror the
+            // backend's dedupe scope.
             return .badgeHit(
                 badge: badge,
                 phraseBlockID: phraseBlockID,
                 tier: tier,
-                turnID: nil
+                turnID: turnID
             )
 
         /// B14: Volcengine Duplex ASR transcript relayed from the backend.

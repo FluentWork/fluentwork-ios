@@ -218,10 +218,10 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
         return nil
     }
 
-    await transport.emitControl(.feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .soft))
+    await transport.emitControl(.feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .soft, turnID: "turn-1"))
     let first = await task.value
     #expect(
-        first == .control(.feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .soft))
+        first == .control(.feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .soft, turnID: "turn-1"))
     )
 }
 

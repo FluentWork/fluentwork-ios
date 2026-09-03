@@ -301,7 +301,12 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
         await speechClient.snapshotStartCalls() == 1
     }
 
-    speechClient.emit(.control(.feedbackBadge(badge: "表达自然", phraseBlockID: "block-1", tier: .soft)))
+    speechClient.emit(.control(.feedbackBadge(
+        badge: "表达自然",
+        phraseBlockID: "block-1",
+        tier: .soft,
+        turnID: "turn-1"
+    )))
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.lastBadge == "表达自然"
     }
@@ -310,6 +315,103 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(store.state.speakingRoom.badgeHits == 1)
     #expect(store.state.badgeFeedback.entries.first?.phraseBlockID == "block-1")
     #expect(store.state.badgeFeedback.entries.first?.tier == .badgeOnly) // soft → badgeOnly
+    #expect(store.state.badgeFeedback.entries.first?.turnID == "turn-1")
+}
+
+@MainActor
+@Test func backendFeedbackBadgeJSONDecodesIntoStoreEntries() async throws {
+    // Closes the wire-to-store gap without standing up a WSS server: the JSON
+    // literal is the exact frame shape `handler_dev_echo_test.go` proves the
+    // backend BadgeEmitter writes over a live connection (including the
+    // backend-only correlation fields `session_id` / `dedupe_key`).
+    let backendFrameJSON = Data(#"""
+    {
+      "type": "feedback.badge",
+      "badge": "Let's ship it.",
+      "phrase_block_id": "block-ship-it",
+      "tier": "soft",
+      "session_id": "s1",
+      "turn_id": "turn-e2e-1",
+      "dedupe_key": "s1|turn-e2e-1|block-ship-it"
+    }
+    """#.utf8)
+
+    let frame = try WSControlFrameCodec.decode(backendFrameJSON)
+    guard case let .feedbackBadge(badge, phraseBlockID, tier, turnID) = frame else {
+        Issue.record("expected feedback.badge frame, got \(frame)")
+        return
+    }
+    #expect(badge == "Let's ship it.")
+    #expect(phraseBlockID == "block-ship-it")
+    #expect(tier == .soft)
+    #expect(turnID == "turn-e2e-1")
+
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await speechClient.snapshotStartCalls() == 1
+    }
+
+    speechClient.emit(.control(frame))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.lastBadge == "Let's ship it."
+    }
+
+    #expect(store.state.speakingRoom.lastBadge == "Let's ship it.")
+    #expect(store.state.speakingRoom.badgeHits == 1)
+    #expect(store.state.badgeFeedback.entries.count == 1)
+    #expect(store.state.badgeFeedback.entries.first?.badge == "Let's ship it.")
+    #expect(store.state.badgeFeedback.entries.first?.phraseBlockID == "block-ship-it")
+    #expect(store.state.badgeFeedback.entries.first?.tier == .badgeOnly) // soft → badgeOnly
+    #expect(store.state.badgeFeedback.entries.first?.turnID == "turn-e2e-1")
+}
+
+@MainActor
+@Test func backendPreB12FeedbackBadgeJSONLandsWithUnknownTier() async throws {
+    // Runbook §6.1: pre-B12 backend versions omit `tier`. The frame must
+    // survive decode + transport + reducer and display as `.unknown` while
+    // still carrying the phrase block and turn for dedupe.
+    let preB12FrameJSON = Data(#"""
+    {
+      "type": "feedback.badge",
+      "badge": "表达自然",
+      "phrase_block_id": "block-old",
+      "turn_id": "turn-old"
+    }
+    """#.utf8)
+
+    let frame = try WSControlFrameCodec.decode(preB12FrameJSON)
+
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await speechClient.snapshotStartCalls() == 1
+    }
+
+    speechClient.emit(.control(frame))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.lastBadge == "表达自然"
+    }
+
+    #expect(store.state.badgeFeedback.entries.count == 1)
+    #expect(store.state.badgeFeedback.entries.first?.badge == "表达自然")
+    #expect(store.state.badgeFeedback.entries.first?.phraseBlockID == "block-old")
+    #expect(store.state.badgeFeedback.entries.first?.tier == .unknown)
+    #expect(store.state.badgeFeedback.entries.first?.turnID == "turn-old")
 }
 
 @MainActor

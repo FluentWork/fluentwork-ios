@@ -29,7 +29,12 @@ public enum WSControlFrame: Equatable, Sendable {
     case aiAudioChunk(sequence: UInt32)
     case aiTurnEnd(turnID: String?)
     case interrupt
-    case feedbackBadge(badge: String, phraseBlockID: String?, tier: FeedbackBadgeTier?)
+    case feedbackBadge(
+        badge: String,
+        phraseBlockID: String?,
+        tier: FeedbackBadgeTier?,
+        turnID: String?
+    )
     case sessionEnd(reason: String?)
     /// Backend → client non-fatal error notice. Carries a stable machine code
     /// (e.g. `provider_audio_failed`, `provider_control_failed`,
@@ -146,7 +151,8 @@ extension WSControlFrame: Codable {
             self = .feedbackBadge(
                 badge: try container.decode(String.self, forKey: .badge),
                 phraseBlockID: try container.decodeIfPresent(String.self, forKey: .phraseBlockID),
-                tier: try container.decodeIfPresent(FeedbackBadgeTier.self, forKey: .tier)
+                tier: try container.decodeIfPresent(FeedbackBadgeTier.self, forKey: .tier),
+                turnID: try container.decodeIfPresent(String.self, forKey: .turnID)
             )
 
         case "session.end":
@@ -218,11 +224,12 @@ extension WSControlFrame: Codable {
         case .interrupt:
             try container.encode("interrupt", forKey: .type)
 
-        case let .feedbackBadge(badge, phraseBlockID, tier):
+        case let .feedbackBadge(badge, phraseBlockID, tier, turnID):
             try container.encode("feedback.badge", forKey: .type)
             try container.encode(badge, forKey: .badge)
             try container.encodeIfPresent(phraseBlockID, forKey: .phraseBlockID)
             try container.encodeIfPresent(tier, forKey: .tier)
+            try container.encodeIfPresent(turnID, forKey: .turnID)
 
         case let .sessionEnd(reason):
             try container.encode("session.end", forKey: .type)
