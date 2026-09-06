@@ -4,8 +4,11 @@ DerivedData/
 .tmp/
 build/
 .build/
+.swiftpm/
 *.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/
 *.xcodeproj/project.xcworkspace/xcuserdata/
 *.xcuserstate
-.swiftpm/
+
+# .scratch/ is intentionally tracked (W3 iOS issue planning artifacts)
+.tmp-ios-issues/
