@@ -102,3 +102,18 @@ iOS 本期**先在 .scratch/ 本地切分**,等以下条件满足后再正式建
 3. **W4 建仓**:I14/I16/I17/I18/I19(B21/B18/B22/B23/B24 CLOSED 后)
 
 当前阶段:本地草稿 → 等 backend 对应 ticket CLOSED
+
+## 8. 跨仓对应表
+
+| iOS Skill | 阻塞 backend GitHub Issue | 跨仓对应文件 |
+|---|---|---|
+| I20 | (无) | — |
+| I21 | (无) | — |
+| I15 | [#44 B17](https://github.com/FluentWork/fluentwork-backend/issues/44) | `fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/03-skill-B17-TTS-Provider.md` |
+| I14 | [#47 B21](https://github.com/FluentWork/fluentwork-backend/issues/47) | `fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/07-skill-B21-materials.md` |
+| I16 | [#45 B18](https://github.com/FluentWork/fluentwork-backend/issues/45) | `fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/06-skill-B18-review-eval.md` |
+| I17 | [#48 B22](https://github.com/FluentWork/fluentwork-backend/issues/48) | `fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/08-skill-B22-drill-privacy.md` |
+| I18 | [#49 B23](https://github.com/FluentWork/fluentwork-backend/issues/49) | `fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/09-skill-B23-topic-cards.md` |
+| I19 | [#50 B24](https://github.com/FluentWork/fluentwork-backend/issues/50) | `fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/10-skill-B24-session-history.md` |
+
+**完整跨仓评审表**:`fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/跨仓对应表.md`

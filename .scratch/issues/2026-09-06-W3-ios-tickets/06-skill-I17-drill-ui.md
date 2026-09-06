@@ -381,7 +381,13 @@ Snapshot 测试 + i18n + D-3 P90 ≤ 1.5s 验证。
 
 ---
 
-## §7 执行顺序与总工时
+## §8 I17 — 阻塞与对应
+
+- **Blocked by**: [FluentWork/fluentwork-backend#48 (B22 闪测)](https://github.com/FluentWork/fluentwork-backend/issues/48) 状态为 CLOSED
+- 跨仓对应文件:`fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/08-skill-B22-drill-privacy.md`(含 #74-#83 10 个 backend sub-ticket)
+- 跨仓评审表:`fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/跨仓对应表.md`
+
+## §9 执行顺序与总工时
 
 ```
 B22 CLOSED 后:

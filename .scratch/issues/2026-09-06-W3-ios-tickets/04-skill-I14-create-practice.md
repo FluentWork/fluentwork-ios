@@ -294,7 +294,13 @@
 
 ---
 
-## §5 执行顺序与总工时
+## §5 I14 — 阻塞与对应
+
+- **Blocked by**: [FluentWork/fluentwork-backend#47 (B21 素材模块)](https://github.com/FluentWork/fluentwork-backend/issues/47) 状态为 CLOSED
+- 跨仓对应文件:`fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/07-skill-B21-materials.md`(含 #67-#73 7 个 backend sub-ticket)
+- 跨仓评审表:`fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/跨仓对应表.md`
+
+## §6 执行顺序与总工时
 
 ```
 B21 CLOSED 后:

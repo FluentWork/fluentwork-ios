@@ -388,7 +388,13 @@ Snapshot 测试 + i18n。
 
 ---
 
-## §6 执行顺序与总工时
+## §7 I18 — 阻塞与对应
+
+- **Blocked by**: [FluentWork/fluentwork-backend#49 (B23 话题卡生成)](https://github.com/FluentWork/fluentwork-backend/issues/49) 状态为 CLOSED
+- 跨仓对应文件:`fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/09-skill-B23-topic-cards.md`(含 #84-#89 6 个 backend sub-ticket)
+- 跨仓评审表:`fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/跨仓对应表.md`
+
+## §8 执行顺序与总工时
 
 ```
 B23 CLOSED 后:

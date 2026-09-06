@@ -291,6 +291,12 @@ Setting 入口实现 4 个 D-2 音色选择 UI,持久化到 UserDefaults。
 
 ---
 
+## §5 I15 — 阻塞与对应
+
+- **Blocked by**: [FluentWork/fluentwork-backend#44 (B17 TTS Provider)](https://github.com/FluentWork/fluentwork-backend/issues/44) 状态为 CLOSED
+- 跨仓对应文件:`fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/03-skill-B17-TTS-Provider.md`(含 #52-#56 5 个 backend sub-ticket)
+- 跨仓评审表:`fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/跨仓对应表.md`
+
 ## §6 执行顺序与总工时
 
 ```

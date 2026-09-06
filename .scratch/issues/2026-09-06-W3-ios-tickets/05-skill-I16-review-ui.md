@@ -307,7 +307,13 @@ PRD C1 增强:完整话轮展示 + 录音回听 + AI 评价 3 维可视化。
 
 ---
 
-## §5 执行顺序与总工时
+## §5 I16 — 阻塞与对应
+
+- **Blocked by**: [FluentWork/fluentwork-backend#45 (B18 review eval)](https://github.com/FluentWork/fluentwork-backend/issues/45) 状态为 CLOSED
+- 跨仓对应文件:`fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/06-skill-B18-review-eval.md`(含 #57-#62 6 个 backend sub-ticket)
+- 跨仓评审表:`fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/跨仓对应表.md`
+
+## §6 执行顺序与总工时
 
 ```
 B18 CLOSED 后:

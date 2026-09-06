@@ -271,7 +271,13 @@
 
 ---
 
-## §5 执行顺序与总工时
+## §6 I19 — 阻塞与对应
+
+- **Blocked by**: [FluentWork/fluentwork-backend#50 (B24 历史回顾 API)](https://github.com/FluentWork/fluentwork-backend/issues/50) 状态为 CLOSED
+- 跨仓对应文件:`fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/10-skill-B24-session-history.md`(含 #90-#93 4 个 backend sub-ticket)
+- 跨仓评审表:`fluentwork-backend/.scratch/issues/2026-09-06-W3-backend-tickets/跨仓对应表.md`
+
+## §7 执行顺序与总工时
 
 ```
 B24 CLOSED 后:
