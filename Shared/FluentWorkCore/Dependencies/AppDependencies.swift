@@ -394,6 +394,12 @@ public extension Container {
         self { RawPCM16FrameDecoder() }.singleton
     }
 
+    var ttsDecoder: Factory<any TTSDecoder> {
+        // Unique so parallel tests do not share a recording mock, and so each
+        // middleware instance owns its own decoder for the session lifetime.
+        self { MockTTSDecoder() }.unique
+    }
+
     var speechSessionClient: Factory<SpeechSessionClientProtocol> {
         self {
             DefaultSpeechSessionClient(

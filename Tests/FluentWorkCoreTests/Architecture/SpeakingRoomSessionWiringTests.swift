@@ -470,6 +470,96 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 }
 
 @MainActor
+@Test func speechSessionMiddlewareRoutesTTSFramesToMockDecoderNotAudioEngine() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    let decoder = MockTTSDecoder()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+    container.ttsDecoder.register { decoder }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await audioEngine.snapshotStartCalls() == 1
+    }
+
+    speechClient.emit(
+        .control(
+            .aiTTSStart(
+                turnID: "turn-9",
+                voiceID: "mock_voice_01",
+                sampleRate: 24_000,
+                codec: "opus"
+            )
+        )
+    )
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        decoder.snapshotPrepares().count == 1
+    }
+    let first = WSAudioFrame(sequence: 0, opusPayload: Data([0x0A, 0x0B]))
+    let second = WSAudioFrame(sequence: 1, opusPayload: Data([0x0C]))
+    speechClient.emit(.audio(first))
+    speechClient.emit(.audio(second))
+    speechClient.emit(
+        .control(.aiTTSEnd(turnID: "turn-9", completionStatus: "ok", durationMs: 40))
+    )
+
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        decoder.snapshotFinishes().count == 1
+    }
+
+    #expect(decoder.snapshotPrepares().count == 1)
+    #expect(decoder.snapshotFeeds().map(\.seq) == [0, 1])
+    #expect(decoder.snapshotFeeds().map(\.turnId) == ["turn-9", "turn-9"])
+    #expect(decoder.snapshotFinishes().map(\.status) == ["ok"])
+    #expect(await audioEngine.snapshotPlayedFrames().isEmpty)
+}
+
+@MainActor
+@Test func speechSessionMiddlewareResetsTTSDispatcherOnEndWithoutTTSEndFrame() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    let decoder = MockTTSDecoder()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+    container.ttsDecoder.register { decoder }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await audioEngine.snapshotStartCalls() == 1
+    }
+
+    speechClient.emit(
+        .control(
+            .aiTTSStart(
+                turnID: "turn-leftover",
+                voiceID: "mock_voice_01",
+                sampleRate: 24_000,
+                codec: "opus"
+            )
+        )
+    )
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        decoder.snapshotPrepares().count == 1
+    }
+
+    store.dispatch(.speakingRoom(.session(.endTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .ended
+            && decoder.snapshotFinishes().count == 1
+    }
+
+    #expect(decoder.snapshotFinishes().map(\.status) == ["interrupted"])
+    #expect(await audioEngine.snapshotPlayedFrames().isEmpty)
+}
+
+@MainActor
 @Test func speechSessionMiddlewareStartsReconnectWindowOnDisconnect() async {
     let container = Container()
     container.reset()

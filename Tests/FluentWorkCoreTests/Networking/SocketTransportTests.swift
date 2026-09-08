@@ -12,6 +12,8 @@ import Testing
         .userSpeechEnd(text: "thank you", turnID: "turn-1"),
         .aiTextDelta(text: "你好"),
         .aiAudioChunk(sequence: 42),
+        .aiTTSStart(turnID: "turn-9", voiceID: "mock_voice_01", sampleRate: 24_000, codec: "opus"),
+        .aiTTSEnd(turnID: "turn-9", completionStatus: "ok", durationMs: 200),
         .aiTurnEnd(turnID: "turn-42", outcome: nil, logID: nil),
         .interrupt,
         .ping(ts: 1_728_000_000_000),

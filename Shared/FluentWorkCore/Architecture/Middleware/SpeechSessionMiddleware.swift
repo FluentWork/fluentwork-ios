@@ -40,6 +40,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
     // when ai.turn.end arrives or the session ends. Lives here so both the
     // middleware dispatch path and the transport task can access it.
     let turnTimeoutTracking = TurnTimeoutTracking()
+    let ttsDispatcher = TTSFrameDispatcher(decoder: resolvedContainer.ttsDecoder())
 
     return { store, action, next in
         guard case let .speakingRoom(.session(event)) = action else {
@@ -72,7 +73,8 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
                 turnCounter: turnCounter,
                 timings: timings,
                 startTurnTimeout: enteredProcessing,
-                turnTimeoutTracking: turnTimeoutTracking
+                turnTimeoutTracking: turnTimeoutTracking,
+                ttsDispatcher: ttsDispatcher
             )
         }
         return .merge([apply] + interpreted)
@@ -152,7 +154,8 @@ private func interpretSpeechSessionSideEffect(
     // B15: turn timeout parameters — startTurnTimeout signals that the transport
     // task should arm a 70s timer; turnTimeoutTracking records the armed state.
     startTurnTimeout: Bool = false,
-    turnTimeoutTracking: TurnTimeoutTracking? = nil
+    turnTimeoutTracking: TurnTimeoutTracking? = nil,
+    ttsDispatcher: TTSFrameDispatcher
 ) -> Effect<AppAction> {
     let audioEngine = container.audioEngine()
     let speechClient = container.speechSessionClient()
@@ -258,6 +261,8 @@ private func interpretSpeechSessionSideEffect(
                         case .sessionStart:   typeTag = "session.start"
                         case .aiTextDelta:    typeTag = "ai.text.delta"
                         case .aiAudioChunk:   typeTag = "ai.audio.chunk"
+                        case .aiTTSStart:     typeTag = "ai.tts.start"
+                        case .aiTTSEnd:       typeTag = "ai.tts.end"
                         case .interrupt:       typeTag = "interrupt"
                         case .sessionEnd:      typeTag = "session.end"
                         case .error:           typeTag = "error"
@@ -285,7 +290,62 @@ private func interpretSpeechSessionSideEffect(
                                 "payload_bytes": String(frame.opusPayload.count),
                             ]
                         )
-                        await audioEngine.play(frame: frame)
+                        do {
+                            let consumedByTTS = try ttsDispatcher.handle(audio: frame)
+                            if !consumedByTTS {
+                                await audioEngine.play(frame: frame)
+                            }
+                        } catch {
+                            tracker.track(
+                                event: "tts_decoder_failed",
+                                properties: [
+                                    "phase": "feed",
+                                    "sequence": String(frame.sequence),
+                                    "error": String(describing: error),
+                                ]
+                            )
+                        }
+
+                    case let .control(.aiTTSStart(turnID, voiceID, sampleRate, codec)):
+                        do {
+                            try ttsDispatcher.handle(
+                                control: .aiTTSStart(
+                                    turnID: turnID,
+                                    voiceID: voiceID,
+                                    sampleRate: sampleRate,
+                                    codec: codec
+                                )
+                            )
+                        } catch {
+                            tracker.track(
+                                event: "tts_decoder_failed",
+                                properties: [
+                                    "phase": "prepare",
+                                    "turn_id": turnID,
+                                    "error": String(describing: error),
+                                ]
+                            )
+                        }
+
+                    case let .control(.aiTTSEnd(turnID, completionStatus, durationMs)):
+                        do {
+                            try ttsDispatcher.handle(
+                                control: .aiTTSEnd(
+                                    turnID: turnID,
+                                    completionStatus: completionStatus,
+                                    durationMs: durationMs
+                                )
+                            )
+                        } catch {
+                            tracker.track(
+                                event: "tts_decoder_failed",
+                                properties: [
+                                    "phase": "finish",
+                                    "turn_id": turnID,
+                                    "error": String(describing: error),
+                                ]
+                            )
+                        }
 
                     case let .control(.aiTurnEnd(turnID, outcome, logID)):
                         // B15-I3: capture the vendor log_id from the first ai.turn.end.
@@ -471,6 +531,7 @@ private func interpretSpeechSessionSideEffect(
 
     case .stopPlayback:
         return .fireAndForget {
+            try? ttsDispatcher.interrupt()
             await audioEngine.interruptNow()
         }
 
@@ -497,6 +558,9 @@ private func interpretSpeechSessionSideEffect(
         // B15: cancel all session-scoped tasks including the turn timeout.
         // disarm() is safe to call even if the timer was never started.
         turnTimeoutTracking?.disarm()
+        // Clear TTS binding on the middleware thread so a leftover start cannot
+        // swallow the next session's PCM if the host restarts immediately.
+        try? ttsDispatcher.reset()
         return .merge(
             .cancel(id: SpeechSessionTaskID.transportEvents),
             .cancel(id: SpeechSessionTaskID.audioEngineEvents),
