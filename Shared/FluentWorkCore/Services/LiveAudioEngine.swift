@@ -110,10 +110,12 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     // hardware audio output.
     private var lastInterruptRequestedAt: ContinuousClock.Instant?
 
+    private let sessionManager: any AudioSessionManaging
     private let decoder: any WSAudioFrameDecoder
     private let requestMicrophonePermission: @Sendable () async -> Bool
 
     public init(
+        sessionManager: any AudioSessionManaging = DefaultAudioSessionManager(),
         decoder: any WSAudioFrameDecoder = RawPCM16FrameDecoder(),
         requestMicrophonePermission: @escaping @Sendable () async -> Bool = {
             await MicrophonePermission.request()
@@ -125,6 +127,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         )
         self.stream = pair.stream
         self.continuation = pair.continuation
+        self.sessionManager = sessionManager
         self.decoder = decoder
         self.requestMicrophonePermission = requestMicrophonePermission
     }
@@ -137,14 +140,14 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
     public func startCapture() async throws {
         // Request microphone permission before activating audio session.
-        // This prevents "couldn't be completed. error 1" from setActive(true)
+        // This prevents activation error 1 from the audio session
         // when permission hasn't been explicitly granted yet.
         let granted = await requestMicrophonePermission()
         guard granted else {
             throw AudioEnginePermissionError.microphoneDenied
         }
 
-        try configureAudioSessionIfNeeded()
+        try sessionManager.configure(for: .fullDuplex)
 
         // Access inputNode FIRST so the audio graph has at least one node
         // attached before `engine.start()`. On devices without an audio input
@@ -381,25 +384,6 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             }
             return total / Float(samples.count)
         }
-    }
-
-    private func configureAudioSessionIfNeeded() throws {
-        #if os(iOS)
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
-        try session.setPreferredSampleRate(16_000)
-        try session.setPreferredIOBufferDuration(0.02)
-        do {
-            try session.setActive(true)
-        } catch {
-            // Error code 1: operation couldn't be completed — typically another
-            // app holds the audio session. Surface a clear message so the user
-            // knows to close other audio apps.
-            throw AudioEngineError.audioSessionConflict(
-                "Audio session could not be activated. Please close other apps using audio (e.g., music, video) and try again. Underlying error: \(error.localizedDescription)"
-            )
-        }
-        #endif
     }
 
     private func attachPlayerIfNeeded() {

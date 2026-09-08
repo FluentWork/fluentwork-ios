@@ -369,6 +369,10 @@ public extension Container {
         self { NWPathNetworkMonitor() }.singleton
     }
 
+    var audioSessionManager: Factory<AudioSessionManaging> {
+        self { DefaultAudioSessionManager() }.singleton
+    }
+
     var audioEngine: Factory<AudioEngineProtocol> {
         self {
             if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
@@ -383,7 +387,10 @@ public extension Container {
             // tests can drive the speaking-room pipeline without the
             // Volcengine SDK; the production decoder swap happens behind the
             // I12 decoder factory once B13 main-lines Opus encoding.
-            return LiveAudioEngine(decoder: self.wsAudioFrameDecoder())
+            return LiveAudioEngine(
+                sessionManager: self.audioSessionManager(),
+                decoder: self.wsAudioFrameDecoder()
+            )
             #else
             return PlaceholderAudioEngine()
             #endif
