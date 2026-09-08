@@ -1,4 +1,5 @@
 import AVFoundation
+import Dispatch
 import FluentWorkNetworking
 import Foundation
 import Testing
@@ -60,6 +61,21 @@ import Testing
     await #expect(throws: AudioEnginePermissionError.microphoneDenied) {
         try await engine.startCapture()
     }
+}
+
+@available(iOS 17, macOS 14, *)
+@Test func liveAudioEngineStartCaptureConfiguresFullDuplexAndPropagatesSessionError() async {
+    let sessionManager = ThrowingAudioSessionManager()
+    let engine = LiveAudioEngine(
+        sessionManager: sessionManager,
+        decoder: RawPCM16FrameDecoder(),
+        requestMicrophonePermission: { true }
+    )
+
+    await #expect(throws: ThrowingAudioSessionManager.Failure.expected) {
+        try await engine.startCapture()
+    }
+    #expect(sessionManager.didConfigureFullDuplex)
 }
 
 @available(iOS 17, macOS 14, *)
@@ -234,5 +250,35 @@ struct ThrowingFrameDecoder: WSAudioFrameDecoder {
     enum Failure: Error, Equatable { case boom }
     func decode(_ frame: WSAudioFrame) async throws -> Data {
         throw Failure.boom
+    }
+}
+
+final class ThrowingAudioSessionManager: AudioSessionManaging, @unchecked Sendable {
+    enum Failure: Error, Equatable {
+        case expected
+    }
+
+    private let queue = DispatchQueue(label: "com.fluentwork.tests.throwing-audio-session")
+    private var configuredRoute: AudioRoute?
+
+    func configure(for route: AudioRoute) throws {
+        queue.sync {
+            configuredRoute = route
+        }
+        throw Failure.expected
+    }
+
+    func pause() throws {}
+    func resume() throws {}
+
+    var isActive: Bool {
+        get async { false }
+    }
+
+    var didConfigureFullDuplex: Bool {
+        queue.sync {
+            guard case .fullDuplex = configuredRoute else { return false }
+            return true
+        }
     }
 }
