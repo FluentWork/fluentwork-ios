@@ -23,6 +23,9 @@ Shared topics:
 2. Protect AudioEngine, SpeechSession, and release-critical paths.
 3. Prefer explicit state boundaries over broad cross-module rewrites.
 4. Keep implementation and tests aligned.
+5. Do not use `NSLock`, `NSRecursiveLock`, or other explicit lock-based synchronization. Prefer actor isolation or a dedicated serial executor/queue that preserves the repository's supported OS versions.
+6. Work on exactly one ticket at a time. Do not implement, test, or advance multiple planned tasks concurrently.
+7. Cross-repository iOS/backend work must be sequential: finish and verify the active task in one repository before starting work in the other repository.
 
 ## Required Behaviors
 
