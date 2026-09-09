@@ -72,6 +72,10 @@ public enum ProcessingSubStage: String, Equatable, Sendable, Codable {
     case asr
     case llm
     case review
+    case .connecting, .aiSpeaking, .waitingUser, .recording, .processing, .degradedText:
+            return true
+        }
+    }
 }
 
 public struct SpeechSessionState: Equatable, Sendable {
