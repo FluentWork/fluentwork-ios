@@ -31,6 +31,7 @@ public enum SpeechSessionMachine {
             state.isReconnecting = false
             state.suspendedPhase = nil
             state.processingSubStage = nil
+            state.lastTurnOutcome = nil
             effects.append(.createSession)
 
         case (.connecting, .socketReady):
@@ -65,17 +66,49 @@ public enum SpeechSessionMachine {
             state.phase = .processingASR
             state.processingSubStage = .asr
             state.userTurnCount += 1
+            state.lastTurnOutcome = .ok
 
         case (.recording, .recordingTimedOut):
             // I20 T-I20-1: user still recording after 60s. Abort this turn, keep
             // the session. Do not enter processingASR (that would arm B15's 70s
             // collectTurn fallback) and do not emit user.speech.end.
             state.phase = .waitingUser
-            state.processingSubStage = nil
-            state.userTurnCount += 1
-            effects.append(
-                .sendTurnAbort(turnID: "turn-\(state.userTurnCount)", outcome: "timeout")
-            )
+            effects.append(abortOpenRecording(&state, outcome: .timeout))
+
+        // Recording-specific terminals before the catch-alls: an open utterance
+        // must not look like `user.speech.end` / outcome=ok.
+        case (.recording, .endTap):
+            effects.append(abortOpenRecording(&state, outcome: .userAbandoned))
+            state.phase = .ended
+            state.isReconnecting = false
+            state.suspendedPhase = nil
+            effects.append(.endSession)
+
+        case (.recording, .forceClose):
+            effects.append(abortOpenRecording(&state, outcome: .userAbandoned))
+            state.phase = .ended
+            state.isReconnecting = false
+            state.suspendedPhase = nil
+            effects.append(.forceClose)
+
+        case (.recording, .failed(let message)):
+            effects.append(abortOpenRecording(&state, outcome: .error))
+            state.phase = .failed
+            state.failureReason = message
+            state.isReconnecting = false
+            state.suspendedPhase = nil
+            effects.append(.endSession)
+
+        case (.recording, .networkLost):
+            effects.append(abortOpenRecording(&state, outcome: .error))
+            state.phase = .waitingUser
+            state.isReconnecting = true
+            effects.append(.startReconnectWindow)
+
+        case (.recording, .networkDegraded):
+            effects.append(abortOpenRecording(&state, outcome: .error))
+            state.phase = .degradedText
+            state.isReconnecting = false
 
         case (.processingASR, .serverASRReceived),
              (.processingASR, .processingSubStageReached(.llm)):
@@ -180,5 +213,20 @@ public enum SpeechSessionMachine {
 
     private static func isActive(_ phase: SpeechSessionPhase) -> Bool {
         phase.isActive
+    }
+
+    /// Consume the open recording turn and emit `client.turn.abort`.
+    /// Caller sets the destination phase and any extra effects.
+    private static func abortOpenRecording(
+        _ state: inout SpeechSessionState,
+        outcome: TurnOutcome
+    ) -> SpeechSessionSideEffect {
+        state.userTurnCount += 1
+        state.lastTurnOutcome = outcome
+        state.processingSubStage = nil
+        return .sendTurnAbort(
+            turnID: "turn-\(state.userTurnCount)",
+            outcome: outcome
+        )
     }
 }

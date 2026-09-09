@@ -261,7 +261,7 @@ struct SpeechSessionMiddlewareB14Tests {
         let aborts = await speechClient.getTurnAbortCalls()
         #expect(aborts.count == 1)
         #expect(aborts.first?.turnID == "turn-1")
-        #expect(aborts.first?.outcome == "timeout")
+        #expect(aborts.first?.outcome == .timeout)
         #expect(await speechClient.getEndBoundaries().isEmpty)
         #expect(await speechClient.endSessionCalled == false)
         #expect(store.state.speakingRoom.phase == .waitingUser)
@@ -658,7 +658,7 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
 
     struct AbortCall: Sendable {
         let turnID: String
-        let outcome: String
+        let outcome: TurnOutcome
     }
 
     private let stream: AsyncStream<SocketTransportEvent>
@@ -708,7 +708,7 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
         }
     }
 
-    func sendTurnAbort(turnID: String, outcome: String) async throws {
+    func sendTurnAbort(turnID: String, outcome: TurnOutcome) async throws {
         await _turnAbortCalls.update { calls in
             var newCalls = calls
             newCalls.append(AbortCall(turnID: turnID, outcome: outcome))

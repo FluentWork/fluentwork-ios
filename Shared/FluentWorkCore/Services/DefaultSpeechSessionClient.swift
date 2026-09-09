@@ -138,8 +138,24 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         }
     }
 
-    public func sendTurnAbort(turnID: String, outcome: String) async throws {
-        try await transport.send(control: .clientTurnAbort(turnID: turnID, outcome: outcome))
+    public func sendTurnAbort(turnID: String, outcome: TurnOutcome) async throws {
+        guard let wire = Self.abortWireOutcome(outcome) else { return }
+        try await transport.send(control: .clientTurnAbort(turnID: turnID, outcome: wire))
+    }
+
+    private static func abortWireOutcome(
+        _ outcome: TurnOutcome
+    ) -> WSControlFrame.ClientTurnAbortOutcome? {
+        switch outcome {
+        case .ok:
+            return nil
+        case .timeout:
+            return .timeout
+        case .userAbandoned:
+            return .userAbandoned
+        case .error:
+            return .error
+        }
     }
 
     public func sendAudioPCM(_ data: Data) async throws {

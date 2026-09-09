@@ -376,13 +376,13 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
     )
 
     try await client.sendSpeechBoundary(started: true, turnID: nil, text: nil)
-    try await client.sendTurnAbort(turnID: "turn-1", outcome: "timeout")
+    try await client.sendTurnAbort(turnID: "turn-1", outcome: .timeout)
 
     let sentControls = await transport.sentControlFrames
     #expect(
         sentControls == [
             .userSpeechStart,
-            .clientTurnAbort(turnID: "turn-1", outcome: "timeout"),
+        .clientTurnAbort(turnID: "turn-1", outcome: .timeout),
         ]
     )
 }

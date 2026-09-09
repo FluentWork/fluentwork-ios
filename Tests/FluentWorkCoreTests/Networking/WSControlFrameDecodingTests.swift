@@ -117,7 +117,7 @@ private let backendDevEchoFeedbackBadgeJSON = #"""
 
 @Test func clientTurnAbortEncodesTimeoutOutcome() throws {
     let encoded = try WSControlFrameCodec.encode(
-        .clientTurnAbort(turnID: "turn-1", outcome: "timeout")
+        .clientTurnAbort(turnID: "turn-1", outcome: .timeout)
     )
     let json = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
     #expect(json["type"] as? String == "client.turn.abort")
@@ -129,5 +129,26 @@ private let backendDevEchoFeedbackBadgeJSON = #"""
 @Test func clientTurnAbortDecodesWireFrame() throws {
     let json = #"{"type":"client.turn.abort","turn_id":"turn-2","outcome":"timeout"}"#
     let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
-    #expect(decoded == .clientTurnAbort(turnID: "turn-2", outcome: "timeout"))
+    #expect(decoded == .clientTurnAbort(turnID: "turn-2", outcome: .timeout))
+}
+
+@Test func clientTurnAbortEncodesUserAbandonedAndError() throws {
+    let abandoned = try WSControlFrameCodec.encode(
+        .clientTurnAbort(turnID: "turn-3", outcome: .userAbandoned)
+    )
+    let abandonedJSON = try #require(JSONSerialization.jsonObject(with: abandoned) as? [String: Any])
+    #expect(abandonedJSON["outcome"] as? String == "user_abandoned")
+
+    let error = try WSControlFrameCodec.encode(
+        .clientTurnAbort(turnID: "turn-4", outcome: .error)
+    )
+    let errorJSON = try #require(JSONSerialization.jsonObject(with: error) as? [String: Any])
+    #expect(errorJSON["outcome"] as? String == "error")
+}
+
+@Test func clientTurnAbortRejectsOkOutcome() {
+    let json = #"{"type":"client.turn.abort","turn_id":"turn-1","outcome":"ok"}"#
+    #expect(throws: DecodingError.self) {
+        try WSControlFrameCodec.decode(Data(json.utf8))
+    }
 }

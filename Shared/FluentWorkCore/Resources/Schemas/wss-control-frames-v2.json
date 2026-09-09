@@ -72,14 +72,17 @@
       }
     },
     "clientTurnAbort": {
-      "description": "I20 T-I20-1: client aborts an in-progress recording turn. Not B15's post-speech-end 70s collectTurn timeout. Session stays alive; gateway must not start collectTurn.",
+      "description": "I20: client aborts an in-progress recording turn. Outcome is timeout / user_abandoned / error; never ok. Not B15's post-speech-end 70s collectTurn timeout. Session stays alive; gateway must not start collectTurn.",
       "type": "object",
       "required": ["type", "outcome"],
       "additionalProperties": false,
       "properties": {
         "type": { "const": "client.turn.abort" },
         "turn_id": { "type": "string", "minLength": 1 },
-        "outcome": { "type": "string", "const": "timeout" }
+        "outcome": {
+          "type": "string",
+          "enum": ["timeout", "user_abandoned", "error"]
+        }
       }
     },
     "aiTextDelta": {

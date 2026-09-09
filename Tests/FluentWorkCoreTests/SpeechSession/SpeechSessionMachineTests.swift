@@ -269,8 +269,9 @@ import Testing
     #expect(state.phase == .waitingUser)
     #expect(state.processingSubStage == nil)
     #expect(state.userTurnCount == 1)
+    #expect(state.lastTurnOutcome == .timeout)
     #expect(state.failureReason == nil)
-    #expect(effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: "timeout")))
+    #expect(effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: .timeout)))
     #expect(effects.contains(.trackTransition(from: .recording, to: .waitingUser)))
     #expect(!effects.contains(.turnTimeoutExpired))
     #expect(!effects.contains(.endSession))
@@ -283,7 +284,7 @@ import Testing
 
     let effects = SpeechSessionMachine.reduce(&state, event: .recordingTimedOut)
     #expect(state.phase == .waitingUser)
-    #expect(effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: "timeout")))
+    #expect(effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: .timeout)))
 }
 
 @Test func recordingTimedOutFromWaitingUserIsNoOp() {
@@ -298,7 +299,78 @@ import Testing
     var state = SpeechSessionState(phase: .recording)
     let effects = SpeechSessionMachine.reduce(&state, event: .vadSpeechEnd(turnID: nil))
     #expect(state.phase == .processingASR)
-    #expect(!effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: "timeout")))
+    #expect(state.lastTurnOutcome == .ok)
+    #expect(!effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: .timeout)))
+}
+
+@Test func holdEndAfterRecordingRecordsOkOutcome() {
+    var state = SpeechSessionState(phase: .recording)
+    let effects = SpeechSessionMachine.reduce(&state, event: .holdEnd(turnID: nil))
+    #expect(state.phase == .processingASR)
+    #expect(state.lastTurnOutcome == .ok)
+    #expect(effects.allSatisfy {
+        if case .sendTurnAbort = $0 { return false }
+        return true
+    })
+}
+
+@Test func endTapFromRecordingAbortsAsUserAbandoned() {
+    var state = SpeechSessionState(phase: .recording)
+    let effects = SpeechSessionMachine.reduce(&state, event: .endTap)
+
+    #expect(state.phase == .ended)
+    #expect(state.lastTurnOutcome == .userAbandoned)
+    #expect(state.userTurnCount == 1)
+    #expect(effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: .userAbandoned)))
+    #expect(effects.contains(.endSession))
+}
+
+@Test func forceCloseFromRecordingAbortsAsUserAbandoned() {
+    var state = SpeechSessionState(phase: .recording)
+    let effects = SpeechSessionMachine.reduce(&state, event: .forceClose)
+
+    #expect(state.phase == .ended)
+    #expect(state.lastTurnOutcome == .userAbandoned)
+    #expect(effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: .userAbandoned)))
+    #expect(effects.contains(.forceClose))
+}
+
+@Test func failedFromRecordingAbortsAsError() {
+    var state = SpeechSessionState(phase: .recording)
+    let effects = SpeechSessionMachine.reduce(&state, event: .failed("network"))
+
+    #expect(state.phase == .failed)
+    #expect(state.lastTurnOutcome == .error)
+    #expect(state.failureReason == "network")
+    #expect(effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: .error)))
+    #expect(effects.contains(.endSession))
+}
+
+@Test func networkLostFromRecordingAbortsAsErrorAndLeavesRecording() {
+    var state = SpeechSessionState(phase: .recording)
+    let effects = SpeechSessionMachine.reduce(&state, event: .networkLost)
+
+    #expect(state.phase == .waitingUser)
+    #expect(state.lastTurnOutcome == .error)
+    #expect(state.isReconnecting)
+    #expect(effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: .error)))
+    #expect(effects.contains(.startReconnectWindow))
+}
+
+@Test func networkDegradedFromRecordingAbortsAsError() {
+    var state = SpeechSessionState(phase: .recording)
+    let effects = SpeechSessionMachine.reduce(&state, event: .networkDegraded)
+
+    #expect(state.phase == .degradedText)
+    #expect(state.lastTurnOutcome == .error)
+    #expect(effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: .error)))
+}
+
+@Test func turnOutcomeRawValuesMatchWireContract() {
+    #expect(TurnOutcome.ok.rawValue == "ok")
+    #expect(TurnOutcome.timeout.rawValue == "timeout")
+    #expect(TurnOutcome.userAbandoned.rawValue == "user_abandoned")
+    #expect(TurnOutcome.error.rawValue == "error")
 }
 
 @Test func reconnectSucceededClearsReconnectFlag() {

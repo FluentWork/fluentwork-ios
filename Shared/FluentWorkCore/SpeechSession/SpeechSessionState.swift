@@ -81,10 +81,14 @@ public struct SpeechSessionState: Equatable, Sendable {
     public var suspendedPhase: SpeechSessionPhase?
     public var isReconnecting: Bool
     public var failureReason: String?
-    /// Incremented each time the machine enters `.processingASR` from `.recording`,
-    /// i.e. once per user speaking turn. Used to populate `user.speech.end`'s
-    /// `turn_id` field so the backend can dedupe badge hits per-turn.
+    /// Incremented each time a recording turn reaches a terminal outcome
+    /// (normal `user.speech.end`, abort, abandon, or error). Used to populate
+    /// `user.speech.end` / `client.turn.abort` `turn_id` so the backend can
+    /// dedupe badge hits per-turn.
     public var userTurnCount: Int
+    /// Last completed user-turn outcome. `nil` until a recording turn ends.
+    /// Distinct from `WSControlFrame.TurnOutcome` on `ai.turn.end`.
+    public var lastTurnOutcome: TurnOutcome?
     /// Mirrors `phase.processingSubStage`. Optional stored copy so tests and
     /// telemetry can read the substage without switching on phase; always
     /// kept in lockstep by `SpeechSessionMachine`.
@@ -96,6 +100,7 @@ public struct SpeechSessionState: Equatable, Sendable {
         isReconnecting: Bool = false,
         failureReason: String? = nil,
         userTurnCount: Int = 0,
+        lastTurnOutcome: TurnOutcome? = nil,
         processingSubStage: ProcessingSubStage? = nil
     ) {
         self.phase = phase
@@ -103,6 +108,7 @@ public struct SpeechSessionState: Equatable, Sendable {
         self.isReconnecting = isReconnecting
         self.failureReason = failureReason
         self.userTurnCount = userTurnCount
+        self.lastTurnOutcome = lastTurnOutcome
         self.processingSubStage = processingSubStage ?? phase.processingSubStage
     }
 

@@ -78,7 +78,8 @@ import Foundation
     let abortType = try #require(abortProperties["type"] as? [String: Any])
     let abortOutcome = try #require(abortProperties["outcome"] as? [String: Any])
     #expect(abortType["const"] as? String == "client.turn.abort")
-    #expect(abortOutcome["const"] as? String == "timeout")
+    #expect(abortOutcome["enum"] as? [String] == ["timeout", "user_abandoned", "error"])
+    #expect(abortOutcome["const"] == nil)
     #expect(abortProperties["turn_id"] != nil)
     #expect(abortProperties["session_id"] == nil)
 

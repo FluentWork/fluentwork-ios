@@ -117,7 +117,7 @@ public protocol SpeechSessionClientProtocol: Sendable {
     /// to fall back to server-side ASR.
     func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws
     /// I20 T-I20-1: abort an in-progress recording turn. Not `session.end`.
-    func sendTurnAbort(turnID: String, outcome: String) async throws
+    func sendTurnAbort(turnID: String, outcome: TurnOutcome) async throws
     func sendAudioPCM(_ data: Data) async throws
     func submitTranscript(_ text: String) async
     func transportEvents() -> AsyncStream<SocketTransportEvent>
@@ -249,7 +249,7 @@ public final class PlaceholderSpeechSessionClient: SpeechSessionClientProtocol, 
 
     public func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {}
 
-    public func sendTurnAbort(turnID: String, outcome: String) async throws {}
+    public func sendTurnAbort(turnID: String, outcome: TurnOutcome) async throws {}
 
     public func sendAudioPCM(_ data: Data) async throws {}
 

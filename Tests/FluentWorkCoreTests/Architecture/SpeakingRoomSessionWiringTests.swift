@@ -88,7 +88,7 @@ private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unche
         await state.recordBoundary(started, turnID: turnID)
     }
 
-    func sendTurnAbort(turnID: String, outcome: String) async throws {}
+    func sendTurnAbort(turnID: String, outcome: TurnOutcome) async throws {}
 
     func sendAudioPCM(_ data: Data) async throws {
         if let sendAudioError {
