@@ -2,6 +2,8 @@ import FactoryKit
 import FluentWorkFeatureFlags
 import TGReduxKit
 
+public typealias AppStore = Store<AppState, AppAction>
+
 public enum AppStoreFactory {
     @MainActor
     public static func make(

@@ -129,6 +129,24 @@ import Testing
     #expect(effects.isEmpty)
 }
 
+@Test func forceCloseFromRemainingActivePhasesEndsSession() {
+    let phases: [SpeechSessionPhase] = [
+        .aiSpeaking,
+        .waitingUser,
+        .recording,
+        .processing,
+        .degradedText,
+    ]
+    for phase in phases {
+        var state = SpeechSessionState(phase: phase)
+        let effects = SpeechSessionMachine.reduce(&state, event: .forceClose)
+        #expect(state.phase == .ended, "expected ended from \(phase)")
+        #expect(state.isReconnecting == false, "expected reconnect cleared from \(phase)")
+        #expect(state.suspendedPhase == nil, "expected suspend cleared from \(phase)")
+        #expect(effects.contains(.forceClose), "expected forceClose effect from \(phase)")
+    }
+}
+
 @Test func forceCloseWhileSuspendedEndsSession() {
     var state = SpeechSessionState(phase: .recording)
     _ = SpeechSessionMachine.reduce(&state, event: .interruptedBySystem)

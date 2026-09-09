@@ -4,7 +4,7 @@ import FluentWorkUI
 
 @MainActor
 struct HostRootView: View {
-    @State private var store = AppStoreFactory.make()
+    var store: AppStore
     @State private var didLaunch = false
 
     var body: some View {
@@ -642,5 +642,5 @@ struct HostRootView: View {
 }
 
 #Preview {
-    HostRootView()
+    HostRootView(store: AppStoreFactory.make())
 }
