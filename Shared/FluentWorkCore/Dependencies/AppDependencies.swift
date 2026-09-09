@@ -13,6 +13,8 @@ public enum AudioEngineEvent: Equatable, Sendable {
     case speechStarted
     case speechEnded
     case pcmChunk(Data)
+    case interruptedBySystem
+    case systemInterruptEnded
     case failed(String)
 }
 

@@ -388,6 +388,40 @@ struct SpeechSessionMiddlewareReconnectTests {
     }
 }
 
+// MARK: - System Interrupt Tests
+
+@Suite("SpeechSessionMiddleware System Interrupt")
+struct SpeechSessionMiddlewareSystemInterruptTests {
+
+    @MainActor
+    @Test func audioEngineSystemInterruptSuspendsThenResumesToWaitingUser() async throws {
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+
+        audioEngine.emit(.interruptedBySystem)
+        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+            store.state.speakingRoom.session.suspendedPhase == .aiSpeaking
+        }
+        #expect(store.state.speakingRoom.session.suspendedPhase == .aiSpeaking)
+        #expect(store.state.speakingRoom.phase == .aiSpeaking)
+
+        audioEngine.emit(.systemInterruptEnded)
+        try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
+        #expect(store.state.speakingRoom.session.suspendedPhase == nil)
+    }
+}
+
 // MARK: - End Session Cleanup Tests
 
 @Suite("SpeechSessionMiddleware End Session Cleanup")

@@ -514,6 +514,12 @@ private func interpretSpeechSessionSideEffect(
                             return nil
                         }
 
+                    case .interruptedBySystem:
+                        await dispatchBox.dispatch(.speakingRoom(.session(.interruptedBySystem)))
+
+                    case .systemInterruptEnded:
+                        await dispatchBox.dispatch(.speakingRoom(.session(.systemInterruptEnded)))
+
                     case let .failed(message):
                         timings.mark(event: "audio_engine_failed", properties: ["message": message])
                         await dispatchBox.dispatch(.speakingRoom(.session(.failed(message))))

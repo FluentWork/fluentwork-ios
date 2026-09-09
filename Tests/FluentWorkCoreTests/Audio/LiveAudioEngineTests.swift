@@ -222,6 +222,57 @@ private func consumeFirstEvent<T: Sendable>(
     #expect(captured.map(\.sequence) == [10, 11])
 }
 
+@available(iOS 17, macOS 14, *)
+@Test func liveAudioEngineStartAndStopInterruptionObservationRecordsCalls() async {
+    let observer = RecordingAudioInterruptionObserver()
+    let engine = LiveAudioEngine(
+        decoder: RawPCM16FrameDecoder(),
+        interruptionObserver: observer
+    )
+
+    await engine.startInterruptionObservation()
+    #expect(observer.startCount == 1)
+
+    await engine.stopInterruptionObservation()
+    #expect(observer.stopCount == 1)
+}
+
+@available(iOS 17, macOS 14, *)
+@Test func liveAudioEngineHandleBeganYieldsInterruptedBySystemWithoutStartCapture() async {
+    let engine = LiveAudioEngine(
+        decoder: RawPCM16FrameDecoder(),
+        interruptionObserver: RecordingAudioInterruptionObserver()
+    )
+    let stream = engine.events()
+
+    await engine.handleInterruption(.began)
+
+    let event = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        if case .interruptedBySystem = event { return event } else { return nil }
+    }
+    #expect(event == .interruptedBySystem)
+}
+
+@available(iOS 17, macOS 14, *)
+@Test func liveAudioEngineHandleRouteChangedYieldsFailedRouteChanged() async {
+    let engine = LiveAudioEngine(
+        decoder: RawPCM16FrameDecoder(),
+        interruptionObserver: RecordingAudioInterruptionObserver()
+    )
+    let stream = engine.events()
+
+    await engine.handleInterruption(.routeChanged(reason: "oldDeviceUnavailable"))
+
+    let event = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        if case .failed = event { return event } else { return nil }
+    }
+    guard case let .failed(message) = event else {
+        Issue.record("expected a .failed event from route change, got \(String(describing: event))")
+        return
+    }
+    #expect(message.contains("route_changed"))
+}
+
 // MARK: - Test doubles
 
 actor CallLog {
@@ -280,5 +331,32 @@ final class ThrowingAudioSessionManager: AudioSessionManaging, @unchecked Sendab
             guard case .fullDuplex = configuredRoute else { return false }
             return true
         }
+    }
+}
+
+final class RecordingAudioInterruptionObserver: AudioInterruptionObserving, @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.fluentwork.tests.recording-audio-interruption")
+    private var starts = 0
+    private var stops = 0
+
+    func start(_ onEvent: @escaping @Sendable (AudioInterruptionKind) async -> Void) {
+        queue.sync {
+            starts += 1
+            _ = onEvent
+        }
+    }
+
+    func stop() {
+        queue.sync {
+            stops += 1
+        }
+    }
+
+    var startCount: Int {
+        queue.sync { starts }
+    }
+
+    var stopCount: Int {
+        queue.sync { stops }
     }
 }
