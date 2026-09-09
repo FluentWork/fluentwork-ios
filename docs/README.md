@@ -57,7 +57,8 @@
 32. `33_I20_client_turn_abort_joint_debug.md` — `client.turn.abort` 网关接受后会话仍活
 33. `34_I20_manual_speech_boundary.md` — I20 Item 4 手动开口主路径，自动 VAD 降级
 34. `35_I20_trace_alignment_joint_debug.md` — I20 Item 3 `turn_id` + `log_id` 跨仓联调
-35. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
+35. `36_sync_lock_boxes.md` — `OSAllocatedUnfairLock` 同步盒子；按真实双写路径覆盖并发
+36. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
 
 ---
 

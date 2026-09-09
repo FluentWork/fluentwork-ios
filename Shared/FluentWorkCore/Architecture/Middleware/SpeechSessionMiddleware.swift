@@ -824,7 +824,8 @@ private func processingTimeoutEffects(
 
 /// Counts TTS binary frames between `ai.tts.start` and `ai.tts.end` so we can
 /// trace a stream without logging every Opus packet.
-private final class TTSStreamTrace: Sendable {
+/// - Note: `internal` for unit testing.
+internal final class TTSStreamTrace: Sendable {
     private let frames = OSAllocatedUnfairLock(initialState: 0)
 
     func reset() {

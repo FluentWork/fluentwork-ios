@@ -126,9 +126,7 @@ public func dailyReadAudioObserver(container: Container? = nil) -> Middleware<Ap
   return { store, action, next in
     let base = next(action)
 
-    guard !startedBox.isStarted() else { return base }
-
-    startedBox.markStarted()
+    guard startedBox.tryMarkStarted() else { return base }
     let dispatchBox = DailyReadDispatchBox(dispatch: { store.dispatch($0) })
 
     return .merge(
@@ -158,11 +156,23 @@ public func dailyReadAudioObserver(container: Container? = nil) -> Middleware<Ap
 /// `OSAllocatedUnfairLock` replaces the former `NSLock` — sync calls
 /// keep the existing `Middleware` contract happy and read more cleanly
 /// than manual `lock()` / `defer { unlock() }` pairs.
-private final class ObserverStartedBox: Sendable {
+/// `tryMarkStarted()` is atomic so two middleware entries cannot both
+/// observe "not started" and launch a second observer task.
+/// - Note: `internal` for unit testing.
+internal final class ObserverStartedBox: Sendable {
   private let storage = OSAllocatedUnfairLock<Bool>(initialState: false)
 
   func isStarted() -> Bool { storage.withLock { $0 } }
-  func markStarted() { storage.withLock { $0 = true } }
+
+  /// Returns true only for the first caller. Later calls return false.
+  @discardableResult
+  func tryMarkStarted() -> Bool {
+    storage.withLock {
+      if $0 { return false }
+      $0 = true
+      return true
+    }
+  }
 }
 
 private func pollDailyReadUntilReady(

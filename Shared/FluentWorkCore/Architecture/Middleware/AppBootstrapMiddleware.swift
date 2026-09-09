@@ -77,7 +77,10 @@ public func appBootstrapMiddleware(container: Container? = nil) -> Middleware<Ap
     }
 }
 
-private final class BootstrapLoadGate: Sendable {
+/// Prevents overlapping `loadBootstrap` tasks when `.appLaunched` races
+/// before reducer status is `.loading`. Sync `tryBegin` matches `Middleware`.
+/// - Note: `internal` for unit testing.
+internal final class BootstrapLoadGate: Sendable {
     private let storage = OSAllocatedUnfairLock<Bool>(initialState: false)
 
     func tryBegin() -> Bool {

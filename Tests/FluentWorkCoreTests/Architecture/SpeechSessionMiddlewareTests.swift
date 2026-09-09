@@ -119,6 +119,117 @@ struct SpeechSessionMiddlewareTests {
         #expect(!gate.isOpen)
         #expect(gate.shouldForwardPCM)
     }
+
+    /// Middleware `set(userTurnCount)` vs audio-loop `get()+1` for `turn-N`.
+    /// Individual get/set are atomic; writes of increasing counts never appear
+    /// to go backwards to a concurrent reader.
+    @Test func turnCountBoxAudioLoopSeesMonotonicWrites() async {
+        let box = TurnCountBox()
+
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                for count in 1...64 {
+                    box.set(count)
+                }
+            }
+            group.addTask {
+                var last = 0
+                for _ in 0..<2_000 {
+                    let value = box.get()
+                    #expect(value >= last)
+                    #expect((0...64).contains(value))
+                    last = value
+                }
+            }
+        }
+
+        #expect(box.get() == 64)
+    }
+
+    /// Recording-timeout abort vs audio-loop PCM / `speechEnded` readers.
+    /// After abort settles, trailing `endSpeech` must still drop PCM until
+    /// the next `beginSpeech`.
+    @Test func speechCaptureGateAbortRacesAudioLoopReaders() async {
+        let gate = SpeechCaptureGate()
+        gate.beginSpeech()
+
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { gate.abort() }
+            for _ in 0..<32 {
+                group.addTask {
+                    _ = gate.isOpen
+                    _ = gate.shouldForwardPCM
+                }
+            }
+        }
+
+        #expect(!gate.isOpen)
+        #expect(!gate.shouldForwardPCM)
+
+        gate.endSpeech()
+        #expect(!gate.shouldForwardPCM)
+
+        gate.beginSpeech()
+        #expect(gate.isOpen)
+        #expect(gate.shouldForwardPCM)
+    }
+
+    /// B15: timeout task `arm` and a second scheduler must not both succeed.
+    @Test func turnTimeoutTrackingConcurrentArmSucceedsOnce() async {
+        let tracking = TurnTimeoutTracking()
+        let successes = SuccessCounter()
+
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<32 {
+                group.addTask {
+                    if tracking.arm() {
+                        await successes.increment()
+                    }
+                }
+            }
+        }
+
+        #expect(await successes.value == 1)
+        #expect(tracking.isArmed)
+    }
+
+    /// `ai.turn.end` disarm vs 70s timeout disarm: both may run; armed must
+    /// end false, and a later turn can arm again.
+    @Test func turnTimeoutTrackingDisarmRacesLeaveUnarmed() async {
+        let tracking = TurnTimeoutTracking()
+        #expect(tracking.arm())
+
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { tracking.disarm() }
+            group.addTask { tracking.disarm() }
+        }
+
+        #expect(!tracking.isArmed)
+        #expect(tracking.arm())
+        tracking.disarm()
+        #expect(!tracking.isArmed)
+    }
+
+    /// Transport loop records Opus frames; `ai.tts.start` resets. Concurrent
+    /// increments must not drop counts.
+    @Test func ttsStreamTraceConcurrentRecordAudioCountsEveryFrame() async {
+        let trace = TTSStreamTrace()
+
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<32 {
+                group.addTask { _ = trace.recordAudio() }
+            }
+        }
+
+        #expect(trace.audioFrameCount() == 32)
+        trace.reset()
+        #expect(trace.audioFrameCount() == 0)
+    }
+}
+
+private actor SuccessCounter {
+    private(set) var value = 0
+    func increment() { value += 1 }
 }
 
 // MARK: - SpeechSessionMiddleware Integration Tests

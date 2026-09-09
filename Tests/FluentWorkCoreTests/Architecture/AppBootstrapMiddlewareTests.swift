@@ -136,3 +136,35 @@ private func waitForBootstrap(
     #expect(store.state.bootstrapStatus == .loading)
     #expect(await probe.loadCount == 1)
 }
+
+/// Two `.appLaunched` can hit `tryBegin` before reducer status is `.loading`.
+/// Exactly one caller may start the load task.
+@Test func bootstrapLoadGateConcurrentTryBeginSucceedsOnce() async {
+    let gate = BootstrapLoadGate()
+    let successes = BootstrapGateSuccessCounter()
+
+    await withTaskGroup(of: Void.self) { group in
+        for _ in 0..<32 {
+            group.addTask {
+                if gate.tryBegin() {
+                    await successes.increment()
+                }
+            }
+        }
+    }
+
+    #expect(await successes.value == 1)
+}
+
+@Test func bootstrapLoadGateCanBeginAgainAfterEnd() {
+    let gate = BootstrapLoadGate()
+    #expect(gate.tryBegin())
+    #expect(!gate.tryBegin())
+    gate.end()
+    #expect(gate.tryBegin())
+}
+
+private actor BootstrapGateSuccessCounter {
+    private(set) var value = 0
+    func increment() { value += 1 }
+}

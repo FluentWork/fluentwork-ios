@@ -1,5 +1,6 @@
-import Foundation
 import FluentWorkDiagnostics
+import Foundation
+import os
 
 /// Records elapsed time between speech-session milestones so iOS logs match
 /// the backend's `stage` timing stamps (`orchestration` / `asr` / etc.).
@@ -13,22 +14,23 @@ import FluentWorkDiagnostics
 ///   - `prev_event` — name of the previous mark, so stage-to-stage jumps are
 ///     diffable from the backend's `voice session ended` duration fields
 ///
-/// The recorder uses an unfair lock because the audio-loop side reads
-/// timestamps off a Sendable boundary and the middleware side writes them
-/// from a synchronous middleware closure. AllocatedUnfairLock keeps both
-/// call sites lock-safe without crossing actor hops.
+/// Sync API on purpose: middleware writes from a sync `Middleware` closure
+/// and the audio loop reads from a `Sendable` `.task`. Apple
+/// `OSAllocatedUnfairLock` (iOS 16+) replaces `NSLock` here — same as
+/// `TurnCountBox` / `SpeechCaptureGate`.
 public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
+    private struct State {
+        var startTime: Date?
+        var lastMarkTime: Date?
+        var lastEvent: String?
+        var turnStartTimes: [String: Date] = [:]
+        /// B15-I3: vendor log_id from the first `ai.turn.end`.
+        var vendorLogID: String?
+    }
+
     private let tracker: TrackerClientProtocol
-    private let clock: () -> Date
-    private let lock = NSLock()
-    private var startTime: Date?
-    private var lastMarkTime: Date?
-    private var lastEvent: String?
-    private var turnStartTimes: [String: Date] = [:]
-    // B15-I3: vendor log_id captured from the first ai.turn.end frame.
-    // Forwarded to all subsequent tracker events so the iOS trace can be
-    // correlated with the backend and vendor-side logs.
-    private var vendorLogID: String?
+    private let clock: @Sendable () -> Date
+    private let storage = OSAllocatedUnfairLock(initialState: State())
 
     public init(
         tracker: TrackerClientProtocol,
@@ -41,14 +43,14 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
     /// Resets the timeline. Call on session start (`.sessionStartTap`) and on
     /// session reconnect so per-turn deltas stay anchored to the new epoch.
     public func reset() {
-        lock.lock()
-        defer { lock.unlock() }
         let now = clock()
-        startTime = now
-        lastMarkTime = now
-        lastEvent = nil
-        turnStartTimes.removeAll()
-        vendorLogID = nil
+        storage.withLock {
+            $0.startTime = now
+            $0.lastMarkTime = now
+            $0.lastEvent = nil
+            $0.turnStartTimes.removeAll()
+            $0.vendorLogID = nil
+        }
     }
 
     /// B15-I3: stores the vendor log_id extracted from the first ai.turn.end frame.
@@ -57,18 +59,16 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
     /// the backend and Volcengine diagnostic logs.
     public func setLogID(_ logID: String?) {
         guard let logID, !logID.isEmpty else { return }
-        lock.lock()
-        defer { lock.unlock() }
-        if vendorLogID == nil {
-            vendorLogID = logID
+        storage.withLock {
+            if $0.vendorLogID == nil {
+                $0.vendorLogID = logID
+            }
         }
     }
 
     /// Returns the current vendor log_id, if set.
     public func logID() -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-        return vendorLogID
+        storage.withLock { $0.vendorLogID }
     }
 
     /// Records a milestone and emits `timing_<event>` with `delta_ms` /
@@ -80,13 +80,14 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
         properties: [String: String] = [:]
     ) {
         let now = clock()
-        let snapshot: (deltaMs: Double?, totalMs: Double?, prev: String?) = lock.locked {
-            let delta = lastMarkTime.map { now.timeIntervalSince($0) * 1000 }
-            let total = startTime.map { now.timeIntervalSince($0) * 1000 }
-            let prev = lastEvent
-            self.lastMarkTime = now
-            self.lastEvent = event
-            return (delta, total, prev)
+        let snapshot = storage.withLock { state -> (deltaMs: Double?, totalMs: Double?, prev: String?, logID: String?) in
+            let delta = state.lastMarkTime.map { now.timeIntervalSince($0) * 1000 }
+            let total = state.startTime.map { now.timeIntervalSince($0) * 1000 }
+            let prev = state.lastEvent
+            let logID = state.vendorLogID
+            state.lastMarkTime = now
+            state.lastEvent = event
+            return (delta, total, prev, logID)
         }
 
         var props = properties
@@ -97,9 +98,7 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
             props["total_ms"] = Self.format(totalMs)
         }
         props["prev_event"] = snapshot.prev ?? "none"
-        // B15-I3: include vendor log_id in every tracker event so the full iOS
-        // trace can be joined with backend and vendor logs on log_id.
-        if let logID = lock.locked({ vendorLogID }) {
+        if let logID = snapshot.logID {
             props["log_id"] = logID
         }
 
@@ -111,9 +110,8 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
     /// audio-loop and middleware writers don't have to share a single
     /// chronological index.
     public func markTurnStarted(_ turnID: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        turnStartTimes[turnID] = clock()
+        let now = clock()
+        storage.withLock { $0.turnStartTimes[turnID] = now }
     }
 
     /// Emits the per-turn duration and clears the turn anchor. Idempotent: a
@@ -125,13 +123,13 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
         stage: String
     ) {
         let now = clock()
-        let startedAt: Date? = lock.locked {
-            defer { turnStartTimes.removeValue(forKey: turnID) }
-            return turnStartTimes[turnID]
+        let snapshot = storage.withLock { state -> (startedAt: Date?, logID: String?) in
+            let startedAt = state.turnStartTimes.removeValue(forKey: turnID)
+            return (startedAt, state.vendorLogID)
         }
 
         let durationMs: String
-        if let startedAt {
+        if let startedAt = snapshot.startedAt {
             durationMs = Self.format(now.timeIntervalSince(startedAt) * 1000)
         } else {
             durationMs = "missing"
@@ -143,7 +141,7 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
             "stage": stage,
             "turn_duration_ms": durationMs,
         ]
-        if let logID = lock.locked({ vendorLogID }) {
+        if let logID = snapshot.logID {
             props["log_id"] = logID
         }
         tracker.track(event: "timing_turn_duration", properties: props)
@@ -154,16 +152,5 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
         // emit on `voice session ended` (sub-millisecond detail for short
         // stages, e.g. audio decode) without flooding the tracker with noise.
         String(format: "%.3f", ms)
-    }
-}
-
-private extension NSLock {
-    /// Convenience: run `body` while the lock is held and return its value.
-    /// Mirrors `OSAllocatedUnfairLock.withLock` semantics so the recorder's
-    /// readers can grab a tuple snapshot without writing unlock ceremony at
-    /// every call site.
-    func locked<T>(_ body: () -> T) -> T {
-        lock(); defer { unlock() }
-        return body()
     }
 }

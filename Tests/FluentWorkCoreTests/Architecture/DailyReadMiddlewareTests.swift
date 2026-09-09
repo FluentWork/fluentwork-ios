@@ -289,3 +289,28 @@ private func waitUntil(
 }
 
 private struct TimeoutError: Error {}
+
+/// First action through `dailyReadAudioObserver` must start exactly one task.
+@Test func observerStartedBoxConcurrentTryMarkStartedSucceedsOnce() async {
+  let box = ObserverStartedBox()
+  let successes = ObserverStartedSuccessCounter()
+
+  await withTaskGroup(of: Void.self) { group in
+    for _ in 0..<32 {
+      group.addTask {
+        if box.tryMarkStarted() {
+          await successes.increment()
+        }
+      }
+    }
+  }
+
+  #expect(await successes.value == 1)
+  #expect(box.isStarted())
+  #expect(!box.tryMarkStarted())
+}
+
+private actor ObserverStartedSuccessCounter {
+  private(set) var value = 0
+  func increment() { value += 1 }
+}
