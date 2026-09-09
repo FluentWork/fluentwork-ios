@@ -112,11 +112,41 @@ import Testing
     #expect(effects.isEmpty)
 }
 
-@Test func endTapEndsActiveSession() {
+@Test func forceCloseFromWaitingUserEndsSession() {
     var state = SpeechSessionState(phase: .waitingUser)
-    let effects = SpeechSessionMachine.reduce(&state, event: .endTap)
+    let effects = SpeechSessionMachine.reduce(&state, event: .forceClose)
     #expect(state.phase == .ended)
-    #expect(effects.contains(.endSession))
+    #expect(state.isReconnecting == false)
+    #expect(state.suspendedPhase == nil)
+    #expect(effects.contains(.forceClose))
+    #expect(effects.contains(.trackTransition(from: .waitingUser, to: .ended)))
+}
+
+@Test func forceCloseFromIdleIsNoOp() {
+    var state = SpeechSessionState.initial
+    let effects = SpeechSessionMachine.reduce(&state, event: .forceClose)
+    #expect(state.phase == .idle)
+    #expect(effects.isEmpty)
+}
+
+@Test func forceCloseWhileSuspendedEndsSession() {
+    var state = SpeechSessionState(phase: .recording)
+    _ = SpeechSessionMachine.reduce(&state, event: .interruptedBySystem)
+    #expect(state.suspendedPhase == .recording)
+
+    let effects = SpeechSessionMachine.reduce(&state, event: .forceClose)
+    #expect(state.phase == .ended)
+    #expect(state.suspendedPhase == nil)
+    #expect(state.isReconnecting == false)
+    #expect(effects.contains(.forceClose))
+}
+
+@Test func speechSessionPhaseIsActiveMatchesLivePhases() {
+    #expect(SpeechSessionPhase.connecting.isActive)
+    #expect(SpeechSessionPhase.waitingUser.isActive)
+    #expect(!SpeechSessionPhase.idle.isActive)
+    #expect(!SpeechSessionPhase.ended.isActive)
+    #expect(!SpeechSessionPhase.failed.isActive)
 }
 
 @Test func illegalCombinationsAreIgnored() {

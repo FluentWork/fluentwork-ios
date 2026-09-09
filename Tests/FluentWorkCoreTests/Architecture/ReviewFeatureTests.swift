@@ -83,6 +83,7 @@ import TGReduxKitTesting
             PostMessageResponse(sessionID: sessionIDFallback, reply: "", channel: "text", generator: "stub")
         }
         func endSession() async {}
+        func closeTransport() async {}
 
         private let sessionIDFallback = "s-1"
     }
@@ -148,6 +149,7 @@ import TGReduxKitTesting
             PostMessageResponse(sessionID: "s-1", reply: "", channel: "text", generator: "stub")
         }
         func endSession() async {}
+        func closeTransport() async {}
     }
 
     let container = Container()

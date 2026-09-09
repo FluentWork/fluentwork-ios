@@ -30,4 +30,6 @@ public enum SpeechSessionEvent: Equatable, Sendable {
     case textReplyReceived
     case endTap
     case failed(String)
+    /// Immediate teardown; middleware must not wait on network replies.
+    case forceClose
 }

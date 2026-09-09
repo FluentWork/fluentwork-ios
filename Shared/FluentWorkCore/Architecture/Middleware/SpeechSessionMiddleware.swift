@@ -182,6 +182,8 @@ private func interpretSpeechSessionSideEffect(
         timings.mark(event: "session_end")
     case .sendTextMessage:
         timings.mark(event: "degraded_text_send")
+    case .forceClose:
+        timings.mark(event: "session_force_close")
     case let .trackTransition(from, to):
         // `trackTransition` fires alongside the reducer's `speech_session_transition`
         // event. We piggy-back the delta timing on the same transition so the
@@ -579,6 +581,34 @@ private func interpretSpeechSessionSideEffect(
                 await speechClient.endSession()
                 if let sessionID {
                     await dispatchBox.dispatch(.speakingRoom(.sessionIDCaptured(sessionID)))
+                }
+            }
+        )
+
+    case .forceClose:
+        // Machine already moved to `.ended`. Do not dispatch `.endTap` — that
+        // would double-end. Buy a background window, stop capture, send
+        // `session.end`, then disconnect. Skip `end` when begin returns 0.
+        turnTimeoutTracking?.disarm()
+        try? ttsDispatcher.reset()
+        let backgroundTasks = container.backgroundTaskPort()
+        return .merge(
+            .cancel(id: SpeechSessionTaskID.transportEvents),
+            .cancel(id: SpeechSessionTaskID.audioEngineEvents),
+            .fireAndForget {
+                let taskID = await backgroundTasks.begin(
+                    name: "fluentwork.forceClose",
+                    expirationHandler: {}
+                )
+                let sessionID = await speechClient.activeSessionID()
+                await audioEngine.stopCapture()
+                await speechClient.endSession()
+                await speechClient.closeTransport()
+                if let sessionID {
+                    await dispatchBox.dispatch(.speakingRoom(.sessionIDCaptured(sessionID)))
+                }
+                if taskID != 0 {
+                    await backgroundTasks.end(taskID)
                 }
             }
         )

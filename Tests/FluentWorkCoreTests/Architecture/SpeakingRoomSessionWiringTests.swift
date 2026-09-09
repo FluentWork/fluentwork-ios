@@ -116,6 +116,10 @@ private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unche
         continuation.finish()
     }
 
+    func closeTransport() async {
+        continuation.finish()
+    }
+
     func snapshotStartCalls() async -> Int {
         await state.startCalls
     }

@@ -12,5 +12,7 @@ public enum SpeechSessionSideEffect: Equatable, Sendable {
     case turnTimeoutExpired
     case endSession
     case sendTextMessage
+    /// Immediate background-safe teardown (stop capture, session.end, close transport).
+    case forceClose
     case trackTransition(from: SpeechSessionPhase, to: SpeechSessionPhase)
 }

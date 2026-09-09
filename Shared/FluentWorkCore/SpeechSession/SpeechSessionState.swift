@@ -35,6 +35,17 @@ public enum SpeechSessionPhase: String, Equatable, Sendable {
         case .failed:         return "failed"
         }
     }
+
+    /// Live speaking-room phases that still own capture/transport.
+    /// Matches `SpeechSessionMachine` — idle / ended / failed are terminal.
+    public var isActive: Bool {
+        switch self {
+        case .idle, .ended, .failed:
+            return false
+        case .connecting, .aiSpeaking, .waitingUser, .recording, .processing, .degradedText:
+            return true
+        }
+    }
 }
 
 public struct SpeechSessionState: Equatable, Sendable {

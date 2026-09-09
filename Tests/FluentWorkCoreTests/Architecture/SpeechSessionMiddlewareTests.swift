@@ -566,6 +566,9 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
     private let _endSessionCalled = AsyncValue(false)
     var endSessionCalled: Bool { get async { await _endSessionCalled.get() } }
 
+    private let _closeTransportCalled = AsyncValue(false)
+    var closeTransportCalled: Bool { get async { await _closeTransportCalled.get() } }
+
     private let _speechBoundaryCalls = AsyncValue<[BoundaryCall]>([])
     private let _degradedTextMessageSent = AsyncValue(false)
     var degradedTextMessageSent: Bool { get async { await _degradedTextMessageSent.get() } }
@@ -620,6 +623,11 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
 
     func endSession() async {
         await _endSessionCalled.set(true)
+        continuation.finish()
+    }
+
+    func closeTransport() async {
+        await _closeTransportCalled.set(true)
         continuation.finish()
     }
 
