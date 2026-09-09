@@ -112,11 +112,13 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
     private let sessionManager: any AudioSessionManaging
     private let decoder: any WSAudioFrameDecoder
+    private let interruptionObserver: any AudioInterruptionObserving
     private let requestMicrophonePermission: @Sendable () async -> Bool
 
     public init(
         sessionManager: any AudioSessionManaging = DefaultAudioSessionManager(),
         decoder: any WSAudioFrameDecoder = RawPCM16FrameDecoder(),
+        interruptionObserver: any AudioInterruptionObserving = AudioInterruptionObserver(),
         requestMicrophonePermission: @escaping @Sendable () async -> Bool = {
             await MicrophonePermission.request()
         }
@@ -129,6 +131,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         self.continuation = pair.continuation
         self.sessionManager = sessionManager
         self.decoder = decoder
+        self.interruptionObserver = interruptionObserver
         self.requestMicrophonePermission = requestMicrophonePermission
     }
 
@@ -198,6 +201,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
                 // If start fails (e.g., another app holds the audio session),
                 // tear down the tap we just installed so a retry from a clean
                 // state doesn't trip the "tap already installed" precondition.
+                // Do not start interruption observation — the engine never came up.
                 if hasInstalledTap {
                     inputNode.removeTap(onBus: 0)
                     hasInstalledTap = false
@@ -207,9 +211,11 @@ public actor LiveAudioEngine: AudioEngineProtocol {
                 )
             }
         }
+        startInterruptionObservation()
     }
 
     public func stopCapture() async {
+        stopInterruptionObservation()
         let shouldRemoveTap = hasInstalledTap
         hasInstalledTap = false
         if shouldRemoveTap {
@@ -286,6 +292,36 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// Public on the actor so tests can read it without exposing the raw clock.
     public func lastInterruptInstant() -> ContinuousClock.Instant? {
         lastInterruptRequestedAt
+    }
+
+    func startInterruptionObservation() {
+        interruptionObserver.start { [weak self] kind in
+            await self?.handleInterruption(kind)
+        }
+    }
+
+    func stopInterruptionObservation() {
+        interruptionObserver.stop()
+    }
+
+    /// Maps AVAudioSession interruption / route changes onto `AudioEngineEvent`.
+    /// Does not deactivate the audio session — capture stays configured across
+    /// a phone-call-style interrupt so resume does not rebuild the graph.
+    func handleInterruption(_ kind: AudioInterruptionKind) {
+        switch kind {
+        case .began:
+            if playerAttached {
+                playerNode.pause()
+            }
+            continuation.yield(.interruptedBySystem)
+        case .ended(let shouldResume):
+            if shouldResume, playerAttached {
+                playerNode.play()
+            }
+            continuation.yield(.systemInterruptEnded)
+        case .routeChanged(let reason):
+            continuation.yield(.failed("route_changed: \(reason)"))
+        }
     }
 
     private func processInput(_ buffer: AVAudioPCMBuffer) async {
