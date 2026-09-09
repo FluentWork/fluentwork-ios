@@ -14,7 +14,7 @@ public enum SpeechSessionMachine {
         // cannot drive the machine under a stale live phase (§2.2 interruptedBySystem).
         if state.suspendedPhase != nil {
             switch event {
-            case .systemInterruptEnded, .endTap, .failed:
+            case .systemInterruptEnded, .endTap, .forceClose, .failed:
                 break
             default:
                 return []
@@ -104,6 +104,12 @@ public enum SpeechSessionMachine {
             }
             state.suspendedPhase = nil
 
+        case (_, .forceClose) where state.phase.isActive:
+            state.phase = .ended
+            state.isReconnecting = false
+            state.suspendedPhase = nil
+            effects.append(.forceClose)
+
         case (_, .endTap) where state.phase != .idle && state.phase != .ended:
             state.phase = .ended
             state.isReconnecting = false
@@ -134,11 +140,6 @@ public enum SpeechSessionMachine {
     }
 
     private static func isActive(_ phase: SpeechSessionPhase) -> Bool {
-        switch phase {
-        case .idle, .ended, .failed:
-            return false
-        case .connecting, .aiSpeaking, .waitingUser, .recording, .processing, .degradedText:
-            return true
-        }
+        phase.isActive
     }
 }

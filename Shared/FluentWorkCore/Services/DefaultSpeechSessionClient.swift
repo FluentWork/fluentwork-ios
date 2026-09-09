@@ -181,6 +181,10 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         await activeSession.set(nil)
     }
 
+    public func closeTransport() async {
+        await transport.disconnect()
+    }
+
     private func ensureAccessToken(deviceID: String) async throws -> String {
         // Use loadAccessToken which checks expiration; fall back to re-issuing if expired or absent.
         if let cached = try await tokens.loadAccessToken() {

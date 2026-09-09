@@ -119,6 +119,8 @@ public protocol SpeechSessionClientProtocol: Sendable {
     func pollReview(sessionID: String) async throws -> ReviewPollResponse
     func sendDegradedTextMessage(_ text: String) async throws -> PostMessageResponse
     func endSession() async
+    /// Disconnects the WSS transport without sending `session.end`.
+    func closeTransport() async
 }
 
 public protocol NetworkPluginFactoryProtocol: Sendable {
@@ -262,6 +264,8 @@ public final class PlaceholderSpeechSessionClient: SpeechSessionClientProtocol, 
     }
 
     public func endSession() async {}
+
+    public func closeTransport() async {}
 }
 
 public extension Container {
@@ -375,6 +379,19 @@ public extension Container {
 
     var audioSessionManager: Factory<AudioSessionManaging> {
         self { DefaultAudioSessionManager() }.singleton
+    }
+
+    var backgroundTaskPort: Factory<BackgroundTaskPorting> {
+        self {
+            #if os(iOS)
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                return NoOpBackgroundTaskPort()
+            }
+            return UIKitBackgroundTaskPort()
+            #else
+            return NoOpBackgroundTaskPort()
+            #endif
+        }.singleton
     }
 
     var audioEngine: Factory<AudioEngineProtocol> {
