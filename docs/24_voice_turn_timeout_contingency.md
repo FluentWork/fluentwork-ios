@@ -340,5 +340,6 @@ swift test --filter "recordingTimedOut|clientTurnAbort|TurnAbort|speechCaptureGa
 | T-I20-4 | iOS | 已落地：`docs/27_I20_turn_telemetry.md` |
 | I21 | iOS | T-I21-2 已插入等待态（`docs/29`）；B15 `ai.turn.end outcome=timeout` 仍走 `.failed("turn_timeout")` |
 | I20 Item 4 手动开口 | iOS | 已落地：`docs/34_I20_manual_speech_boundary.md` |
+| I20 Item 3 全链路 trace | 跨仓 | 已联调：`docs/35_I20_trace_alignment_joint_debug.md`；backend `docs/37` |
 
 改状态机时同步改：本文 §4、Machine 测试、`docs/20` 若涉及新的 turn 边界坑。

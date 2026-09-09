@@ -56,6 +56,7 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
     /// in the tracker properties so the full iOS trace can be correlated with
     /// the backend and Volcengine diagnostic logs.
     public func setLogID(_ logID: String?) {
+        guard let logID, !logID.isEmpty else { return }
         lock.lock()
         defer { lock.unlock() }
         if vendorLogID == nil {
@@ -136,15 +137,16 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
             durationMs = "missing"
         }
 
-        tracker.track(
-            event: "timing_turn_duration",
-            properties: [
-                "turn_id": turnID,
-                "source": source,
-                "stage": stage,
-                "turn_duration_ms": durationMs,
-            ]
-        )
+        var props = [
+            "turn_id": turnID,
+            "source": source,
+            "stage": stage,
+            "turn_duration_ms": durationMs,
+        ]
+        if let logID = lock.locked({ vendorLogID }) {
+            props["log_id"] = logID
+        }
+        tracker.track(event: "timing_turn_duration", properties: props)
     }
 
     private static func format(_ ms: Double) -> String {

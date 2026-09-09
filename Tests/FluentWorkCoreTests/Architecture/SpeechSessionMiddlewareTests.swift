@@ -789,6 +789,39 @@ struct I20TurnTelemetryTests {
     }
 
     @MainActor
+    @Test func aiTurnEndTraceJoinsTurnIDAndLogIDOnTracker() async throws {
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        let tracker = CapturingTracker()
+        let store = makeStore(audioEngine: audioEngine, speechClient: speechClient, tracker: tracker)
+
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        audioEngine.emit(.speechStarted)
+        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        audioEngine.emit(.speechEnded)
+        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+
+        speechClient.emit(
+            .control(.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: "volc-abc123"))
+        )
+        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+            tracker.events.contains { $0.name == "timing_ai_turn_end" }
+        }
+
+        let endMark = tracker.events.first { $0.name == "timing_ai_turn_end" }
+        #expect(endMark?.properties["turn_id"] == "turn-1")
+        #expect(endMark?.properties["log_id"] == "volc-abc123")
+        #expect(endMark?.properties["outcome"] == "ok")
+
+        let duration = tracker.events.first { $0.name == "timing_turn_duration" }
+        #expect(duration?.properties["turn_id"] == "turn-1")
+        #expect(duration?.properties["log_id"] == "volc-abc123")
+    }
+
+    @MainActor
     @Test func endTapFromRecordingEmitsUserAbandonedViaSharedTracker() async throws {
         let audioEngine = StubAudioEngineForMiddleware()
         let speechClient = StubSpeechSessionClientForMiddleware()

@@ -68,12 +68,22 @@ private let backendDevEchoFeedbackBadgeJSON = #"""
 
 // MARK: - B15: ai.turn.end with explicit outcome + B15-I3: log_id trace
 
-@Test func aiTurnEndWithOutcomeOk() throws {
-    // B15: backend stamps outcome="ok" when the turn completed normally.
-    // B15-I3: log_id carries the Volcengine vendor trace identifier.
+@Test func aiTurnEndMatchesBackendTraceWireFixture() throws {
+    // Item 3 joint debug: same payload backend TestAITurnEndJSONMatchesIOSTraceWireFixture marshals.
     let json = #"{"type":"ai.turn.end","turn_id":"turn-1","outcome":"ok","log_id":"volc-abc123"}"#
     let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
     #expect(decoded == .aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: "volc-abc123"))
+
+    let encoded = try WSControlFrameCodec.encode(
+        .aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: "volc-abc123")
+    )
+    let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    #expect(object as NSDictionary == [
+        "type": "ai.turn.end",
+        "turn_id": "turn-1",
+        "outcome": "ok",
+        "log_id": "volc-abc123",
+    ] as NSDictionary)
 }
 
 @Test func aiTurnEndWithOutcomeTimeout() throws {
