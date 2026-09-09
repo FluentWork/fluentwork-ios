@@ -41,6 +41,12 @@
 19. `18_启动性能优化与测量指南.md`
 20. `19_测试分层与依赖隔离规范.md`
 
+### 20+：专项与基线
+
+21. `20_I20_voice_turn_boundary_pitfalls.md`
+22. `23_iOS-arch-baseline-report_2026-09-09.md` — ISSUE-08 Instruments 程序；测量本身仍 pending
+23. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
+
 ---
 
 ## 2. 当前目录状态
@@ -49,8 +55,9 @@
 
 1. 编号主线文档
 2. 本索引文件 `README.md`
+3. 例外：`IOS_ARCH_REVIEW_DONE.md` 作为 ISSUE-01–08 的短状态指针（ISSUE-08 仍等待 Instruments）
 
-不再保留无编号的阶段性工作文档、PR 材料、临时总结稿。
+不再保留其它无编号的阶段性工作文档、PR 材料、临时总结稿。
 
 ---
 
