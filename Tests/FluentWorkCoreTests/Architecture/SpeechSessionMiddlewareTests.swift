@@ -114,7 +114,7 @@ struct SpeechSessionMiddlewareB14Tests {
     @MainActor
     @Test func serverASRDispatchesTranscriptUpdateViaReducer() async throws {
         // Note: serverASRReceived can be dispatched two ways:
-        // 1. As .session(.serverASRReceived) - goes through middleware, no reducer handling
+        // 1. As .session(.serverASRReceived) - advances processingASR → processingLLM
         // 2. As .serverASRReceived directly - handled by reducer to update liveTranscript
         let container = Container()
         container.reset()
@@ -175,6 +175,36 @@ struct SpeechSessionMiddlewareB14Tests {
         // The middleware must NOT have re-fired sendSpeechBoundary for the relay frame.
         let boundaryCallCount = await speechClient.getBoundaryCallCount()
         #expect(boundaryCallCount == 0)
+    }
+
+    @MainActor
+    @Test func serverASRFromTransportAdvancesProcessingASRToLLMWithoutResendingBoundary() async throws {
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+
+        audioEngine.emit(.speechStarted)
+        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+
+        audioEngine.emit(.speechEnded)
+        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+
+        let boundariesAfterVAD = await speechClient.getBoundaryCallCount()
+        speechClient.emit(.control(.clientASRTranscription(text: "Transport transcript", turnID: "turn-1")))
+        try await waitForPhase(store, phase: .processingLLM, timeout: 1_000_000_000)
+
+        #expect(store.state.speakingRoom.liveTranscript == "Transport transcript")
+        #expect(await speechClient.getBoundaryCallCount() == boundariesAfterVAD)
     }
 
     // MARK: - Degraded Text Tests
@@ -286,7 +316,7 @@ struct SpeechSessionMiddlewareB14Tests {
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
 
         audioEngine.emit(.speechEnded)
-        try await waitForPhase(store, phase: .processing, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
 
         // Verify userTurnCount is 1
         #expect(store.state.speakingRoom.session.userTurnCount == 1)
@@ -308,7 +338,7 @@ struct SpeechSessionMiddlewareB14Tests {
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
 
         audioEngine.emit(.speechEnded)
-        try await waitForPhase(store, phase: .processing, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
 
         // Verify userTurnCount is 2
         #expect(store.state.speakingRoom.session.userTurnCount == 2)

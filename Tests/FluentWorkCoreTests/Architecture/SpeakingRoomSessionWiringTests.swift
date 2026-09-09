@@ -243,7 +243,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 @Test func applySessionConnectingResetsBadgeAndTranscript() throws {
     let initial = AppState(
         speakingRoom: SpeakingRoomState(
-            phase: .processing,
+            phase: .processingASR,
             liveTranscript: "旧转写",
             isBootstrapReady: true,
             lastBadge: "表达自然",
@@ -829,9 +829,9 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     audioEngine.emit(.speechEnded)
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        store.state.speakingRoom.phase == .processing
+        store.state.speakingRoom.phase == .processingASR
     }
-    #expect(store.state.speakingRoom.phase == .processing)
+    #expect(store.state.speakingRoom.phase == .processingASR)
     #expect(await speechClient.snapshotBoundaries() == [true, false])
 
     let frame = WSAudioFrame(sequence: 7, opusPayload: Data([0x01, 0x02]))

@@ -17,6 +17,10 @@ public enum SpeechSessionEvent: Equatable, Sendable {
     /// middleware immediately calls `sendSpeechBoundary(text:)` so the backend
     /// can perform badge hit detection using the confirmed server-side text.
     case serverASRReceived(text: String, turnID: String?)
+    /// Advances processingASR → processingLLM or processingLLM → processingReview
+    /// when no dedicated protocol event exists for that hop (review has none).
+    /// Prefer `.serverASRReceived` for the ASR → LLM hop.
+    case processingSubStageReached(ProcessingSubStage)
     case aiFirstAudioChunk
     /// Soft degrade (e.g. transport already left the voice path) → immediate `degradedText`.
     case networkDegraded

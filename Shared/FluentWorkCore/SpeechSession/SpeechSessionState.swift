@@ -11,7 +11,9 @@ public enum SpeechSessionPhase: String, Equatable, Sendable {
     case aiSpeaking
     case waitingUser
     case recording
-    case processing
+    case processingASR
+    case processingLLM
+    case processingReview
     case degradedText
     case ended
     case failed
@@ -24,15 +26,17 @@ public enum SpeechSessionPhase: String, Equatable, Sendable {
     /// `voiceproto.ProviderOutbound.Control` payloads.
     public var stageTag: String {
         switch self {
-        case .idle:           return "idle"
-        case .connecting:     return "orchestration"
-        case .aiSpeaking:     return "tts"
-        case .waitingUser:    return "waiting_user"
-        case .recording:      return "vad_capture"
-        case .processing:     return "asr"
-        case .degradedText:   return "text_fallback"
-        case .ended:          return "ended"
-        case .failed:         return "failed"
+        case .idle:             return "idle"
+        case .connecting:       return "orchestration"
+        case .aiSpeaking:       return "tts"
+        case .waitingUser:      return "waiting_user"
+        case .recording:        return "vad_capture"
+        case .processingASR:    return "asr"
+        case .processingLLM:    return "llm"
+        case .processingReview: return "review"
+        case .degradedText:     return "text_fallback"
+        case .ended:            return "ended"
+        case .failed:           return "failed"
         }
     }
 
@@ -42,10 +46,32 @@ public enum SpeechSessionPhase: String, Equatable, Sendable {
         switch self {
         case .idle, .ended, .failed:
             return false
-        case .connecting, .aiSpeaking, .waitingUser, .recording, .processing, .degradedText:
+        case .connecting, .aiSpeaking, .waitingUser, .recording,
+             .processingASR, .processingLLM, .processingReview, .degradedText:
             return true
         }
     }
+
+    /// True while the machine is in any post-capture processing substage.
+    public var isProcessing: Bool {
+        processingSubStage != nil
+    }
+
+    /// Derived from `phase` so callers do not have to keep a parallel field in sync.
+    public var processingSubStage: ProcessingSubStage? {
+        switch self {
+        case .processingASR: return .asr
+        case .processingLLM: return .llm
+        case .processingReview: return .review
+        default: return nil
+        }
+    }
+}
+
+public enum ProcessingSubStage: String, Equatable, Sendable, Codable {
+    case asr
+    case llm
+    case review
 }
 
 public struct SpeechSessionState: Equatable, Sendable {
@@ -55,23 +81,29 @@ public struct SpeechSessionState: Equatable, Sendable {
     public var suspendedPhase: SpeechSessionPhase?
     public var isReconnecting: Bool
     public var failureReason: String?
-    /// Incremented each time the machine enters `.processing` from `.recording`,
+    /// Incremented each time the machine enters `.processingASR` from `.recording`,
     /// i.e. once per user speaking turn. Used to populate `user.speech.end`'s
     /// `turn_id` field so the backend can dedupe badge hits per-turn.
     public var userTurnCount: Int
+    /// Mirrors `phase.processingSubStage`. Optional stored copy so tests and
+    /// telemetry can read the substage without switching on phase; always
+    /// kept in lockstep by `SpeechSessionMachine`.
+    public var processingSubStage: ProcessingSubStage?
 
     public init(
         phase: SpeechSessionPhase = .idle,
         suspendedPhase: SpeechSessionPhase? = nil,
         isReconnecting: Bool = false,
         failureReason: String? = nil,
-        userTurnCount: Int = 0
+        userTurnCount: Int = 0,
+        processingSubStage: ProcessingSubStage? = nil
     ) {
         self.phase = phase
         self.suspendedPhase = suspendedPhase
         self.isReconnecting = isReconnecting
         self.failureReason = failureReason
         self.userTurnCount = userTurnCount
+        self.processingSubStage = processingSubStage ?? phase.processingSubStage
     }
 
     public static let initial = SpeechSessionState()

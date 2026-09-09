@@ -13,6 +13,21 @@ import Testing
     )
 }
 
+@Test func speakingRoomProcessingASRStateShowsRecognizingTitle() {
+    let model = SpeakingRoomViewModel(phase: .processingASR)
+    #expect(model.controlState.title == "识别中")
+}
+
+@Test func speakingRoomProcessingLLMStateShowsThinkingTitle() {
+    let model = SpeakingRoomViewModel(phase: .processingLLM)
+    #expect(model.controlState.title == "思考中")
+}
+
+@Test func speakingRoomProcessingReviewStateShowsReviewTitle() {
+    let model = SpeakingRoomViewModel(phase: .processingReview)
+    #expect(model.controlState.title == "生成评价中")
+}
+
 @Test func speakingRoomWaitingUserStateShowsInstructionWithoutButton() {
     let model = SpeakingRoomViewModel(phase: .waitingUser)
 

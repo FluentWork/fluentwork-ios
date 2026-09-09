@@ -230,9 +230,9 @@ case let .aiTurnEnd(turnID, outcome):
     machine.dispatch(.startSession)  // → CONNECTING
     machine.dispatch(.sessionReady)  // → WAITING_USER
     machine.dispatch(.userStarted)   // → RECORDING
-    machine.dispatch(.userEnded)     // → PROCESSING
+    machine.dispatch(.userEnded)     // → PROCESSING_ASR
     
-    #expect(machine.phase == .processing)
+    #expect(machine.phase == .processingASR)
 }
 ```
 
