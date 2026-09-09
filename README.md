@@ -56,23 +56,12 @@ and synced from `fluentwork-infra` with `./Scripts/sync-shared-schemas.sh`.
 - snapshot tests
 - simulator smoke run
 - agent entry file validation
-- landing on `main` is fast-forward only after a passing build and `swift test`; do not open PRs unless asked
-- pre-commit gstack review attestation is optional (`GSTACK_REVIEWED=1`); CI does not run code review
+- landing on `main` is fast-forward only after a passing build, `swift test`, and an implementation-note doc under `docs/`; do not open PRs unless asked
+- gstack is not part of the landing or pre-commit gate; CI does not run code review
 
 ## Local Pre-commit
 
-After `./Scripts/setup-git-hooks.sh`, local `pre-commit` runs:
-
-1. gstack review attestation gate via `Scripts/gstack-review-gate.sh`
-2. `swift format` on staged `.swift` files
-3. `swiftlint` on staged `.swift` files
-
-Notes:
-
-- local global gstack skill root: `/Users/apple/.codex/skills/gstack`
-- project-local gstack skill mirror: `.trae/skills/gstack/SKILL.md` (mirrors the global router so the repo can expose a local skill entry)
-- the hook cannot execute the interactive review skill itself; run it manually in your AI session with **`/review`** or **`/gstack-review`** when skill prefixes are enabled, then attest with `GSTACK_REVIEWED=1`
-- emergency bypass remains `SKIP_GSTACK_REVIEW=1` and must be justified in commit/PR text
+After `./Scripts/setup-git-hooks.sh`, `core.hooksPath` points at `.githooks`. The hook does not run gstack, `swift format`, or `swiftlint`. The landing gate is in `AGENTS.md`.
 
 ## Upstream Source of Truth
 
@@ -88,16 +77,15 @@ This repository currently includes:
 - `Package.swift`
 - `.github/workflows/agent-config-check.yml`
 - `.github/workflows/ios-ci.yml`
-- `.githooks/pre-commit` + `Scripts/setup-git-hooks.sh` + `Scripts/gstack-review-gate.sh`
+- `.githooks/pre-commit` + `Scripts/setup-git-hooks.sh`
 - `Scripts/swift-format-staged.sh` + `Scripts/swiftlint-staged.sh`
 - executable Swift package baseline
 - initial directory skeleton
 
 ## Agent Tooling
 
-- before commit, run the interactive gstack review skill in your AI session: usually **`/review`**, or **`/gstack-review`** if skill prefixes are enabled; then `GSTACK_REVIEWED=1 git commit ...`
-- emergency bypass: `SKIP_GSTACK_REVIEW=1` (justify in commit/PR)
-- `gstack` `/qa` and later release-oriented workflows remain available
-- OCR scripts optional/manual only; not part of default pre-commit
+- landing a ticket: pass `swift test` + FluentWorkHost Debug build, add a numbered `docs/` implementation note, commit them together (see `AGENTS.md`)
+- gstack skills remain optional helpers; they are not a commit gate
+- OCR scripts optional/manual only
 - Matt Pocock style skills may be used as helpers under FluentWork shared governance
 - GitHub CI does not run code review

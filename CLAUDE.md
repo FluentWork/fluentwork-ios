@@ -286,3 +286,4 @@ case let .aiTurnEnd(turnID, outcome):
 2. **编写测试** 覆盖新功能
 3. **提交前运行 build 和 test**，通过即可落地
 4. **不要默认创建 PR / MR**
+5. 落地门禁与实现说明见 `AGENTS.md`（代码门禁通过后补 `docs/` 说明并一并提交；gstack 不在门禁内）
