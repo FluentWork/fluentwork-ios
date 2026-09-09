@@ -37,12 +37,14 @@ import Testing
     #expect(action == .failed("语音服务连接中断，请重试"))
 }
 
-@Test func mapperConvertsBackendErrorFrameWithoutMessage() {
+@Test func mapperConvertsUnsupportedFrameToFailedAction() {
+    // Pre-I20 gateway replied to client.turn.abort with unsupported_frame.
+    // iOS still maps that to .failed — 联调 must not see this code after abort.
     let event = SocketTransportEvent.control(
-        .error(code: "client_asr_required", message: nil)
+        .error(code: "unsupported_frame", message: "unknown type")
     )
     let action = SocketTransportEventMapper.speakingRoomAction(for: event)
-    #expect(action == .failed("当前无法识别语音，请重试"))
+    #expect(action == .failed("[unsupported_frame] unknown type"))
 }
 
 @Test func mapperConvertsClientASRTranscriptionToServerASRReceived() {

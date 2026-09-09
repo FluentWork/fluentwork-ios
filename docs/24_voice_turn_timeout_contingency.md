@@ -1,7 +1,7 @@
 # 语音 Turn 超时兜底（B15 70s + I20 `client.turn.abort`）
 
 **日期**：2026-09-09  
-**状态**：iOS T-I20-1 已落地；backend 尚未接受 `client.turn.abort`  
+**状态**：iOS T-I20-1 已落地；backend `5c2e39f` 已接受 `client.turn.abort`。联调见 `docs/33_I20_client_turn_abort_joint_debug.md`。  
 **读者**：后续改 SpeechSession / WSS / 音频循环的人  
 **关联**：`docs/20_I20_voice_turn_boundary_pitfalls.md`（历史踩坑）· I20 T-I20-1 · B15 collectTurn
 
@@ -28,7 +28,7 @@
 | CancellationID | `speechSession.recordingAbortTimeout` | `speechSession.turnTimeout` |
 | 事件 | `.recordingTimedOut` | `.failed("turn_timeout")` 或 `.turnTimeoutExpired` |
 | 副作用 | `.sendTurnAbort` | `.endSession` |
-| 会话 | **继续**，回到 `.waitingUser` | **结束**，进入 `.failed` |
+| 会话 | **继续**，回到 `.waitingForAIAnswer` | **结束**，进入 `.failed` |
 | 出站帧 | `client.turn.abort` | 最终 `session.end` |
 | 是否启动 collectTurn | **禁止** | 已经在跑 |
 
@@ -47,8 +47,8 @@
 
 ### 2.2 明确不做（留给后续票）
 
-- **I21 T-I21-2** abort 后进入 `.waitingForAIAnswer`（会话仍活，下一轮 VAD 可开口）；B15 `outcome=timeout` 仍走 `.failed("turn_timeout")`
-- Backend 接受 `client.turn.abort`（见 §8）
+- **I21 T-I21-2** abort 后进入 `.waitingForAIAnswer`（已落地；下一轮 VAD 可开口）；B15 `outcome=timeout` 仍走 `.failed("turn_timeout")`
+- Backend 接受 `client.turn.abort`（已落地，`fluentwork-backend` `5c2e39f`）
 
 ---
 
@@ -206,7 +206,7 @@ t<60    pcmChunk 且 gate.shouldForwardPCM == true → 出站 binary
 t=60    timer 到期且未被 cancel
         gate.abort()                    // 立刻停 PCM，关 isOpen
         dispatch recordingTimedOut
-        reduce: recording → waitingUser, sendTurnAbort(turn-N)
+        reduce: recording → waitingForAIAnswer, sendTurnAbort(turn-N)
         取消 recordingAbortTimeout（离开 recording）
         interpret sendTurnAbort:
             gate.abort()                // 幂等
@@ -275,7 +275,7 @@ B15 另有 `TurnTimeoutTracking.arm/disarm`，防止 70s timer 与 `ai.turn.end`
 |---|---|
 | `SpeechSessionEvent.swift` | `.recordingTimedOut` |
 | `SpeechSessionSideEffect.swift` | `.sendTurnAbort(turnID:outcome:)` |
-| `SpeechSessionMachine.swift` | recording → waitingUser；suspend 白名单 |
+| `SpeechSessionMachine.swift` | recording → waitingForAIAnswer；suspend 白名单 |
 | `SpeechSessionMiddleware.swift` | 60s timer、`SpeechCaptureGate`、interpret abort、音频循环门闩 |
 | `ProcessingTimeouts.swift` | **只有 B15** 的 15/45/30/70。录音 60s 是 middleware 的 `recordingAbortTimeout`，不要塞进这个 struct |
 | `WSControlFrame.swift` | 编解码 `client.turn.abort` |
@@ -307,7 +307,7 @@ B15 另有 `TurnTimeoutTracking.arm/disarm`，防止 70s timer 与 `ai.turn.end`
 
 | 测试 | 守住的不变量 |
 |---|---|
-| `recordingTimedOutAbortsTurnWithoutFailingSession` | waitingUser + sendTurnAbort + 非 failed |
+| `recordingTimedOutAbortsTurnWithoutFailingSession` | waitingForAIAnswer + sendTurnAbort + 非 failed |
 | `recordingTimedOutFromWaitingUserIsNoOp` | 非法相位 |
 | `recordingTimedOutWhileSuspendedStillAbortsTurn` | 来电挂起仍能 abort |
 | `vadSpeechEndAfterRecordingDoesNotSendTurnAbort` | 正常结束不走 abort |
@@ -333,7 +333,7 @@ swift test --filter "recordingTimedOut|clientTurnAbort|TurnAbort|speechCaptureGa
 
 | 下一步 | 仓库 | 说明 |
 |---|---|---|
-| Gateway 接受 `client.turn.abort` | `fluentwork-backend` `voiceproto` + `handler.go` | 否则现网 60s 录音会 `unsupported_frame` |
+| Gateway 接受 `client.turn.abort` | `fluentwork-backend` | 已落地 `5c2e39f`；联调 `docs/33` |
 | Schema 真源同步 | `fluentwork-infra` `wss-control-frames-v2.json` | iOS 目前改的是镜像；`Scripts/sync-shared-schemas.sh` 会从 infra 覆盖 |
 | T-I20-2 | iOS | 已落地：`docs/25_I20_turn_outcome.md` |
 | T-I20-3 | iOS | 已落地：`docs/26_I20_system_prompt_builder.md` |

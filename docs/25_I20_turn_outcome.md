@@ -1,7 +1,7 @@
 # T-I20-2 TurnOutcome 对齐与状态机上报
 
 **票**：I20 T-I20-2  
-**状态**：已落地（iOS）。Backend 仍未接受 `client.turn.abort`；现网联调仍会 `unsupported_frame`。
+**状态**：已落地（iOS）。Backend `5c2e39f` 已接受 `client.turn.abort`。联调见 `docs/33_I20_client_turn_abort_joint_debug.md`。
 
 ## 1. 要守住的原理
 

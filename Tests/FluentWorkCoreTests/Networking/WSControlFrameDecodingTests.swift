@@ -140,6 +140,20 @@ private let backendDevEchoFeedbackBadgeJSON = #"""
     #expect(json["session_id"] == nil)
 }
 
+@Test func clientTurnAbortMatchesBackendTimeoutWireFixture() throws {
+    // Exact payload TestHandler_ClientTurnAbortKeepsSessionAlive writes
+    // after user.speech.start. Gateway must accept it with no error frame.
+    let encoded = try WSControlFrameCodec.encode(
+        .clientTurnAbort(turnID: "turn-1", outcome: .timeout)
+    )
+    let json = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    #expect(json as NSDictionary == [
+        "type": "client.turn.abort",
+        "turn_id": "turn-1",
+        "outcome": "timeout",
+    ] as NSDictionary)
+}
+
 @Test func clientTurnAbortDecodesWireFrame() throws {
     let json = #"{"type":"client.turn.abort","turn_id":"turn-2","outcome":"timeout"}"#
     let decoded = try WSControlFrameCodec.decode(Data(json.utf8))

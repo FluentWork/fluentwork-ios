@@ -271,6 +271,12 @@ struct SpeechSessionMiddlewareB14Tests {
         try await Task.sleep(for: .milliseconds(100))
         #expect(await speechClient.getEndBoundaries().isEmpty)
         #expect(store.state.speakingRoom.phase == .waitingForAIAnswer)
+
+        audioEngine.emit(.speechStarted)
+        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        #expect(store.state.speakingRoom.phase == .recording)
+        #expect(store.state.speakingRoom.failureReason == nil)
+        #expect(await speechClient.endSessionCalled == false)
     }
 
     @MainActor
