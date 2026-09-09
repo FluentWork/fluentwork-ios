@@ -51,7 +51,10 @@
 26. `27_I20_turn_telemetry.md` — T-I20-4 `turn.timeout` / `turn.outcome`、TTS 追踪日志；生产走 `Container.shared`，测试注入同一份本地 Container
 27. `28_I21_session_phase_waits.md` — T-I21-1 `waitingForAIAnswer` / `waitingForEvaluation` 相位与 label
 28. `29_I21_wait_phase_transitions.md` — T-I21-2 等待相位转换；B15 timeout 仍走 `.failed("turn_timeout")`
-29. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
+29. `30_I21_wait_phase_ui.md` — T-I21-3 等待相位 UI
+30. `31_I21_transition_labels.md` — T-I21-4 `speech_session_transition` 的 from_label / to_label
+31. `32_B15_ai_turn_end_timeout_joint_debug.md` — `ai.turn.end outcome=timeout` → `.failed("turn_timeout")` 联调
+32. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
 
 ---
 

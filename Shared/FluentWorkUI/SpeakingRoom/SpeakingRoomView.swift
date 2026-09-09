@@ -138,7 +138,7 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
         case .waitingForAIAnswer:
             return .init(
                 title: "AI 思考中…",
-                detail: "正在等待回复。",
+                detail: "最长约 10s。也可以直接开口开始下一轮。",
                 accent: .neutral,
                 showsProgress: true,
                 primaryAction: nil
@@ -146,7 +146,7 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
         case .waitingForEvaluation:
             return .init(
                 title: "正在评价本次表现…",
-                detail: "请稍候。",
+                detail: "评价结束后可以继续开口。",
                 accent: .neutral,
                 showsProgress: true,
                 primaryAction: nil

@@ -36,6 +36,20 @@ import Testing
     #expect(model.controlState.primaryAction == nil)
 }
 
+@Test func speakingRoomWaitingForAIAnswerHidesHoldAndShowsProgress() {
+    let model = SpeakingRoomViewModel(phase: .waitingForAIAnswer)
+    #expect(model.controlState.title == "AI 思考中…")
+    #expect(model.controlState.showsProgress == true)
+    #expect(model.controlState.primaryAction == nil)
+}
+
+@Test func speakingRoomWaitingForEvaluationHidesHoldAndShowsProgress() {
+    let model = SpeakingRoomViewModel(phase: .waitingForEvaluation)
+    #expect(model.controlState.title == "正在评价本次表现…")
+    #expect(model.controlState.showsProgress == true)
+    #expect(model.controlState.primaryAction == nil)
+}
+
 @Test func speakingRoomEndedStateAllowsRestart() {
     let model = SpeakingRoomViewModel(phase: .ended)
 

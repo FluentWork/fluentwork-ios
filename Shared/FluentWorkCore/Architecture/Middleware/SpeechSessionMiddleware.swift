@@ -750,6 +750,8 @@ private func interpretSpeechSessionSideEffect(
                 properties: [
                     "from": from.rawValue,
                     "to": to.rawValue,
+                    "from_label": from.label,
+                    "to_label": to.label,
                 ]
             )
         }

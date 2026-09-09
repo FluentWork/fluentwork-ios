@@ -273,7 +273,34 @@ struct SpeechSessionMiddlewareB14Tests {
         #expect(store.state.speakingRoom.phase == .waitingForAIAnswer)
     }
 
-    // MARK: - Degraded Text Tests
+    @MainActor
+    @Test func aiTurnEndOutcomeTimeoutFailsSessionWithTurnTimeout() async throws {
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        audioEngine.emit(.speechStarted)
+        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        audioEngine.emit(.speechEnded)
+        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+
+        speechClient.emit(
+            .control(.aiTurnEnd(turnID: "turn-1", outcome: .timeout, logID: "volc-timeout"))
+        )
+        try await waitForPhase(store, phase: .failed, timeout: 1_000_000_000)
+
+        #expect(store.state.speakingRoom.failureReason == "turn_timeout")
+        #expect(store.state.speakingRoom.phase == .failed)
+        #expect(await speechClient.endSessionCalled == true)
+    }
 
     @MainActor
     @Test func degradedTextSendTextMessageEffect() async throws {
@@ -661,6 +688,19 @@ struct I20TurnTelemetryTests {
         #expect(outcomeEvent?.properties["outcome"] == "timeout")
         #expect(tracker.events.filter { $0.name == "turn_timeout_fired" }.isEmpty)
         #expect(await speechClient.getTurnAbortCalls().first?.outcome == .timeout)
+        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+            tracker.events.contains {
+                $0.name == "speech_session_transition"
+                    && $0.properties["to_label"] == "waiting_for_ai_answer"
+            }
+        }
+        #expect(
+            tracker.events.contains {
+                $0.name == "speech_session_transition"
+                    && $0.properties["from_label"] == "vad_capture"
+                    && $0.properties["to_label"] == "waiting_for_ai_answer"
+            }
+        )
     }
 
     @MainActor
