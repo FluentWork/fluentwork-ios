@@ -111,10 +111,26 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
                 showsProgress: false,
                 primaryAction: nil
             )
-        case .processing:
+        case .processingASR:
             return .init(
-                title: "处理中",
-                detail: "正在识别你的语音并等待回复。",
+                title: "识别中",
+                detail: "正在识别你的语音。",
+                accent: .neutral,
+                showsProgress: true,
+                primaryAction: nil
+            )
+        case .processingLLM:
+            return .init(
+                title: "思考中",
+                detail: "正在生成回复。",
+                accent: .neutral,
+                showsProgress: true,
+                primaryAction: nil
+            )
+        case .processingReview:
+            return .init(
+                title: "生成评价中",
+                detail: "正在生成这一轮的评价。",
                 accent: .neutral,
                 showsProgress: true,
                 primaryAction: nil

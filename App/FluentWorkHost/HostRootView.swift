@@ -238,7 +238,9 @@ struct HostRootView: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
-        case .connecting, .recording, .waitingUser, .processing, .aiSpeaking, .degradedText:
+        case .connecting, .recording, .waitingUser,
+             .processingASR, .processingLLM, .processingReview,
+             .aiSpeaking, .degradedText:
             Button {
                 store.dispatch(.speakingRoom(.session(.endTap)))
             } label: {

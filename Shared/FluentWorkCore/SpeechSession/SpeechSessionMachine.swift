@@ -30,6 +30,7 @@ public enum SpeechSessionMachine {
             state.failureReason = nil
             state.isReconnecting = false
             state.suspendedPhase = nil
+            state.processingSubStage = nil
             effects.append(.createSession)
 
         case (.connecting, .socketReady):
@@ -41,24 +42,44 @@ public enum SpeechSessionMachine {
             state.failureReason = message
             state.isReconnecting = false
             state.suspendedPhase = nil
+            state.processingSubStage = nil
             effects.append(.endSession)
 
-        case (.processing, .aiTurnEnd), (.aiSpeaking, .aiTurnEnd):
+        case (.processingASR, .aiTurnEnd),
+             (.processingLLM, .aiTurnEnd),
+             (.processingReview, .aiTurnEnd),
+             (.aiSpeaking, .aiTurnEnd):
             state.phase = .waitingUser
+            state.processingSubStage = nil
 
         case (.aiSpeaking, .vadSpeechStart), (.aiSpeaking, .holdStart):
             state.phase = .recording
+            state.processingSubStage = nil
             effects.append(contentsOf: [.stopPlayback, .sendInterrupt])
 
         case (.waitingUser, .vadSpeechStart), (.waitingUser, .holdStart):
             state.phase = .recording
+            state.processingSubStage = nil
 
         case (.recording, .vadSpeechEnd), (.recording, .holdEnd):
-            state.phase = .processing
+            state.phase = .processingASR
+            state.processingSubStage = .asr
             state.userTurnCount += 1
 
-        case (.processing, .aiFirstAudioChunk):
+        case (.processingASR, .serverASRReceived),
+             (.processingASR, .processingSubStageReached(.llm)):
+            state.phase = .processingLLM
+            state.processingSubStage = .llm
+
+        case (.processingLLM, .processingSubStageReached(.review)):
+            state.phase = .processingReview
+            state.processingSubStage = .review
+
+        case (.processingASR, .aiFirstAudioChunk),
+             (.processingLLM, .aiFirstAudioChunk),
+             (.processingReview, .aiFirstAudioChunk):
             state.phase = .aiSpeaking
+            state.processingSubStage = nil
 
         case (.degradedText, .textMessageSent):
             // User text → POST /messages (middleware interprets `.sendTextMessage`).
@@ -71,6 +92,7 @@ public enum SpeechSessionMachine {
         case (_, .networkDegraded) where isActive(state.phase):
             state.phase = .degradedText
             state.isReconnecting = false
+            state.processingSubStage = nil
 
         case (_, .networkLost) where isActive(state.phase):
             state.isReconnecting = true
@@ -86,6 +108,7 @@ public enum SpeechSessionMachine {
             state.isReconnecting = false
             if state.phase != .failed, state.phase != .ended {
                 state.phase = .degradedText
+                state.processingSubStage = nil
             }
 
         case (_, .interruptedBySystem) where isActive(state.phase) && state.suspendedPhase == nil:
@@ -101,6 +124,7 @@ public enum SpeechSessionMachine {
                 state.phase = state.suspendedPhase!
             default:
                 state.phase = .waitingUser
+                state.processingSubStage = nil
             }
             state.suspendedPhase = nil
 
@@ -108,12 +132,14 @@ public enum SpeechSessionMachine {
             state.phase = .ended
             state.isReconnecting = false
             state.suspendedPhase = nil
+            state.processingSubStage = nil
             effects.append(.forceClose)
 
         case (_, .endTap) where state.phase != .idle && state.phase != .ended:
             state.phase = .ended
             state.isReconnecting = false
             state.suspendedPhase = nil
+            state.processingSubStage = nil
             effects.append(.endSession)
 
         case (_, .failed(let message)) where state.phase != .ended:
@@ -121,11 +147,13 @@ public enum SpeechSessionMachine {
             state.failureReason = message
             state.isReconnecting = false
             state.suspendedPhase = nil
+            state.processingSubStage = nil
             effects.append(.endSession)
 
         // Idempotent: duplicate socketReady while connecting/reconnecting after first ready.
         case (.aiSpeaking, .socketReady), (.waitingUser, .socketReady), (.recording, .socketReady),
-             (.processing, .socketReady), (.degradedText, .socketReady):
+             (.processingASR, .socketReady), (.processingLLM, .socketReady),
+             (.processingReview, .socketReady), (.degradedText, .socketReady):
             state.isReconnecting = false
 
         default:
