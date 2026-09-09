@@ -68,11 +68,13 @@ import Testing
             codec: "opus"
         )
     )
+    #expect(dispatcher.activeTurnID() == "turn-1")
     try dispatcher.handle(audio: WSAudioFrame(sequence: 0, opusPayload: Data([0x0A])))
     try dispatcher.handle(audio: WSAudioFrame(sequence: 1, opusPayload: Data([0x0B])))
     try dispatcher.handle(
         control: .aiTTSEnd(turnID: "turn-1", completionStatus: "ok", durationMs: 40)
     )
+    #expect(dispatcher.activeTurnID() == nil)
 
     #expect(decoder.snapshotPrepares().count == 1)
     #expect(decoder.snapshotFeeds().count == 2)
@@ -115,6 +117,7 @@ import Testing
     let consumed = try dispatcher.handle(audio: WSAudioFrame(sequence: 0, opusPayload: Data([0x01])))
     #expect(consumed == false)
     #expect(decoder.snapshotFeeds().isEmpty)
+    #expect(dispatcher.activeTurnID() == nil)
 }
 
 @Test func testTTSDispatcher_RejectsEmptyPayload() throws {

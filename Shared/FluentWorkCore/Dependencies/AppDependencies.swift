@@ -485,7 +485,10 @@ public extension Container {
     }
 
     var tracker: Factory<TrackerClientProtocol> {
-        self { ConsoleTracker() }.singleton
+        // Per-container, not process singleton. Production still has one
+        // instance via `Container.shared`. Tests can register a CapturingTracker
+        // on a local `Container()` without racing other suites' `reset()`.
+        self { ConsoleTracker() }.shared
     }
 
     var secureStorage: Factory<SecureStorageProtocol> {

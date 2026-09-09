@@ -129,6 +129,18 @@ public final class TTSFrameDispatcher: @unchecked Sendable {
         }
     }
 
+    /// Turn currently bound to the TTS stream (`active` or draining after barge-in).
+    public func activeTurnID() -> String? {
+        queue.sync {
+            switch stream {
+            case .idle:
+                return nil
+            case let .active(turnID), let .draining(turnID):
+                return turnID
+            }
+        }
+    }
+
     /// Clears any in-flight TTS stream. Safe to call when idle.
     public func reset() throws {
         try queue.sync {

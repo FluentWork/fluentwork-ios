@@ -121,7 +121,8 @@ await transport.emitControl(.feedbackBadge(badge: "表达自然", phraseBlockID:
 约定：
 
 - 每个测试开头 `container.reset()`，结尾 `defer { container.reset() }`
-- `container.reset()` 不传 `Container.shared`（除非确实需要覆盖全局），避免污染同进程其他测试
+- unique / `.shared` 依赖（`audioEngine`、`ttsDecoder`、`tracker`、transport）用本地 `Container()`，不要去动 `Container.shared`，避免污染同进程其他测试
+- `logger` / `secureStorage` 仍是 `.singleton`。断言那些才需要 `Container.shared` + suite `.serialized`。见 `docs/19` §4.4 和 `docs/27` §3.1
 - 仅覆盖测试需要的字段；其它依赖由 `AppStoreFactory` 自身装配的 mock 实现兜底
 
 ### 4.3 直接赋值 mock 实例

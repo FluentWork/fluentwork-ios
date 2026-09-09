@@ -611,6 +611,193 @@ struct SpeechSessionMiddlewarePassthroughTests {
     }
 }
 
+/// Tracker send/receive uses the same Container injected into middleware.
+/// Production defaults to `Container.shared`; tests use a local `Container()`
+/// because `tracker` is `.shared` (per-container), not a process singleton.
+@Suite("I20 turn telemetry")
+struct I20TurnTelemetryTests {
+    @MainActor
+    private func makeStore(
+        audioEngine: StubAudioEngineForMiddleware,
+        speechClient: StubSpeechSessionClientForMiddleware,
+        tracker: CapturingTracker,
+        decoder: MockTTSDecoder? = nil
+    ) -> Store<AppState, AppAction> {
+        let container = Container()
+        container.reset()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+        container.tracker.register { tracker }
+        if let decoder {
+            container.ttsDecoder.register { decoder }
+        }
+        return AppStoreFactory.make(container: container)
+    }
+
+    @MainActor
+    @Test func recordingTimeoutEmitsTurnTimeoutAndOutcomeViaSharedTracker() async throws {
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        let tracker = CapturingTracker()
+        let store = makeStore(audioEngine: audioEngine, speechClient: speechClient, tracker: tracker)
+
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        audioEngine.emit(.speechStarted)
+        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+
+        store.dispatch(.speakingRoom(.session(.recordingTimedOut)))
+        try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
+        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+            await speechClient.getTurnAbortCalls().count == 1
+        }
+
+        let timeoutEvent = tracker.events.first { $0.name == "turn.timeout" }
+        #expect(timeoutEvent?.properties["turn_id"] == "turn-1")
+        #expect(timeoutEvent?.properties["elapsed_ms"] == "60000")
+        let outcomeEvent = tracker.events.first { $0.name == "turn.outcome" }
+        #expect(outcomeEvent?.properties["outcome"] == "timeout")
+        #expect(tracker.events.filter { $0.name == "turn_timeout_fired" }.isEmpty)
+        #expect(await speechClient.getTurnAbortCalls().first?.outcome == .timeout)
+    }
+
+    @MainActor
+    @Test func normalSpeechEndEmitsTurnOutcomeOkViaSharedTracker() async throws {
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        let tracker = CapturingTracker()
+        let store = makeStore(audioEngine: audioEngine, speechClient: speechClient, tracker: tracker)
+
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        audioEngine.emit(.speechStarted)
+        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        audioEngine.emit(.speechEnded)
+        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+            tracker.events.contains { $0.name == "turn.outcome" }
+        }
+
+        #expect(tracker.events.first { $0.name == "turn.outcome" }?.properties["outcome"] == "ok")
+        #expect(tracker.events.filter { $0.name == "turn.timeout" }.isEmpty)
+    }
+
+    @MainActor
+    @Test func endTapFromRecordingEmitsUserAbandonedViaSharedTracker() async throws {
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        let tracker = CapturingTracker()
+        let store = makeStore(audioEngine: audioEngine, speechClient: speechClient, tracker: tracker)
+
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        audioEngine.emit(.speechStarted)
+        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+
+        store.dispatch(.speakingRoom(.session(.endTap)))
+        try await waitForPhase(store, phase: .ended, timeout: 1_000_000_000)
+        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+            await speechClient.getTurnAbortCalls().count == 1
+        }
+
+        #expect(
+            tracker.events.contains {
+                $0.name == "turn.outcome" && $0.properties["outcome"] == "user_abandoned"
+            }
+        )
+        #expect(tracker.events.filter { $0.name == "turn.timeout" }.isEmpty)
+        #expect(await speechClient.getTurnAbortCalls().first?.outcome == .userAbandoned)
+    }
+
+    @MainActor
+    @Test func failedFromRecordingEmitsErrorViaSharedTracker() async throws {
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        let tracker = CapturingTracker()
+        let store = makeStore(audioEngine: audioEngine, speechClient: speechClient, tracker: tracker)
+
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        audioEngine.emit(.speechStarted)
+        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+
+        store.dispatch(.speakingRoom(.session(.failed("network"))))
+        try await waitForPhase(store, phase: .failed, timeout: 1_000_000_000)
+        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+            await speechClient.getTurnAbortCalls().count == 1
+        }
+
+        #expect(
+            tracker.events.contains {
+                $0.name == "turn.outcome" && $0.properties["outcome"] == "error"
+            }
+        )
+        #expect(tracker.events.filter { $0.name == "turn.timeout" }.isEmpty)
+        #expect(await speechClient.getTurnAbortCalls().first?.outcome == .error)
+    }
+
+    @MainActor
+    @Test func ttsStreamEmitsStartFirstAudioAndEndViaSharedTracker() async throws {
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        let decoder = MockTTSDecoder()
+        let tracker = CapturingTracker()
+        let store = makeStore(
+            audioEngine: audioEngine,
+            speechClient: speechClient,
+            tracker: tracker,
+            decoder: decoder
+        )
+
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+
+        speechClient.emit(
+            .control(
+                .aiTTSStart(
+                    turnID: "turn-9",
+                    voiceID: "mock_voice_01",
+                    sampleRate: 24_000,
+                    codec: "opus"
+                )
+            )
+        )
+        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+            decoder.snapshotPrepares().count == 1
+        }
+        speechClient.emit(.audio(WSAudioFrame(sequence: 0, opusPayload: Data([0x0A, 0x0B]))))
+        speechClient.emit(.audio(WSAudioFrame(sequence: 1, opusPayload: Data([0x0C]))))
+        speechClient.emit(
+            .control(.aiTTSEnd(turnID: "turn-9", completionStatus: "ok", durationMs: 40))
+        )
+        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+            tracker.events.contains { $0.name == "tts_end" }
+        }
+
+        let start = tracker.events.first { $0.name == "tts_start" }
+        #expect(start?.properties["turn_id"] == "turn-9")
+        #expect(start?.properties["voice_id"] == "mock_voice_01")
+        #expect(start?.properties["codec"] == "opus")
+        let firstAudio = tracker.events.first { $0.name == "tts_first_audio" }
+        #expect(firstAudio?.properties["turn_id"] == "turn-9")
+        #expect(firstAudio?.properties["sequence"] == "0")
+        #expect(tracker.events.filter { $0.name == "tts_first_audio" }.count == 1)
+        let end = tracker.events.first { $0.name == "tts_end" }
+        #expect(end?.properties["turn_id"] == "turn-9")
+        #expect(end?.properties["completion_status"] == "ok")
+        #expect(end?.properties["audio_frames"] == "2")
+        #expect(decoder.snapshotFeeds().map(\.seq) == [0, 1])
+    }
+}
+
 // MARK: - Test Helpers
 
 private enum StubError: Error {
@@ -675,6 +862,7 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
     private let _turnAbortCalls = AsyncValue<[AbortCall]>([])
     private let _degradedTextMessageSent = AsyncValue(false)
     var degradedTextMessageSent: Bool { get async { await _degradedTextMessageSent.get() } }
+    private let _sessionID = AsyncValue<String?>(nil)
 
     private var sendDegradedResult: Result<PostMessageResponse, Error> = .success(
         PostMessageResponse(sessionID: "s-1", reply: "", channel: "text", generator: "stub")
@@ -695,9 +883,10 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
         if let error = startSessionError {
             throw error
         }
+        await _sessionID.set("s-1")
     }
 
-    func activeSessionID() async -> String? { nil }
+    func activeSessionID() async -> String? { await _sessionID.get() }
 
     func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {
         let call = BoundaryCall(started: started, turnID: turnID, text: text)

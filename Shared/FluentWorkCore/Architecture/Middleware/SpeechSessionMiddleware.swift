@@ -48,6 +48,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
     let turnTimeoutTracking = TurnTimeoutTracking()
     let speechCaptureGate = SpeechCaptureGate()
     let ttsDispatcher = TTSFrameDispatcher(decoder: resolvedContainer.ttsDecoder())
+    let ttsTrace = TTSStreamTrace()
 
     return { store, action, next in
         guard case let .speakingRoom(.session(event)) = action else {
@@ -81,7 +82,8 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
                 timings: timings,
                 turnTimeoutTracking: turnTimeoutTracking,
                 speechCaptureGate: speechCaptureGate,
-                ttsDispatcher: ttsDispatcher
+                ttsDispatcher: ttsDispatcher,
+                ttsTrace: ttsTrace
             )
         }
         let timeoutEffects = processingTimeoutEffects(
@@ -210,7 +212,8 @@ private func interpretSpeechSessionSideEffect(
     timings: SpeechSessionTimingsRecorder,
     turnTimeoutTracking: TurnTimeoutTracking? = nil,
     speechCaptureGate: SpeechCaptureGate,
-    ttsDispatcher: TTSFrameDispatcher
+    ttsDispatcher: TTSFrameDispatcher,
+    ttsTrace: TTSStreamTrace
 ) -> Effect<AppAction> {
     let audioEngine = container.audioEngine()
     let speechClient = container.speechSessionClient()
@@ -227,8 +230,14 @@ private func interpretSpeechSessionSideEffect(
         timings.mark(event: "session_create", properties: ["stage": "orchestration"])
     case .sendInterrupt:
         timings.mark(event: "session_interrupt")
-    case .sendTurnAbort:
+    case let .sendTurnAbort(turnID, outcome):
         timings.mark(event: "recording_turn_abort", properties: ["stage": "turn_boundary"])
+        // Emit I20 tracker events on the middleware thread so they are not lost
+        // if a later `.endSession` cancels the abort fire-and-forget.
+        if outcome == .timeout {
+            emitRecordingTurnTimeout(container: container, sessionID: nil, turnID: turnID)
+        }
+        emitTurnOutcome(container: container, sessionID: nil, turnID: turnID, outcome: outcome)
     case .stopPlayback:
         timings.mark(event: "playback_stop")
     case .startReconnectWindow:
@@ -331,11 +340,23 @@ private func interpretSpeechSessionSideEffect(
                         )
                         do {
                             let consumedByTTS = try ttsDispatcher.handle(audio: frame)
-                            if !consumedByTTS {
+                            if consumedByTTS {
+                                let count = ttsTrace.recordAudio()
+                                if count == 1 {
+                                    container.tracker().track(
+                                        event: "tts_first_audio",
+                                        properties: [
+                                            "turn_id": ttsDispatcher.activeTurnID() ?? "nil",
+                                            "sequence": String(frame.sequence),
+                                            "payload_bytes": String(frame.opusPayload.count),
+                                        ]
+                                    )
+                                }
+                            } else {
                                 await audioEngine.play(frame: frame)
                             }
                         } catch {
-                            tracker.track(
+                            container.tracker().track(
                                 event: "tts_decoder_failed",
                                 properties: [
                                     "phase": "feed",
@@ -355,8 +376,18 @@ private func interpretSpeechSessionSideEffect(
                                     codec: codec
                                 )
                             )
+                            ttsTrace.reset()
+                            container.tracker().track(
+                                event: "tts_start",
+                                properties: [
+                                    "turn_id": turnID,
+                                    "voice_id": voiceID,
+                                    "sample_rate": String(sampleRate),
+                                    "codec": codec,
+                                ]
+                            )
                         } catch {
-                            tracker.track(
+                            container.tracker().track(
                                 event: "tts_decoder_failed",
                                 properties: [
                                     "phase": "prepare",
@@ -375,8 +406,17 @@ private func interpretSpeechSessionSideEffect(
                                     durationMs: durationMs
                                 )
                             )
+                            container.tracker().track(
+                                event: "tts_end",
+                                properties: [
+                                    "turn_id": turnID,
+                                    "completion_status": completionStatus,
+                                    "duration_ms": durationMs.map(String.init) ?? "nil",
+                                    "audio_frames": String(ttsTrace.audioFrameCount()),
+                                ]
+                            )
                         } catch {
-                            tracker.track(
+                            container.tracker().track(
                                 event: "tts_decoder_failed",
                                 properties: [
                                     "phase": "finish",
@@ -542,6 +582,13 @@ private func interpretSpeechSessionSideEffect(
                                     "stage": "turn_boundary",
                                 ]
                             )
+                            let sessionID = await container.speechSessionClient().activeSessionID()
+                            emitTurnOutcome(
+                                container: container,
+                                sessionID: sessionID,
+                                turnID: turnID,
+                                outcome: .ok
+                            )
                             await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechEnd(turnID: turnID))))
                             await dispatchBox.dispatch(.speakingRoom(.userTurnStarted(turnID: turnID)))
                             
@@ -605,7 +652,12 @@ private func interpretSpeechSessionSideEffect(
 
     case .stopPlayback:
         return .fireAndForget {
+            let turnID = ttsDispatcher.activeTurnID() ?? "nil"
             try? ttsDispatcher.interrupt()
+            container.tracker().track(
+                event: "tts_interrupt",
+                properties: ["turn_id": turnID]
+            )
             await audioEngine.interruptNow()
         }
 
@@ -751,6 +803,58 @@ private func processingTimeoutEffects(
     }
 
     return effects
+}
+
+/// Counts TTS binary frames between `ai.tts.start` and `ai.tts.end` so we can
+/// trace a stream without logging every Opus packet.
+private final class TTSStreamTrace: Sendable {
+    private let frames = OSAllocatedUnfairLock(initialState: 0)
+
+    func reset() {
+        frames.withLock { $0 = 0 }
+    }
+
+    func recordAudio() -> Int {
+        frames.withLock {
+            $0 += 1
+            return $0
+        }
+    }
+
+    func audioFrameCount() -> Int {
+        frames.withLock { $0 }
+    }
+}
+
+private func emitRecordingTurnTimeout(
+    container: Container,
+    sessionID: String?,
+    turnID: String
+) {
+    container.tracker().track(
+        event: "turn.timeout",
+        properties: [
+            "session_id": sessionID ?? "nil",
+            "turn_id": turnID,
+            "elapsed_ms": "60000",
+        ]
+    )
+}
+
+private func emitTurnOutcome(
+    container: Container,
+    sessionID: String?,
+    turnID: String,
+    outcome: TurnOutcome
+) {
+    container.tracker().track(
+        event: "turn.outcome",
+        properties: [
+            "outcome": outcome.rawValue,
+            "session_id": sessionID ?? "nil",
+            "turn_id": turnID,
+        ]
+    )
 }
 
 private func scheduleRecordingAbortTask(captureGate: SpeechCaptureGate) -> Effect<AppAction> {
