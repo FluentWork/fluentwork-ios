@@ -32,6 +32,7 @@
 cd fluentwork-ios
 swift test --filter wssControlFramesSchemaHasUserSpeechEndTurnAndText
 swift test --filter wssControlFramesSchemaHasFeedbackBadgePhraseBlockAndTier
+swift test --filter wssControlFramesV2SchemaPinsTTSFramesAndKeepsAudioBinary
 swift test --filter speechObservabilitySchemaHasTurnIDAndSource
 
 # 2. 后端 Go 用同一份 embed schema
@@ -309,15 +310,18 @@ swift test --filter feedbackBadgeRejectsMisspelledTier
 ```bash
 # 1. infra 真源
 cat fluentwork-infra/schemas/transport/wss-control-frames-v1.json
+cat fluentwork-infra/schemas/transport/wss-control-frames-v2.json
 
 # 2. iOS mirror
 cat fluentwork-ios/Shared/FluentWorkCore/Resources/Schemas/wss-control-frames-v1.json
+cat fluentwork-ios/Shared/FluentWorkCore/Resources/Schemas/wss-control-frames-v2.json
 
 # 3. backend embed
 cat fluentwork-backend/schemas/transport/wss-control-frames-v1.json
+cat fluentwork-backend/schemas/transport/wss-control-frames-v2.json
 ```
 
-任一对不上 → 跑 `fluentwork-ios/Scripts/sync-shared-schemas.sh` 重新拉。
+任一对不上 → 跑 `fluentwork-ios/Scripts/sync-shared-schemas.sh` 重新拉。backend embed 同步用 `fluentwork-backend/scripts/sync-shared-schemas.sh`。
 
 ### 4.6 iOS test 全 fail / 部分 fail
 
@@ -330,6 +334,7 @@ swift test 2>&1 | grep -E "✘|fail" | head
 
 - `wssControlFramesSchemaHasUserSpeechEndTurnAndText`
 - `wssControlFramesSchemaHasFeedbackBadgePhraseBlockAndTier`
+- `wssControlFramesV2SchemaPinsTTSFramesAndKeepsAudioBinary`
 - `speechObservabilitySchemaHasTurnIDAndSource`
 - `speechSessionMiddlewareForwardsTurnIDToSpeechBoundary`
 - `speechSessionMiddlewareEmitsSchemaAlignedTurnEndedEvent`
@@ -374,7 +379,7 @@ swift test 2>&1 | grep -E "✘|fail" | head
 ## 7. 关联文档
 
 - iOS 架构约定：`fluentwork-ios/docs/02_iOS架构实现约定.md` §2.2 + §6.3
-- WSS schema 真源：`fluentwork-infra/schemas/transport/wss-control-frames-v1.json`
+- WSS schema 真源：`fluentwork-infra/schemas/transport/wss-control-frames-v1.json`（V1）与 `wss-control-frames-v2.json`（V2 TTS 控制帧）
 - 后端 B12：`fluentwork-backend/docs/20_B12_badge_emit_问题修复说明.md`
 - 后端 B14 ASR：`fluentwork-backend/docs/07_B14_D3_ASR实现说明.md`
 - 跨端事件：`fluentwork-infra/docs/observability/00_FluentWork可观测性与事件Schema设计.md`

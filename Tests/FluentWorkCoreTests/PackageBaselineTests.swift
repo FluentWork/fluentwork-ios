@@ -12,23 +12,69 @@ import Foundation
 
 @Test func sharedSchemaMirrorsAreBundled() throws {
     let transport = try SharedSchemaMirror.wssControlFramesV1.data()
+    let transportV2 = try SharedSchemaMirror.wssControlFramesV2.data()
     let events = try SharedSchemaMirror.speechObservabilityEventsV1.data()
 
     let transportDoc = try #require(
         JSONSerialization.jsonObject(with: transport) as? [String: Any]
+    )
+    let transportV2Doc = try #require(
+        JSONSerialization.jsonObject(with: transportV2) as? [String: Any]
     )
     let eventDoc = try #require(
         JSONSerialization.jsonObject(with: events) as? [String: Any]
     )
 
     #expect(transportDoc["title"] as? String == "FluentWork WSS control frames v1")
+    #expect(transportV2Doc["title"] as? String == "FluentWork WSS control frames v2")
     #expect(eventDoc["title"] as? String == "FluentWork speech observability events v1")
 
     let transportDefs = try #require(transportDoc["$defs"] as? [String: Any])
+    let transportV2Defs = try #require(transportV2Doc["$defs"] as? [String: Any])
     let eventDefs = try #require(eventDoc["$defs"] as? [String: Any])
 
     #expect(transportDefs["aiTurnEnd"] != nil)
+    #expect(transportV2Defs["aiTTSStart"] != nil)
+    #expect(transportV2Defs["aiTTSEnd"] != nil)
     #expect(eventDefs["speechTurnEnded"] != nil)
+}
+
+@Test func wssControlFramesV2SchemaPinsTTSFramesAndKeepsAudioBinary() throws {
+    // Pins the frozen WSS V2 contract mirrored from fluentwork-infra.
+    // `ai.tts.start` / `ai.tts.end` are JSON control frames; `ai.tts.audio`
+    // is documented in $defs only and must not appear in JSON oneOf.
+    let transport = try SharedSchemaMirror.wssControlFramesV2.data()
+    let transportDoc = try #require(
+        JSONSerialization.jsonObject(with: transport) as? [String: Any]
+    )
+    let defs = try #require(transportDoc["$defs"] as? [String: Any])
+    let oneOf = try #require(transportDoc["oneOf"] as? [[String: Any]])
+    let refs = Set(oneOf.compactMap { $0["$ref"] as? String })
+
+    let start = try #require(defs["aiTTSStart"] as? [String: Any])
+    let startProperties = try #require(start["properties"] as? [String: Any])
+    let sampleRate = try #require(startProperties["sample_rate"] as? [String: Any])
+    let codec = try #require(startProperties["codec"] as? [String: Any])
+
+    #expect(startProperties["turn_id"] != nil)
+    #expect(startProperties["voice_id"] != nil)
+    let sampleRates = try #require(sampleRate["enum"] as? [NSNumber])
+    #expect(sampleRates.map(\.intValue) == [16_000, 24_000, 48_000])
+    #expect(codec["enum"] as? [String] == ["opus", "pcm"])
+
+    let end = try #require(defs["aiTTSEnd"] as? [String: Any])
+    let endProperties = try #require(end["properties"] as? [String: Any])
+    let completion = try #require(endProperties["completion_status"] as? [String: Any])
+    #expect(completion["enum"] as? [String] == ["ok", "interrupted", "error"])
+
+    #expect(defs["aiTTSAudio"] != nil)
+    #expect(refs.contains("#/$defs/aiTTSStart"))
+    #expect(refs.contains("#/$defs/aiTTSEnd"))
+    #expect(!refs.contains("#/$defs/aiTTSAudio"))
+
+    let textDelta = try #require(defs["aiTextDelta"] as? [String: Any])
+    let textDeltaProperties = try #require(textDelta["properties"] as? [String: Any])
+    #expect(textDeltaProperties["server_ts_ms"] != nil)
 }
 
 @Test func wssControlFramesSchemaHasUserSpeechEndTurnAndText() throws {
