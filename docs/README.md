@@ -47,7 +47,8 @@
 22. `23_iOS-arch-baseline-report_2026-09-09.md` — ISSUE-08 Instruments 程序；测量本身仍 pending
 23. `24_voice_turn_timeout_contingency.md` — B15 70s 与 I20 `client.turn.abort` 双路径维护合同
 24. `25_I20_turn_outcome.md` — T-I20-2 `TurnOutcome` 上报与 abort outcome 枚举
-25. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
+25. `26_I20_system_prompt_builder.md` — T-I20-3 `SystemPromptBuilder` V2.0
+26. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
 
 ---
 
