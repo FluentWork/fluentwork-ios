@@ -5,7 +5,9 @@
 
 ## 1. 要守住的原理
 
-`waitingForAIAnswer` / `waitingForEvaluation` 是会话仍活的加载态，不是终态。Hold / 开始按钮隐藏；用户仍可用 VAD 开口进入下一轮。
+`waitingForAIAnswer` / `waitingForEvaluation` 是会话仍活的加载态，不是终态。
+
+I20 Item 4 之后：默认手动态（`voiceVadAuto` 关）显示「开始说话」；`usesAutoVAD == true` 时按钮仍隐藏，用户靠能量 VAD 开口。详见 `docs/34_I20_manual_speech_boundary.md`。
 
 文案：
 

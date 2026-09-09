@@ -280,6 +280,34 @@ struct SpeechSessionMiddlewareB14Tests {
     }
 
     @MainActor
+    @Test func manualSpeechBoundariesDriveRecordingWithoutEndingSession() async throws {
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+
+        store.dispatch(.speakingRoom(.manualSpeechBegin))
+        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        #expect(store.state.speakingRoom.phase == .recording)
+
+        store.dispatch(.speakingRoom(.manualSpeechEnd))
+        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+        #expect(store.state.speakingRoom.phase == .processingASR)
+        #expect(store.state.speakingRoom.failureReason == nil)
+        #expect(await speechClient.endSessionCalled == false)
+        let boundaries = await speechClient.getEndBoundaries()
+        #expect(boundaries.last?.turnID == "turn-1")
+    }
+
+    @MainActor
     @Test func aiTurnEndOutcomeTimeoutFailsSessionWithTurnTimeout() async throws {
         let container = Container()
         container.reset()
@@ -899,6 +927,14 @@ private final class StubAudioEngineForMiddleware: AudioEngineProtocol, @unchecke
     func play(frame: WSAudioFrame) async {}
     func interruptNow() async {}
     func discardActiveSpeech() async {}
+
+    func beginManualSpeech() async {
+        emit(.speechStarted)
+    }
+
+    func endManualSpeech() async {
+        emit(.speechEnded)
+    }
 
     func events() -> AsyncStream<AudioEngineEvent> {
         stream

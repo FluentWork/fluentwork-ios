@@ -55,7 +55,8 @@
 30. `31_I21_transition_labels.md` — T-I21-4 `speech_session_transition` 的 from_label / to_label
 31. `32_B15_ai_turn_end_timeout_joint_debug.md` — `ai.turn.end outcome=timeout` → `.failed("turn_timeout")` 联调
 32. `33_I20_client_turn_abort_joint_debug.md` — `client.turn.abort` 网关接受后会话仍活
-33. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
+33. `34_I20_manual_speech_boundary.md` — I20 Item 4 手动开口主路径，自动 VAD 降级
+34. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
 
 ---
 

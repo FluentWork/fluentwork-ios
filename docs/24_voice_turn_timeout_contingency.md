@@ -334,10 +334,11 @@ swift test --filter "recordingTimedOut|clientTurnAbort|TurnAbort|speechCaptureGa
 | 下一步 | 仓库 | 说明 |
 |---|---|---|
 | Gateway 接受 `client.turn.abort` | `fluentwork-backend` | 已落地 `5c2e39f`；联调 `docs/33` |
-| Schema 真源同步 | `fluentwork-infra` `wss-control-frames-v2.json` | iOS 目前改的是镜像；`Scripts/sync-shared-schemas.sh` 会从 infra 覆盖 |
+| Schema 真源同步 | `fluentwork-infra` | 已落地 `d60d0fe`；backend `bc6c802` |
 | T-I20-2 | iOS | 已落地：`docs/25_I20_turn_outcome.md` |
 | T-I20-3 | iOS | 已落地：`docs/26_I20_system_prompt_builder.md` |
 | T-I20-4 | iOS | 已落地：`docs/27_I20_turn_telemetry.md` |
 | I21 | iOS | T-I21-2 已插入等待态（`docs/29`）；B15 `ai.turn.end outcome=timeout` 仍走 `.failed("turn_timeout")` |
+| I20 Item 4 手动开口 | iOS | 已落地：`docs/34_I20_manual_speech_boundary.md` |
 
 改状态机时同步改：本文 §4、Machine 测试、`docs/20` 若涉及新的 turn 边界坑。

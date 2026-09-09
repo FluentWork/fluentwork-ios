@@ -10,6 +10,9 @@ public enum AppFeatureFlag: String, CaseIterable, Codable, Hashable, Sendable, F
     case corpus
     case topicSuggestions
     case pronunciationReview
+    /// When enabled, speaking-room turns start/stop from VAD energy.
+    /// Default off: tap-to-talk is the primary path (I20 Item 4).
+    case voiceVadAuto
 
     public var defaultValue: FeatureFlagValue {
         .bool(false)

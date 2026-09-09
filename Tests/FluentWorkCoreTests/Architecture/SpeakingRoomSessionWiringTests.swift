@@ -207,6 +207,14 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
 
     func discardActiveSpeech() async {}
 
+    func beginManualSpeech() async {
+        emit(.speechStarted)
+    }
+
+    func endManualSpeech() async {
+        emit(.speechEnded)
+    }
+
     func emit(_ event: AudioEngineEvent) {
         continuation.yield(event)
     }

@@ -41,7 +41,20 @@ struct AudioSpeechActivityTracker: Sendable {
         return .speechEnded
     }
 
-        mutating func reset() -> AudioEngineEvent? {
+    mutating func forceStart() -> AudioEngineEvent? {
+        guard !isSpeechActive else { return nil }
+        isSpeechActive = true
+        lastSpeechAt = nil
+        return .speechStarted
+    }
+
+    mutating func forceEnd() -> AudioEngineEvent? {
+        guard isSpeechActive else { return nil }
+        discard()
+        return .speechEnded
+    }
+
+    mutating func reset() -> AudioEngineEvent? {
         let wasActive = isSpeechActive
         discard()
         return wasActive ? .speechEnded : nil
@@ -99,6 +112,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     private var hasInstalledTap = false
     private var speechTracker = AudioSpeechActivityTracker()
     private var playbackGate = AudioPlaybackGate()
+    private var speechBoundaryMode: SpeechBoundaryMode = .manual
     private let clock = ContinuousClock()
 
     // Playback graph (lazy-attached on first frame).
@@ -300,6 +314,23 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         speechTracker.discard()
     }
 
+    public func setSpeechBoundaryMode(_ mode: SpeechBoundaryMode) async {
+        speechBoundaryMode = mode
+        speechTracker.discard()
+    }
+
+    public func beginManualSpeech() async {
+        if let emitted = speechTracker.forceStart() {
+            continuation.yield(emitted)
+        }
+    }
+
+    public func endManualSpeech() async {
+        if let emitted = speechTracker.forceEnd() {
+            continuation.yield(emitted)
+        }
+    }
+
     /// Snapshot of the last `interruptNow()` instant for barge-in latency tests.
     /// Public on the actor so tests can read it without exposing the raw clock.
     public func lastInterruptInstant() -> ContinuousClock.Instant? {
@@ -352,6 +383,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     }
 
     private func updateSpeechState(using pcm: Data) {
+        guard speechBoundaryMode == .autoVAD else { return }
         let energy = normalizedEnergy(for: pcm)
         let now = clock.now
 

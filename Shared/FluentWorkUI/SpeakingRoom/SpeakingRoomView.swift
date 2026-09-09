@@ -48,6 +48,8 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
     public var badgeHits: Int
     public var failureReason: String?
     public var timeline: [SpeakingRoomTimelineRow]
+    /// I20 Item 4: `false` is tap-to-talk (default). `true` keeps energy VAD.
+    public var usesAutoVAD: Bool
 
     public init(
         phase: SpeechSessionPhase,
@@ -55,7 +57,8 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
         lastBadge: String? = nil,
         badgeHits: Int = 0,
         failureReason: String? = nil,
-        timeline: [SpeakingRoomTimelineRow] = []
+        timeline: [SpeakingRoomTimelineRow] = [],
+        usesAutoVAD: Bool = false
     ) {
         self.phase = phase
         self.liveTranscript = liveTranscript
@@ -63,6 +66,7 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
         self.badgeHits = badgeHits
         self.failureReason = failureReason
         self.timeline = timeline
+        self.usesAutoVAD = usesAutoVAD
     }
 
     public var isRecording: Bool {
@@ -75,6 +79,35 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
 
     public var isFailed: Bool {
         phase == .failed
+    }
+
+    public enum StartTapIntent: Equatable, Sendable {
+        case startSession
+        case beginTurn
+        case none
+    }
+
+    public enum StopTapIntent: Equatable, Sendable {
+        case endTurn
+        case none
+    }
+
+    /// Idle / ended / failed start a session. Waiting and AI-speaking taps
+    /// open a user turn when auto VAD is off.
+    public var startTapIntent: StartTapIntent {
+        switch phase {
+        case .idle, .ended, .failed:
+            return .startSession
+        case .waitingUser, .waitingForAIAnswer, .waitingForEvaluation, .aiSpeaking:
+            return usesAutoVAD ? .none : .beginTurn
+        default:
+            return .none
+        }
+    }
+
+    /// Recording stop submits the turn. Session end stays on the close button.
+    public var stopTapIntent: StopTapIntent {
+        phase == .recording ? .endTurn : .none
     }
 
     var controlState: SpeakingRoomControlState {
@@ -104,12 +137,21 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
                 primaryAction: .stop(title: "停止录音", systemImage: "stop.circle.fill")
             )
         case .waitingUser:
+            if usesAutoVAD {
+                return .init(
+                    title: "轮到你了",
+                    detail: "直接开口说话即可，系统会自动开始识别。",
+                    accent: .primary,
+                    showsProgress: false,
+                    primaryAction: nil
+                )
+            }
             return .init(
                 title: "轮到你了",
-                detail: "直接开口说话即可，系统会自动开始识别。",
+                detail: "点击开始说话，说完再点停止。",
                 accent: .primary,
                 showsProgress: false,
-                primaryAction: nil
+                primaryAction: .start(title: "开始说话", systemImage: "mic.circle.fill")
             )
         case .processingASR:
             return .init(
@@ -136,28 +178,55 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
                 primaryAction: nil
             )
         case .waitingForAIAnswer:
+            if usesAutoVAD {
+                return .init(
+                    title: "AI 思考中…",
+                    detail: "最长约 10s。也可以直接开口开始下一轮。",
+                    accent: .neutral,
+                    showsProgress: true,
+                    primaryAction: nil
+                )
+            }
             return .init(
                 title: "AI 思考中…",
-                detail: "最长约 10s。也可以直接开口开始下一轮。",
+                detail: "也可以点击开始下一轮。",
                 accent: .neutral,
                 showsProgress: true,
-                primaryAction: nil
+                primaryAction: .start(title: "开始说话", systemImage: "mic.circle.fill")
             )
         case .waitingForEvaluation:
+            if usesAutoVAD {
+                return .init(
+                    title: "正在评价本次表现…",
+                    detail: "评价结束后可以继续开口。",
+                    accent: .neutral,
+                    showsProgress: true,
+                    primaryAction: nil
+                )
+            }
             return .init(
                 title: "正在评价本次表现…",
-                detail: "评价结束后可以继续开口。",
+                detail: "也可以点击开始下一轮。",
                 accent: .neutral,
                 showsProgress: true,
-                primaryAction: nil
+                primaryAction: .start(title: "开始说话", systemImage: "mic.circle.fill")
             )
         case .aiSpeaking:
+            if usesAutoVAD {
+                return .init(
+                    title: "AI 回应中",
+                    detail: "请先听完回复，下一轮可以继续开口。",
+                    accent: .secondary,
+                    showsProgress: false,
+                    primaryAction: nil
+                )
+            }
             return .init(
                 title: "AI 回应中",
-                detail: "请先听完回复，下一轮可以继续开口。",
+                detail: "点击开始说话会打断当前回复。",
                 accent: .secondary,
                 showsProgress: false,
-                primaryAction: nil
+                primaryAction: .start(title: "开始说话", systemImage: "mic.circle.fill")
             )
         case .degradedText:
             return .init(

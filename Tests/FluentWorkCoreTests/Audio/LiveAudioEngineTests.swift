@@ -64,6 +64,51 @@ import Testing
 }
 
 @available(iOS 17, macOS 14, *)
+@Test func liveAudioEngineManualSpeechEmitsStartAndEnd() async {
+    let engine = LiveAudioEngine(
+        decoder: RawPCM16FrameDecoder(),
+        requestMicrophonePermission: { true }
+    )
+    let stream = engine.events()
+
+    await engine.beginManualSpeech()
+    let started = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        event == .speechStarted ? event : nil
+    }
+    #expect(started == .speechStarted)
+
+    await engine.endManualSpeech()
+    let ended = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        event == .speechEnded ? event : nil
+    }
+    #expect(ended == .speechEnded)
+}
+
+@available(iOS 17, macOS 14, *)
+@Test func liveAudioEngineManualSpeechStartIsIdempotent() async {
+    let engine = LiveAudioEngine(
+        decoder: RawPCM16FrameDecoder(),
+        requestMicrophonePermission: { true }
+    )
+    await engine.beginManualSpeech()
+    await engine.beginManualSpeech()
+    let stream = engine.events()
+    await engine.endManualSpeech()
+    let ended = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        event == .speechEnded ? event : nil
+    }
+    #expect(ended == .speechEnded)
+}
+
+@Test func speechActivityTrackerForceStartAndEndRoundTrip() {
+    var tracker = AudioSpeechActivityTracker()
+    #expect(tracker.forceStart() == .speechStarted)
+    #expect(tracker.forceStart() == nil)
+    #expect(tracker.forceEnd() == .speechEnded)
+    #expect(tracker.forceEnd() == nil)
+}
+
+@available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineStartCaptureConfiguresFullDuplexAndPropagatesSessionError() async {
     let sessionManager = ThrowingAudioSessionManager()
     let engine = LiveAudioEngine(

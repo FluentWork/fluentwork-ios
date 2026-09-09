@@ -115,6 +115,9 @@ public enum SpeakingRoomAction: Equatable, Sendable, Action {
     case session(SpeechSessionEvent)
     /// State snapshot applied after Middleware runs the machine.
     case applySession(SpeechSessionState)
+    /// I20 Item 4: tap-to-talk. Middleware asks the engine to emit speech boundaries.
+    case manualSpeechBegin
+    case manualSpeechEnd
     /// Display-only — must not enter SpeechSessionMachine (§2.2 badgeHit).
     ///
     /// Carries the optional B12 enrichment (`phraseBlockID`, `tier`, `turnID`)
@@ -157,6 +160,9 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
     switch action {
     case .session:
         // Interpreted by `speechSessionMiddleware`; reducer ignores raw events.
+        break
+
+    case .manualSpeechBegin, .manualSpeechEnd:
         break
 
     case let .applySession(session):

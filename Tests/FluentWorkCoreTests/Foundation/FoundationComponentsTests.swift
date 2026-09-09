@@ -347,4 +347,5 @@ import TGReduxKitTesting
     #expect(domain.isEnabled(.workspaceReview))
     #expect(domain.isEnabled(.degradedTextMode))
     #expect(domain.isEnabled(.dailyRead))
+    #expect(!domain.isEnabled(.voiceVadAuto))
 }

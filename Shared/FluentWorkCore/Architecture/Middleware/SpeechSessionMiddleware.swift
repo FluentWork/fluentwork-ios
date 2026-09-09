@@ -1,5 +1,6 @@
 import FactoryKit
 import FluentWorkDiagnostics
+import FluentWorkFeatureFlags
 import FluentWorkNetworking
 import Foundation
 import os
@@ -51,6 +52,17 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
     let ttsTrace = TTSStreamTrace()
 
     return { store, action, next in
+        if case .speakingRoom(.manualSpeechBegin) = action {
+            return .fireAndForget {
+                await resolvedContainer.audioEngine().beginManualSpeech()
+            }
+        }
+        if case .speakingRoom(.manualSpeechEnd) = action {
+            return .fireAndForget {
+                await resolvedContainer.audioEngine().endManualSpeech()
+            }
+        }
+
         guard case let .speakingRoom(.session(event)) = action else {
             return next(action)
         }
@@ -83,7 +95,8 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
                 turnTimeoutTracking: turnTimeoutTracking,
                 speechCaptureGate: speechCaptureGate,
                 ttsDispatcher: ttsDispatcher,
-                ttsTrace: ttsTrace
+                ttsTrace: ttsTrace,
+                usesAutoVAD: store.state.featureFlags.isEnabled(.voiceVadAuto)
             )
         }
         let timeoutEffects = processingTimeoutEffects(
@@ -213,7 +226,8 @@ private func interpretSpeechSessionSideEffect(
     turnTimeoutTracking: TurnTimeoutTracking? = nil,
     speechCaptureGate: SpeechCaptureGate,
     ttsDispatcher: TTSFrameDispatcher,
-    ttsTrace: TTSStreamTrace
+    ttsTrace: TTSStreamTrace,
+    usesAutoVAD: Bool = false
 ) -> Effect<AppAction> {
     let audioEngine = container.audioEngine()
     let speechClient = container.speechSessionClient()
@@ -273,6 +287,7 @@ private func interpretSpeechSessionSideEffect(
             .task {
                 do {
                     try await speechClient.startSession()
+                    await audioEngine.setSpeechBoundaryMode(usesAutoVAD ? .autoVAD : .manual)
                     try await audioEngine.startCapture()
                 } catch let error as AudioEnginePermissionError {
                     let message: String

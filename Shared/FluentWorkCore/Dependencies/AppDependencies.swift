@@ -20,6 +20,14 @@ public enum AudioEngineEvent: Equatable, Sendable {
     case failed(String)
 }
 
+/// How `LiveAudioEngine` decides user-speech start/end.
+///
+/// Manual is the speaking-room default (I20 Item 4). Auto VAD is opt-in via
+/// `AppFeatureFlag.voiceVadAuto`.
+public enum SpeechBoundaryMode: Equatable, Sendable {
+    case autoVAD
+    case manual
+}
 
 public protocol AudioEngineProtocol: Sendable {
     func startCapture() async throws
@@ -30,6 +38,17 @@ public protocol AudioEngineProtocol: Sendable {
     /// Drop in-progress VAD speech without emitting `.speechEnded`.
     /// Used by I20 recording abort so middleware does not send `user.speech.end`.
     func discardActiveSpeech() async
+    func setSpeechBoundaryMode(_ mode: SpeechBoundaryMode) async
+    /// Emit `.speechStarted` for tap-to-talk. No-op if speech is already open.
+    func beginManualSpeech() async
+    /// Emit `.speechEnded` for tap-to-talk. No-op if speech is not open.
+    func endManualSpeech() async
+}
+
+extension AudioEngineProtocol {
+    public func setSpeechBoundaryMode(_ mode: SpeechBoundaryMode) async {}
+    public func beginManualSpeech() async {}
+    public func endManualSpeech() async {}
 }
 
 /// Decodes an inbound `WSAudioFrame` (Opus payload) into 16 kHz mono

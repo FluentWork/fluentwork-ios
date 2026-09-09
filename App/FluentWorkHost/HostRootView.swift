@@ -1,6 +1,6 @@
 import FluentWorkCore
-import SwiftUI
 import FluentWorkUI
+import SwiftUI
 
 @MainActor
 struct HostRootView: View {
@@ -61,10 +61,22 @@ struct HostRootView: View {
                 SpeakingRoomView(
                     model: makeSpeakingRoomViewModel(from: store.state.speakingRoom),
                     onStartTapped: {
-                        restartOrStartSpeakingSession()
+                        switch makeSpeakingRoomViewModel(from: store.state.speakingRoom).startTapIntent {
+                        case .startSession:
+                            restartOrStartSpeakingSession()
+                        case .beginTurn:
+                            store.dispatch(.speakingRoom(.manualSpeechBegin))
+                        case .none:
+                            break
+                        }
                     },
                     onStopTapped: {
-                        store.dispatch(.speakingRoom(.session(.endTap)))
+                        switch makeSpeakingRoomViewModel(from: store.state.speakingRoom).stopTapIntent {
+                        case .endTurn:
+                            store.dispatch(.speakingRoom(.manualSpeechEnd))
+                        case .none:
+                            break
+                        }
                     },
                     onHitTapped: { hit in
                         guard let blockID = hit.phraseBlockID,
@@ -306,7 +318,8 @@ struct HostRootView: View {
                         )
                     }
                 )
-            }
+            },
+            usesAutoVAD: store.state.usesVoiceVadAuto
         )
     }
 

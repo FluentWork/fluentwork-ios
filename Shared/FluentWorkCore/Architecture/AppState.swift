@@ -93,6 +93,11 @@ public struct AppState: Equatable, Sendable, State {
   }
 
   public static let initial = AppState()
+
+  /// I20 Item 4: tap-to-talk is default; energy VAD is opt-in.
+  public var usesVoiceVadAuto: Bool {
+    featureFlags.isEnabled(.voiceVadAuto)
+  }
 }
 
 public enum LifecycleAction: Equatable, Sendable, Action {

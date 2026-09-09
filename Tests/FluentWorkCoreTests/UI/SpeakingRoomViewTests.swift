@@ -28,23 +28,50 @@ import Testing
     #expect(model.controlState.title == "生成评价中")
 }
 
-@Test func speakingRoomWaitingUserStateShowsInstructionWithoutButton() {
+@Test func speakingRoomWaitingUserStateShowsTapToTalkByDefault() {
     let model = SpeakingRoomViewModel(phase: .waitingUser)
 
     #expect(model.controlState.title == "轮到你了")
+    #expect(model.controlState.detail == "点击开始说话，说完再点停止。")
+    #expect(
+        model.controlState.primaryAction
+            == .start(title: "开始说话", systemImage: "mic.circle.fill")
+    )
+    #expect(model.startTapIntent == .beginTurn)
+}
+
+@Test func speakingRoomWaitingUserAutoVADHidesButton() {
+    let model = SpeakingRoomViewModel(phase: .waitingUser, usesAutoVAD: true)
+
     #expect(model.controlState.detail == "直接开口说话即可，系统会自动开始识别。")
     #expect(model.controlState.primaryAction == nil)
+    #expect(model.startTapIntent == .none)
+}
+
+@Test func speakingRoomRecordingStopSubmitsTurn() {
+    let model = SpeakingRoomViewModel(phase: .recording)
+    #expect(model.stopTapIntent == .endTurn)
+    #expect(model.startTapIntent == .none)
 }
 
 @Test func speakingRoomWaitingForAIAnswerHidesHoldAndShowsProgress() {
-    let model = SpeakingRoomViewModel(phase: .waitingForAIAnswer)
+    let model = SpeakingRoomViewModel(phase: .waitingForAIAnswer, usesAutoVAD: true)
     #expect(model.controlState.title == "AI 思考中…")
     #expect(model.controlState.showsProgress == true)
     #expect(model.controlState.primaryAction == nil)
 }
 
+@Test func speakingRoomWaitingForAIAnswerManualShowsBeginTurn() {
+    let model = SpeakingRoomViewModel(phase: .waitingForAIAnswer)
+    #expect(model.startTapIntent == .beginTurn)
+    #expect(
+        model.controlState.primaryAction
+            == .start(title: "开始说话", systemImage: "mic.circle.fill")
+    )
+}
+
 @Test func speakingRoomWaitingForEvaluationHidesHoldAndShowsProgress() {
-    let model = SpeakingRoomViewModel(phase: .waitingForEvaluation)
+    let model = SpeakingRoomViewModel(phase: .waitingForEvaluation, usesAutoVAD: true)
     #expect(model.controlState.title == "正在评价本次表现…")
     #expect(model.controlState.showsProgress == true)
     #expect(model.controlState.primaryAction == nil)
