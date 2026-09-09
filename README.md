@@ -56,7 +56,8 @@ and synced from `fluentwork-infra` with `./Scripts/sync-shared-schemas.sh`.
 - snapshot tests
 - simulator smoke run
 - agent entry file validation
-- pre-commit gstack review attestation (`GSTACK_REVIEWED=1`); CI does not run code review
+- landing on `main` is fast-forward only after a passing build and `swift test`; do not open PRs unless asked
+- pre-commit gstack review attestation is optional (`GSTACK_REVIEWED=1`); CI does not run code review
 
 ## Local Pre-commit
 

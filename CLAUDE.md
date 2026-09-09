@@ -38,9 +38,9 @@ Voice Gateway (Backend)
 ### SpeechSessionMachine 状态
 
 ```
-IDLE → CONNECTING → WAITING_USER → RECORDING → PROCESSING → WAITING_USER
-              ↓            ↓            ↓           ↓
-           FAILED       FAILED       FAILED      FAILED
+IDLE → CONNECTING → WAITING_USER → RECORDING → PROCESSING_ASR → PROCESSING_LLM → WAITING_USER
+              ↓            ↓            ↓              ↓                ↓
+           FAILED       FAILED       FAILED         FAILED           FAILED
 ```
 
 ### 关键协议帧 (来自 Backend)
@@ -49,7 +49,7 @@ IDLE → CONNECTING → WAITING_USER → RECORDING → PROCESSING → WAITING_US
 |--------|------|----------|
 | `session.ready` | Session 就绪 | 更新状态 |
 | `ai.text.delta` | AI 文本增量 | 更新 UI |
-| `ai.turn.end` | Turn 结束 (B15 带 outcome) | 退出 PROCESSING |
+| `ai.turn.end` | Turn 结束 (B15 带 outcome) | 退出 PROCESSING_* |
 | `client.asr.transcription` | ASR 中继 | 备用文本 |
 | `feedback.badge` | Badge 命中 | 显示 Badge |
 | `error` | 错误 | 错误处理 |
@@ -282,8 +282,7 @@ case let .aiTurnEnd(turnID, outcome):
 
 ## 贡献指南
 
-1. **Fork** 并创建 feature branch
+1. **在 `main` 上开发**，`git pull --ff-only` / `git push --ff-only`
 2. **编写测试** 覆盖新功能
-3. **保持最小 diff** — 避免不必要的重构
-4. **提交前运行测试** 确保通过
-5. **创建 PR** 并等待 Code Review
+3. **提交前运行 build 和 test**，通过即可落地
+4. **不要默认创建 PR / MR**

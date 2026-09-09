@@ -12,8 +12,8 @@ This repository inherits shared agent policy from `FluentWork/fluentwork-meta/ag
 Shared topics:
 
 1. AI collaboration and role split
-2. Git and PR rules
-3. Review gate
+2. Git and PR rules — **superseded locally**: work on `main`, fast-forward only, no PRs unless asked
+3. Review gate — **superseded locally**: required gate is build + `swift test`
 4. Skills policy
 5. Matt Pocock skills usage boundary
 
@@ -26,13 +26,15 @@ Shared topics:
 5. Do not use `NSLock`, `NSRecursiveLock`, or other explicit lock-based synchronization. Prefer actor isolation or a dedicated serial executor/queue that preserves the repository's supported OS versions.
 6. Work on exactly one ticket at a time. Do not implement, test, or advance multiple planned tasks concurrently.
 7. Cross-repository iOS/backend work must be sequential: finish and verify the active task in one repository before starting work in the other repository.
+8. Develop on `main`. Pull and push with `--ff-only`. Do not open merge requests or pull requests unless the user explicitly asks.
+9. Landing gate is a passing host Debug build plus `swift test`. Interactive gstack review is optional.
 
 ## Required Behaviors
 
 1. Read current iOS and product docs before editing.
 2. Keep changes scoped to the active module.
-3. Do not bypass review, CI, or owner approval requirements.
-4. Before opening or merging a PR, run the interactive gstack review skill on the branch diff, normally **`/review`** and **`/gstack-review`** when skill prefixes are enabled; fix must-fix findings (see `fluentwork-meta/agents/shared/review-gate.md`).
+3. Do not land on `main` without a passing build and test run.
+4. Do not create PRs or MRs as part of the default workflow. Fast-forward `main` after build and test pass.
 5. Do not perform destructive git operations without explicit approval.
 6. Call out any impact on state, audio, or release behavior.
 
@@ -55,10 +57,10 @@ Before writing or changing tests in bootstrap, audio, middleware, or navigation 
 
 ## Local Review Gate
 
-1. Required before commit: run the interactive gstack review skill, normally **`/review`** in Codex/Cursor/Claude. If your gstack config enables skill prefixes, use **`/gstack-review`** instead. Then commit with `GSTACK_REVIEWED=1 git commit ...`.
-2. pre-commit → `Scripts/gstack-review-gate.sh` (attestation; skill cannot run in bash).
+1. Required before landing on `main`: `swift test` and a Debug build of `FluentWorkHost`.
+2. Interactive gstack `/review` is optional. If you still use the pre-commit attestation hook, commit with `GSTACK_REVIEWED=1 git commit ...`.
 3. One-time hooks: `./Scripts/setup-git-hooks.sh` (sets `core.hooksPath=.githooks`).
-4. Emergency bypass: `SKIP_GSTACK_REVIEW=1` (justify in commit/PR body).
+4. Emergency bypass of the optional gstack hook: `SKIP_GSTACK_REVIEW=1`.
 5. OCR scripts are optional/manual only; not part of the default gate.
 
 ## CI Boundary

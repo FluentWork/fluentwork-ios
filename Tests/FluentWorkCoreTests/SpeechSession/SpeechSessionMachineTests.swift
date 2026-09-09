@@ -37,14 +37,26 @@ import Testing
     #expect(effects.contains(.sendInterrupt))
 }
 
-@Test func vadSpeechEndMovesRecordingToProcessing() {
+@Test func vadSpeechEndMovesRecordingToProcessingASR() {
     var state = SpeechSessionState(phase: .recording)
     _ = SpeechSessionMachine.reduce(&state, event: .vadSpeechEnd(turnID: nil))
-    #expect(state.phase == .processing)
+    #expect(state.phase == .processingASR)
+    #expect(state.processingSubStage == .asr)
+    #expect(state.userTurnCount == 1)
 }
 
-@Test func aiFirstAudioChunkMovesProcessingToAISpeaking() {
-    var state = SpeechSessionState(phase: .processing)
+@Test func serverASRReceivedMovesProcessingASRToProcessingLLM() {
+    var state = SpeechSessionState(phase: .processingASR)
+    _ = SpeechSessionMachine.reduce(
+        &state,
+        event: .serverASRReceived(text: "hello", turnID: "turn-1")
+    )
+    #expect(state.phase == .processingLLM)
+    #expect(state.processingSubStage == .llm)
+}
+
+@Test func aiFirstAudioChunkMovesProcessingASRToAISpeaking() {
+    var state = SpeechSessionState(phase: .processingASR)
     _ = SpeechSessionMachine.reduce(&state, event: .aiFirstAudioChunk)
     #expect(state.phase == .aiSpeaking)
 }
@@ -129,6 +141,26 @@ import Testing
     #expect(effects.isEmpty)
 }
 
+@Test func forceCloseFromRemainingActivePhasesEndsSession() {
+    let phases: [SpeechSessionPhase] = [
+        .aiSpeaking,
+        .waitingUser,
+        .recording,
+        .processingASR,
+        .processingLLM,
+        .processingReview,
+        .degradedText,
+    ]
+    for phase in phases {
+        var state = SpeechSessionState(phase: phase)
+        let effects = SpeechSessionMachine.reduce(&state, event: .forceClose)
+        #expect(state.phase == .ended, "expected ended from \(phase)")
+        #expect(state.isReconnecting == false, "expected reconnect cleared from \(phase)")
+        #expect(state.suspendedPhase == nil, "expected suspend cleared from \(phase)")
+        #expect(effects.contains(.forceClose), "expected forceClose effect from \(phase)")
+    }
+}
+
 @Test func forceCloseWhileSuspendedEndsSession() {
     var state = SpeechSessionState(phase: .recording)
     _ = SpeechSessionMachine.reduce(&state, event: .interruptedBySystem)
@@ -144,6 +176,9 @@ import Testing
 @Test func speechSessionPhaseIsActiveMatchesLivePhases() {
     #expect(SpeechSessionPhase.connecting.isActive)
     #expect(SpeechSessionPhase.waitingUser.isActive)
+    #expect(SpeechSessionPhase.processingASR.isActive)
+    #expect(SpeechSessionPhase.processingLLM.isActive)
+    #expect(SpeechSessionPhase.processingReview.isActive)
     #expect(!SpeechSessionPhase.idle.isActive)
     #expect(!SpeechSessionPhase.ended.isActive)
     #expect(!SpeechSessionPhase.failed.isActive)
@@ -156,7 +191,7 @@ import Testing
         (.failed, .socketReady),
         (.failed, .networkLost),
         (.ended, .sessionStartTap),
-        (.processing, .vadSpeechStart),
+        (.processingASR, .vadSpeechStart),
         (.waitingUser, .aiFirstAudioChunk),
     ]
 
@@ -185,7 +220,7 @@ import Testing
     #expect(state.phase == .recording)
 
     _ = SpeechSessionMachine.reduce(&state, event: .holdEnd(turnID: nil))
-    #expect(state.phase == .processing)
+    #expect(state.phase == .processingASR)
 }
 
 @Test func aiTurnEndHappyPathReturnsToWaitingUser() {
@@ -195,11 +230,35 @@ import Testing
     #expect(effects.contains(.trackTransition(from: .aiSpeaking, to: .waitingUser)))
 }
 
-@Test func aiTurnEndFromProcessingReturnsToWaitingUser() {
-    var state = SpeechSessionState(phase: .processing)
+@Test func aiTurnEndFromProcessingASRReturnsToWaitingUser() {
+    var state = SpeechSessionState(phase: .processingASR)
     let effects = SpeechSessionMachine.reduce(&state, event: .aiTurnEnd)
     #expect(state.phase == .waitingUser)
-    #expect(effects.contains(.trackTransition(from: .processing, to: .waitingUser)))
+    #expect(state.processingSubStage == nil)
+    #expect(effects.contains(.trackTransition(from: .processingASR, to: .waitingUser)))
+}
+
+@Test func processingSubStageReachedMovesLLMToReview() {
+    var state = SpeechSessionState(phase: .processingLLM)
+    _ = SpeechSessionMachine.reduce(&state, event: .processingSubStageReached(.review))
+    #expect(state.phase == .processingReview)
+    #expect(state.processingSubStage == .review)
+}
+
+@Test func duplicateSocketReadyWhileProcessingASRIsIdempotent() {
+    var state = SpeechSessionState(phase: .processingASR, isReconnecting: true)
+    let effects = SpeechSessionMachine.reduce(&state, event: .socketReady)
+    #expect(state.phase == .processingASR)
+    #expect(state.isReconnecting == false)
+    #expect(effects.isEmpty)
+}
+
+@Test func processingTimeoutsUseCompileTimeDefaults() {
+    let timeouts = ProcessingTimeouts.standard
+    #expect(timeouts.asr == .seconds(15))
+    #expect(timeouts.llm == .seconds(45))
+    #expect(timeouts.review == .seconds(30))
+    #expect(timeouts.totalCap == .seconds(70))
 }
 
 @Test func reconnectSucceededClearsReconnectFlag() {
