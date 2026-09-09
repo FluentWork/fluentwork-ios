@@ -240,6 +240,7 @@ struct HostRootView: View {
             .padding(.bottom, 8)
         case .connecting, .recording, .waitingUser,
              .processingASR, .processingLLM, .processingReview,
+             .waitingForAIAnswer, .waitingForEvaluation,
              .aiSpeaking, .degradedText:
             Button {
                 store.dispatch(.speakingRoom(.session(.endTap)))

@@ -149,6 +149,8 @@ import Testing
         .processingASR,
         .processingLLM,
         .processingReview,
+        .waitingForAIAnswer,
+        .waitingForEvaluation,
         .degradedText,
     ]
     for phase in phases {
@@ -179,9 +181,36 @@ import Testing
     #expect(SpeechSessionPhase.processingASR.isActive)
     #expect(SpeechSessionPhase.processingLLM.isActive)
     #expect(SpeechSessionPhase.processingReview.isActive)
+    #expect(SpeechSessionPhase.waitingForAIAnswer.isActive)
+    #expect(SpeechSessionPhase.waitingForEvaluation.isActive)
     #expect(!SpeechSessionPhase.idle.isActive)
     #expect(!SpeechSessionPhase.ended.isActive)
     #expect(!SpeechSessionPhase.failed.isActive)
+}
+
+@Test func speechSessionPhaseLabelsCoverV20WaitsAndExistingStages() {
+    #expect(SpeechSessionPhase.waitingForAIAnswer.label == "waiting_for_ai_answer")
+    #expect(SpeechSessionPhase.waitingForEvaluation.label == "waiting_for_evaluation")
+    #expect(SpeechSessionPhase.waitingForAIAnswer.stageTag == "waiting_for_ai_answer")
+    #expect(SpeechSessionPhase.waitingForEvaluation.stageTag == "waiting_for_evaluation")
+    #expect(SpeechSessionPhase.waitingForAIAnswer.processingSubStage == nil)
+    #expect(SpeechSessionPhase.waitingForEvaluation.processingSubStage == nil)
+    #expect(!SpeechSessionPhase.waitingForAIAnswer.isProcessing)
+    #expect(!SpeechSessionPhase.waitingForEvaluation.isProcessing)
+
+    let labels = Dictionary(uniqueKeysWithValues: SpeechSessionPhase.allCases.map { ($0, $0.label) })
+    #expect(labels[.idle] == "idle")
+    #expect(labels[.connecting] == "orchestration")
+    #expect(labels[.waitingUser] == "waiting_user")
+    #expect(labels[.recording] == "vad_capture")
+    #expect(labels[.processingASR] == "asr")
+    #expect(labels[.processingLLM] == "llm")
+    #expect(labels[.processingReview] == "review")
+    #expect(labels[.aiSpeaking] == "tts")
+    #expect(labels[.degradedText] == "text_fallback")
+    #expect(labels[.ended] == "ended")
+    #expect(labels[.failed] == "failed")
+    #expect(Set(labels.values).count == SpeechSessionPhase.allCases.count)
 }
 
 @Test func illegalCombinationsAreIgnored() {

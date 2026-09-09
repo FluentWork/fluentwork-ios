@@ -47,7 +47,7 @@
 
 ### 2.2 明确不做（留给后续票）
 
-- **I21** `waitingForAIAnswer` / `waitingForEvaluation`：abort 后目前回到 `.waitingUser`，不插入中间态
+- **I21 T-I21-1** 已把 `waitingForAIAnswer` / `waitingForEvaluation` 加进枚举；abort 后运行时仍回 `.waitingUser`，插入中间态是 T-I21-2
 - Backend 接受 `client.turn.abort`（见 §8）
 
 ---
@@ -335,6 +335,6 @@ swift test --filter "recordingTimedOut|clientTurnAbort|TurnAbort|speechCaptureGa
 | T-I20-2 | iOS | 已落地：`docs/25_I20_turn_outcome.md` |
 | T-I20-3 | iOS | 已落地：`docs/26_I20_system_prompt_builder.md` |
 | T-I20-4 | iOS | 已落地：`docs/27_I20_turn_telemetry.md` |
-| I21 | iOS | abort 后插入 `waitingForAIAnswer`，不要改 B15 失败路径 |
+| I21 | iOS | T-I21-1 枚举已落地（`docs/28`）；abort 后插入等待态仍是 T-I21-2，不要改 B15 失败路径 |
 
 改状态机时同步改：本文 §4、Machine 测试、`docs/20` 若涉及新的 turn 边界坑。

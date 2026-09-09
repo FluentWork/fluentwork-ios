@@ -49,7 +49,8 @@
 24. `25_I20_turn_outcome.md` — T-I20-2 `TurnOutcome` 上报与 abort outcome 枚举
 25. `26_I20_system_prompt_builder.md` — T-I20-3 `SystemPromptBuilder` V2.0
 26. `27_I20_turn_telemetry.md` — T-I20-4 `turn.timeout` / `turn.outcome`、TTS 追踪日志；生产走 `Container.shared`，测试注入同一份本地 Container
-27. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
+27. `28_I21_session_phase_waits.md` — T-I21-1 `waitingForAIAnswer` / `waitingForEvaluation` 相位与 label
+28. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
 
 ---
 

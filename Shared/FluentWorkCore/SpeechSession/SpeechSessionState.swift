@@ -5,7 +5,7 @@ import Foundation
 /// This file is the frozen SpeechSession contract surface. Replace the pure
 /// machine implementation in `SpeechSessionMachine.swift` if ownership moves,
 /// but keep these types stable for Store / Middleware wiring.
-public enum SpeechSessionPhase: String, Equatable, Sendable {
+public enum SpeechSessionPhase: String, Equatable, Sendable, CaseIterable {
     case idle
     case connecting
     case aiSpeaking
@@ -14,6 +14,8 @@ public enum SpeechSessionPhase: String, Equatable, Sendable {
     case processingASR
     case processingLLM
     case processingReview
+    case waitingForAIAnswer
+    case waitingForEvaluation
     case degradedText
     case ended
     case failed
@@ -26,19 +28,24 @@ public enum SpeechSessionPhase: String, Equatable, Sendable {
     /// `voiceproto.ProviderOutbound.Control` payloads.
     public var stageTag: String {
         switch self {
-        case .idle:             return "idle"
-        case .connecting:       return "orchestration"
-        case .aiSpeaking:       return "tts"
-        case .waitingUser:      return "waiting_user"
-        case .recording:        return "vad_capture"
-        case .processingASR:    return "asr"
-        case .processingLLM:    return "llm"
-        case .processingReview: return "review"
-        case .degradedText:     return "text_fallback"
-        case .ended:            return "ended"
-        case .failed:           return "failed"
+        case .idle:                    return "idle"
+        case .connecting:              return "orchestration"
+        case .aiSpeaking:              return "tts"
+        case .waitingUser:             return "waiting_user"
+        case .recording:               return "vad_capture"
+        case .processingASR:           return "asr"
+        case .processingLLM:           return "llm"
+        case .processingReview:        return "review"
+        case .waitingForAIAnswer:      return "waiting_for_ai_answer"
+        case .waitingForEvaluation:    return "waiting_for_evaluation"
+        case .degradedText:            return "text_fallback"
+        case .ended:                   return "ended"
+        case .failed:                  return "failed"
         }
     }
+
+    /// Tracker / log label. Distinct from `rawValue` so new V2.0 waits stay snake_case.
+    public var label: String { stageTag }
 
     /// Live speaking-room phases that still own capture/transport.
     /// Matches `SpeechSessionMachine` — idle / ended / failed are terminal.
@@ -47,7 +54,8 @@ public enum SpeechSessionPhase: String, Equatable, Sendable {
         case .idle, .ended, .failed:
             return false
         case .connecting, .aiSpeaking, .waitingUser, .recording,
-             .processingASR, .processingLLM, .processingReview, .degradedText:
+             .processingASR, .processingLLM, .processingReview,
+             .waitingForAIAnswer, .waitingForEvaluation, .degradedText:
             return true
         }
     }
