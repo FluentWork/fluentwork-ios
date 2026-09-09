@@ -410,13 +410,13 @@ struct SpeechSessionMiddlewareEndSessionTests {
         store.dispatch(.speakingRoom(.session(.endTap)))
         try await waitForPhase(store, phase: .ended, timeout: 1_000_000_000)
 
-        // Verify cleanup - wait for async operations to complete
-        try await Task.sleep(for: .milliseconds(100))
+        // `.endSession` cleanup is fire-and-forget; poll instead of a fixed
+        // sleep so parallel CI load cannot miss `speechClient.endSession()`.
+        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+            await speechClient.endSessionCalled
+        }
 
-        // Verify cleanup
         #expect(await speechClient.endSessionCalled)
-        // Note: stopCapture might not be called on endTap since audioEngine.stopCapture
-        // is only called when the middleware interprets .endSession effect
     }
 
     @MainActor
