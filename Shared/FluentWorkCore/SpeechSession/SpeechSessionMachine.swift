@@ -49,9 +49,18 @@ public enum SpeechSessionMachine {
 
         case (.processingASR, .aiTurnEnd),
              (.processingLLM, .aiTurnEnd),
-             (.processingReview, .aiTurnEnd),
-             (.aiSpeaking, .aiTurnEnd):
+             (.processingReview, .aiTurnEnd):
             state.phase = .waitingForEvaluation
+            state.processingSubStage = nil
+
+        case (.aiSpeaking, .aiTurnEnd) where state.userTurnCount > 0:
+            state.phase = .waitingForEvaluation
+            state.processingSubStage = nil
+
+        case (.aiSpeaking, .aiTurnEnd):
+            // Greeting / bootstrap turn (DevEcho and Volc Start() send
+            // ai.turn.end before the user has spoken). Land in waitingUser.
+            state.phase = .waitingUser
             state.processingSubStage = nil
 
         case (.waitingForEvaluation, .evaluationReceived):

@@ -208,9 +208,10 @@ extension WSControlFrame: Codable {
             self = .aiAudioChunk(sequence: try container.decode(UInt32.self, forKey: .sequence))
 
         case "ai.turn.end":
+            let outcomeRaw = try container.decodeIfPresent(String.self, forKey: .outcome)
             self = .aiTurnEnd(
                 turnID: try container.decodeIfPresent(String.self, forKey: .turnID),
-                outcome: try container.decodeIfPresent(TurnOutcome.self, forKey: .outcome), // B15
+                outcome: outcomeRaw.flatMap(TurnOutcome.init(rawValue:)),
                 logID: try container.decodeIfPresent(String.self, forKey: .logID) // B15-I3
             )
 

@@ -303,6 +303,34 @@ struct SpeechSessionMiddlewareB14Tests {
     }
 
     @MainActor
+    @Test func bootstrapAITurnEndOutcomeOkReturnsToWaitingUser() async throws {
+        // DevEcho / Volc Start() send ai.turn.end outcome=ok before the user
+        // speaks. Must not enter waitingForEvaluation ("正在评价").
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        #expect(store.state.speakingRoom.session.userTurnCount == 0)
+
+        speechClient.emit(
+            .control(.aiTurnEnd(turnID: "bootstrap", outcome: .ok, logID: nil))
+        )
+        try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
+
+        #expect(store.state.speakingRoom.phase == .waitingUser)
+        #expect(store.state.speakingRoom.failureReason == nil)
+        #expect(await speechClient.endSessionCalled == false)
+    }
+
+    @MainActor
     @Test func degradedTextSendTextMessageEffect() async throws {
         let container = Container()
         container.reset()

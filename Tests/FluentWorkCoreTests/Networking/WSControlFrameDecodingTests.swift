@@ -85,6 +85,14 @@ private let backendDevEchoFeedbackBadgeJSON = #"""
     #expect(decoded == .aiTurnEnd(turnID: "turn-3", outcome: .timeout, logID: "volc-xyz789"))
 }
 
+@Test func aiTurnEndMatchesBackendTimeoutWireFixture() throws {
+    // Exact payload asserted by fluentwork-backend
+    // TestHandler_AITurnEndCarriesTimeoutOutcomeOnWire.
+    let json = #"{"type":"ai.turn.end","turn_id":"turn-timeout-1","outcome":"timeout","log_id":"volc-log-timeout"}"#
+    let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
+    #expect(decoded == .aiTurnEnd(turnID: "turn-timeout-1", outcome: .timeout, logID: "volc-log-timeout"))
+}
+
 @Test func aiTurnEndWithOutcomePartial() throws {
     let json = #"{"type":"ai.turn.end","turn_id":"turn-2","outcome":"partial"}"#
     let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
@@ -95,6 +103,12 @@ private let backendDevEchoFeedbackBadgeJSON = #"""
     let json = #"{"type":"ai.turn.end","turn_id":"turn-4","outcome":"error"}"#
     let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
     #expect(decoded == .aiTurnEnd(turnID: "turn-4", outcome: .error, logID: nil))
+}
+
+@Test func aiTurnEndWithUnknownOutcomeDecodesAsNilOutcome() throws {
+    let json = #"{"type":"ai.turn.end","turn_id":"turn-1","outcome":"not-a-contract-value"}"#
+    let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
+    #expect(decoded == .aiTurnEnd(turnID: "turn-1", outcome: nil, logID: nil))
 }
 
 @Test func aiTurnEndWithoutOutcomeDecodesAsNil() throws {

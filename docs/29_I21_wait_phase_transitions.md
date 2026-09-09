@@ -10,7 +10,8 @@
 两条新边：
 
 - `.recording` + `.recordingTimedOut` → `.waitingForAIAnswer`（I20 abort，会话继续，不 arm B15）
-- processing / `.aiSpeaking` + `.aiTurnEnd` → `.waitingForEvaluation`
+- processing / `.aiSpeaking`（`userTurnCount > 0`）+ `.aiTurnEnd` → `.waitingForEvaluation`
+- 开场 greeting：`.aiSpeaking` 且尚未开口 + `.aiTurnEnd` → `.waitingUser`
 
 离开等待：
 
@@ -42,4 +43,4 @@ T-I21-1 只有类型。abort 仍回 `.waitingUser`，正常 `ai.turn.end` 也直
 
 ## 6. 测试
 
-`swift test --filter "waitingForAIAnswer|waitingForEvaluation|isValidTransition|recordingTimedOutAborts|aiTurnEndHappyPath"`
+`swift test --filter "waitingForAIAnswer|waitingForEvaluation|isValidTransition|recordingTimedOutAborts|aiTurnEndHappyPathGreeting|bootstrapAITurnEnd"`

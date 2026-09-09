@@ -83,6 +83,12 @@ import Foundation
     #expect(abortProperties["turn_id"] != nil)
     #expect(abortProperties["session_id"] == nil)
 
+    let aiTurnEnd = try #require(defs["aiTurnEnd"] as? [String: Any])
+    let aiTurnEndProperties = try #require(aiTurnEnd["properties"] as? [String: Any])
+    let turnOutcome = try #require(aiTurnEndProperties["outcome"] as? [String: Any])
+    #expect(turnOutcome["enum"] as? [String] == ["ok", "partial", "timeout", "error"])
+    #expect(aiTurnEndProperties["log_id"] != nil)
+
     let textDelta = try #require(defs["aiTextDelta"] as? [String: Any])
     let textDeltaProperties = try #require(textDelta["properties"] as? [String: Any])
     #expect(textDeltaProperties["server_ts_ms"] != nil)

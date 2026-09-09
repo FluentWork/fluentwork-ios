@@ -253,8 +253,15 @@ import Testing
     #expect(state.phase == .processingASR)
 }
 
-@Test func aiTurnEndHappyPathReturnsToWaitingForEvaluation() {
+@Test func aiTurnEndHappyPathGreetingReturnsToWaitingUser() {
     var state = SpeechSessionState(phase: .aiSpeaking)
+    let effects = SpeechSessionMachine.reduce(&state, event: .aiTurnEnd)
+    #expect(state.phase == .waitingUser)
+    #expect(effects.contains(.trackTransition(from: .aiSpeaking, to: .waitingUser)))
+}
+
+@Test func aiTurnEndAfterUserTurnReturnsToWaitingForEvaluation() {
+    var state = SpeechSessionState(phase: .aiSpeaking, userTurnCount: 1)
     let effects = SpeechSessionMachine.reduce(&state, event: .aiTurnEnd)
     #expect(state.phase == .waitingForEvaluation)
     #expect(effects.contains(.trackTransition(from: .aiSpeaking, to: .waitingForEvaluation)))
