@@ -13,7 +13,7 @@ public enum SpeechSessionEvent: Equatable, Sendable {
     case vadSpeechEnd(turnID: String?)
     case holdEnd(turnID: String?)
     /// I20 T-I20-1: 60s cap while `.recording`. Not B15's 70s processing cap.
-    /// Machine returns to `.waitingUser` and emits `.sendTurnAbort` — session stays alive.
+    /// Machine enters `.waitingForAIAnswer` and emits `.sendTurnAbort` — session stays alive.
     case recordingTimedOut
     /// B14: Server-side ASR transcript relayed from the voice provider via WSS.
     /// This is the authoritative transcript for this turn. When received, the
@@ -25,6 +25,8 @@ public enum SpeechSessionEvent: Equatable, Sendable {
     /// Prefer `.serverASRReceived` for the ASR → LLM hop.
     case processingSubStageReached(ProcessingSubStage)
     case aiFirstAudioChunk
+    /// V2.0: eval/review frame for this turn landed. Leaves `.waitingForEvaluation`.
+    case evaluationReceived
     /// Soft degrade (e.g. transport already left the voice path) → immediate `degradedText`.
     case networkDegraded
     /// Hard disconnect → 3s reconnect window; timeout → `degradedText` (§2.2).

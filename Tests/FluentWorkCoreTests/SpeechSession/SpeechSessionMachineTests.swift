@@ -253,19 +253,19 @@ import Testing
     #expect(state.phase == .processingASR)
 }
 
-@Test func aiTurnEndHappyPathReturnsToWaitingUser() {
+@Test func aiTurnEndHappyPathReturnsToWaitingForEvaluation() {
     var state = SpeechSessionState(phase: .aiSpeaking)
     let effects = SpeechSessionMachine.reduce(&state, event: .aiTurnEnd)
-    #expect(state.phase == .waitingUser)
-    #expect(effects.contains(.trackTransition(from: .aiSpeaking, to: .waitingUser)))
+    #expect(state.phase == .waitingForEvaluation)
+    #expect(effects.contains(.trackTransition(from: .aiSpeaking, to: .waitingForEvaluation)))
 }
 
-@Test func aiTurnEndFromProcessingASRReturnsToWaitingUser() {
+@Test func aiTurnEndFromProcessingASRReturnsToWaitingForEvaluation() {
     var state = SpeechSessionState(phase: .processingASR)
     let effects = SpeechSessionMachine.reduce(&state, event: .aiTurnEnd)
-    #expect(state.phase == .waitingUser)
+    #expect(state.phase == .waitingForEvaluation)
     #expect(state.processingSubStage == nil)
-    #expect(effects.contains(.trackTransition(from: .processingASR, to: .waitingUser)))
+    #expect(effects.contains(.trackTransition(from: .processingASR, to: .waitingForEvaluation)))
 }
 
 @Test func processingSubStageReachedMovesLLMToReview() {
@@ -295,13 +295,13 @@ import Testing
     var state = SpeechSessionState(phase: .recording)
     let effects = SpeechSessionMachine.reduce(&state, event: .recordingTimedOut)
 
-    #expect(state.phase == .waitingUser)
+    #expect(state.phase == .waitingForAIAnswer)
     #expect(state.processingSubStage == nil)
     #expect(state.userTurnCount == 1)
     #expect(state.lastTurnOutcome == .timeout)
     #expect(state.failureReason == nil)
     #expect(effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: .timeout)))
-    #expect(effects.contains(.trackTransition(from: .recording, to: .waitingUser)))
+    #expect(effects.contains(.trackTransition(from: .recording, to: .waitingForAIAnswer)))
     #expect(!effects.contains(.turnTimeoutExpired))
     #expect(!effects.contains(.endSession))
 }
@@ -312,7 +312,7 @@ import Testing
     #expect(state.suspendedPhase == .recording)
 
     let effects = SpeechSessionMachine.reduce(&state, event: .recordingTimedOut)
-    #expect(state.phase == .waitingUser)
+    #expect(state.phase == .waitingForAIAnswer)
     #expect(effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: .timeout)))
 }
 
@@ -428,4 +428,59 @@ import Testing
     let replyEffects = SpeechSessionMachine.reduce(&state, event: .textReplyReceived)
     #expect(state.phase == .degradedText)
     #expect(replyEffects.isEmpty)
+}
+
+@Test func waitingForAIAnswerAcceptsNextUtterance() {
+    var state = SpeechSessionState(phase: .recording)
+    _ = SpeechSessionMachine.reduce(&state, event: .recordingTimedOut)
+    #expect(state.phase == .waitingForAIAnswer)
+
+    let effects = SpeechSessionMachine.reduce(&state, event: .vadSpeechStart)
+    #expect(state.phase == .recording)
+    #expect(effects.contains(.trackTransition(from: .waitingForAIAnswer, to: .recording)))
+}
+
+@Test func waitingForAIAnswerEndTapEndsSession() {
+    var state = SpeechSessionState(phase: .waitingForAIAnswer)
+    let effects = SpeechSessionMachine.reduce(&state, event: .endTap)
+    #expect(state.phase == .ended)
+    #expect(effects.contains(.endSession))
+    #expect(effects.contains(.trackTransition(from: .waitingForAIAnswer, to: .ended)))
+}
+
+@Test func evaluationReceivedLeavesWaitingForEvaluation() {
+    var state = SpeechSessionState(phase: .waitingForEvaluation)
+    let effects = SpeechSessionMachine.reduce(&state, event: .evaluationReceived)
+    #expect(state.phase == .waitingUser)
+    #expect(effects.contains(.trackTransition(from: .waitingForEvaluation, to: .waitingUser)))
+}
+
+@Test func waitingForEvaluationEndTapEndsSession() {
+    var state = SpeechSessionState(phase: .waitingForEvaluation)
+    let effects = SpeechSessionMachine.reduce(&state, event: .endTap)
+    #expect(state.phase == .ended)
+    #expect(effects.contains(.endSession))
+}
+
+@Test func waitingForEvaluationVadStartsNextTurn() {
+    var state = SpeechSessionState(phase: .waitingForEvaluation)
+    let effects = SpeechSessionMachine.reduce(&state, event: .vadSpeechStart)
+    #expect(state.phase == .recording)
+    #expect(effects.contains(.trackTransition(from: .waitingForEvaluation, to: .recording)))
+}
+
+@Test func isValidTransitionAcceptsLiveGraphAndRejectsIllegalHops() {
+    #expect(SpeechSessionMachine.isValidTransition(from: .idle, to: .connecting))
+    #expect(SpeechSessionMachine.isValidTransition(from: .waitingUser, to: .recording))
+    #expect(SpeechSessionMachine.isValidTransition(from: .recording, to: .processingASR))
+    #expect(SpeechSessionMachine.isValidTransition(from: .processingASR, to: .aiSpeaking))
+    #expect(SpeechSessionMachine.isValidTransition(from: .aiSpeaking, to: .waitingForEvaluation))
+    #expect(SpeechSessionMachine.isValidTransition(from: .recording, to: .waitingForAIAnswer))
+    #expect(SpeechSessionMachine.isValidTransition(from: .waitingForAIAnswer, to: .ended))
+    #expect(SpeechSessionMachine.isValidTransition(from: .waitingForEvaluation, to: .waitingUser))
+    #expect(SpeechSessionMachine.isValidTransition(from: .waitingForEvaluation, to: .ended))
+    #expect(!SpeechSessionMachine.isValidTransition(from: .idle, to: .aiSpeaking))
+    #expect(!SpeechSessionMachine.isValidTransition(from: .waitingForEvaluation, to: .idle))
+    #expect(!SpeechSessionMachine.isValidTransition(from: .ended, to: .waitingUser))
+    #expect(!SpeechSessionMachine.isValidTransition(from: .idle, to: .idle))
 }

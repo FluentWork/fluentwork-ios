@@ -22,6 +22,7 @@ public enum SpeechSessionMachine {
         }
 
         let from = state.phase
+        let snapshot = state
         var effects: [SpeechSessionSideEffect] = []
 
         switch (state.phase, event) {
@@ -50,6 +51,10 @@ public enum SpeechSessionMachine {
              (.processingLLM, .aiTurnEnd),
              (.processingReview, .aiTurnEnd),
              (.aiSpeaking, .aiTurnEnd):
+            state.phase = .waitingForEvaluation
+            state.processingSubStage = nil
+
+        case (.waitingForEvaluation, .evaluationReceived):
             state.phase = .waitingUser
             state.processingSubStage = nil
 
@@ -58,7 +63,9 @@ public enum SpeechSessionMachine {
             state.processingSubStage = nil
             effects.append(contentsOf: [.stopPlayback, .sendInterrupt])
 
-        case (.waitingUser, .vadSpeechStart), (.waitingUser, .holdStart):
+        case (.waitingUser, .vadSpeechStart), (.waitingUser, .holdStart),
+             (.waitingForAIAnswer, .vadSpeechStart), (.waitingForAIAnswer, .holdStart),
+             (.waitingForEvaluation, .vadSpeechStart), (.waitingForEvaluation, .holdStart):
             state.phase = .recording
             state.processingSubStage = nil
 
@@ -72,7 +79,8 @@ public enum SpeechSessionMachine {
             // I20 T-I20-1: user still recording after 60s. Abort this turn, keep
             // the session. Do not enter processingASR (that would arm B15's 70s
             // collectTurn fallback) and do not emit user.speech.end.
-            state.phase = .waitingUser
+            // I21: land in waitingForAIAnswer, not waitingUser.
+            state.phase = .waitingForAIAnswer
             effects.append(abortOpenRecording(&state, outcome: .timeout))
 
         // Recording-specific terminals before the catch-alls: an open utterance
@@ -197,7 +205,8 @@ public enum SpeechSessionMachine {
         // Idempotent: duplicate socketReady while connecting/reconnecting after first ready.
         case (.aiSpeaking, .socketReady), (.waitingUser, .socketReady), (.recording, .socketReady),
              (.processingASR, .socketReady), (.processingLLM, .socketReady),
-             (.processingReview, .socketReady), (.degradedText, .socketReady):
+             (.processingReview, .socketReady), (.waitingForAIAnswer, .socketReady),
+             (.waitingForEvaluation, .socketReady), (.degradedText, .socketReady):
             state.isReconnecting = false
 
         default:
@@ -205,10 +214,58 @@ public enum SpeechSessionMachine {
         }
 
         if state.phase != from {
+            guard isValidTransition(from: from, to: state.phase) else {
+                state = snapshot
+                return []
+            }
             effects.insert(.trackTransition(from: from, to: state.phase), at: 0)
         }
 
         return effects
+    }
+
+    /// Allow-list for phase hops. The ticket's 5-state graph is mapped onto
+    /// the live 13-phase machine; illegal hops stay no-ops.
+    public static func isValidTransition(
+        from old: SpeechSessionPhase,
+        to new: SpeechSessionPhase
+    ) -> Bool {
+        if old == new { return false }
+        switch (old, new) {
+        case (.idle, .connecting),
+             (.connecting, .aiSpeaking),
+             (.aiSpeaking, .recording),
+             (.waitingUser, .recording),
+             (.waitingForAIAnswer, .recording),
+             (.waitingForEvaluation, .recording),
+             (.recording, .processingASR),
+             (.recording, .waitingForAIAnswer),
+             (.recording, .waitingUser),
+             (.processingASR, .processingLLM),
+             (.processingASR, .aiSpeaking),
+             (.processingLLM, .processingReview),
+             (.processingLLM, .aiSpeaking),
+             (.processingReview, .aiSpeaking),
+             (.processingASR, .waitingForEvaluation),
+             (.processingLLM, .waitingForEvaluation),
+             (.processingReview, .waitingForEvaluation),
+             (.aiSpeaking, .waitingForEvaluation),
+             (.waitingForEvaluation, .waitingUser),
+             (.waitingForAIAnswer, .waitingUser),
+             (.aiSpeaking, .waitingUser),
+             (.processingASR, .waitingUser),
+             (.processingLLM, .waitingUser),
+             (.processingReview, .waitingUser):
+            return true
+        case (_, .ended) where old.isActive:
+            return true
+        case (_, .failed) where old != .ended:
+            return true
+        case (_, .degradedText) where old.isActive:
+            return true
+        default:
+            return false
+        }
     }
 
     private static func isActive(_ phase: SpeechSessionPhase) -> Bool {

@@ -630,7 +630,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(turnIDsAfterFirst == [nil, "turn-1"])
     #expect(store.state.speakingRoom.session.userTurnCount == 1)
 
-    // Drive the machine back to `waitingUser` so a second turn can start.
+    // Drive the machine to `waitingForEvaluation` so a second turn can start.
     let frame = WSAudioFrame(sequence: 1, opusPayload: Data([0x01]))
     speechClient.emit(.audio(frame))
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
@@ -638,10 +638,10 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     }
     speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: nil, logID: nil)))
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        store.state.speakingRoom.phase == .waitingUser
+        store.state.speakingRoom.phase == .waitingForEvaluation
     }
 
-    // Second turn → "turn-2".
+    // Second turn → "turn-2". VAD from waitingForEvaluation starts the next recording.
     audioEngine.emit(.speechStarted)
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .recording
@@ -850,9 +850,9 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     speechClient.emit(.control(.aiTurnEnd(turnID: "turn-7", outcome: nil, logID: nil)))
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        store.state.speakingRoom.phase == .waitingUser
+        store.state.speakingRoom.phase == .waitingForEvaluation
     }
-    #expect(store.state.speakingRoom.phase == .waitingUser)
+    #expect(store.state.speakingRoom.phase == .waitingForEvaluation)
 }
 
 @MainActor

@@ -47,7 +47,7 @@
 
 ### 2.2 明确不做（留给后续票）
 
-- **I21 T-I21-1** 已把 `waitingForAIAnswer` / `waitingForEvaluation` 加进枚举；abort 后运行时仍回 `.waitingUser`，插入中间态是 T-I21-2
+- **I21 T-I21-2** abort 后进入 `.waitingForAIAnswer`（会话仍活，下一轮 VAD 可开口）；B15 `outcome=timeout` 仍走 `.failed("turn_timeout")`
 - Backend 接受 `client.turn.abort`（见 §8）
 
 ---
@@ -119,7 +119,10 @@ processingASR      ← 在这里启动 B15 70s turnTimeout
 processingLLM → processingReview 或 aiFirstAudioChunk
     │  ai.turn.end（outcome ≠ timeout）
     ▼
-waitingUser
+waitingForEvaluation
+    │  evaluationReceived 或下一轮 VAD
+    ▼
+waitingUser / recording
 ```
 
 `userTurnCount` 在 **离开 recording 进入 processingASR** 时 `+= 1`。  
@@ -132,7 +135,7 @@ recording
     │  60s 到 → middleware 先 SpeechCaptureGate.abort()
     │           再 dispatch .recordingTimedOut
     ▼
-waitingUser        userTurnCount += 1
+waitingForAIAnswer userTurnCount += 1
                    effect: .sendTurnAbort(turnID: "turn-N", outcome: .timeout)
                    不进入 processingASR  →  因此 B15 70s 不会 armed
 ```
@@ -155,7 +158,7 @@ failed("turn_timeout") → .endSession → session.end
 ### 4.4 abort 之后用户再开口
 
 ```
-waitingUser
+waitingForAIAnswer
     │  下一轮 vadSpeechStart
     ▼
 recording     ← 重新 beginSpeech()，60s abort timer 再 arm
@@ -335,6 +338,6 @@ swift test --filter "recordingTimedOut|clientTurnAbort|TurnAbort|speechCaptureGa
 | T-I20-2 | iOS | 已落地：`docs/25_I20_turn_outcome.md` |
 | T-I20-3 | iOS | 已落地：`docs/26_I20_system_prompt_builder.md` |
 | T-I20-4 | iOS | 已落地：`docs/27_I20_turn_telemetry.md` |
-| I21 | iOS | T-I21-1 枚举已落地（`docs/28`）；abort 后插入等待态仍是 T-I21-2，不要改 B15 失败路径 |
+| I21 | iOS | T-I21-2 已插入等待态（`docs/29`）；B15 `ai.turn.end outcome=timeout` 仍走 `.failed("turn_timeout")` |
 
 改状态机时同步改：本文 §4、Machine 测试、`docs/20` 若涉及新的 turn 边界坑。
