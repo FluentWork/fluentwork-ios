@@ -71,6 +71,28 @@ struct AudioInterruptionObserverTests {
         observer.stop()
     }
 
+    @Test func categoryChangeRouteEmitsNothing() async {
+        let center = NotificationCenter()
+        let observer = AudioInterruptionObserver(center: center)
+        let collector = InterruptionEventCollector()
+
+        observer.start { kind in
+            await collector.append(kind)
+        }
+
+        center.post(
+            name: AudioInterruptionObserver.routeChangeNotification,
+            object: nil,
+            userInfo: [
+                AudioInterruptionObserver.routeChangeReasonKey: AudioInterruptionObserver.routeCategoryChangeRaw
+            ]
+        )
+
+        let events = await collector.wait(forCount: 1, timeout: .milliseconds(150))
+        #expect(events.isEmpty)
+        observer.stop()
+    }
+
     @Test func stopThenPostDoesNotEmitAdditionalEvents() async {
         let center = NotificationCenter()
         let observer = AudioInterruptionObserver(center: center)
@@ -109,7 +131,8 @@ struct AudioInterruptionObserverTests {
             ]
         )
 
-        let afterStop = await collector.wait(forCount: 2)
+        let afterStop = await collector.wait(forCount: 2, timeout: .milliseconds(150))
+        #expect(afterStop.count == 1)
         #expect(afterStop == [.began])
     }
 }

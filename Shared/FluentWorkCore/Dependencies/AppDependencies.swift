@@ -15,6 +15,8 @@ public enum AudioEngineEvent: Equatable, Sendable {
     case pcmChunk(Data)
     case interruptedBySystem
     case systemInterruptEnded
+    /// Headset unplug / old output gone. Informational — not a session failure.
+    case routeChanged(String)
     case failed(String)
 }
 

@@ -155,15 +155,12 @@ public final class AudioInterruptionObserver: AudioInterruptionObserving, @unche
             return nil
         }
 
-        switch reasonRaw {
-        case routeOldDeviceUnavailableRaw:
-            return .routeChanged(reason: "oldDeviceUnavailable")
-        case routeNewDeviceAvailableRaw:
-            return .routeChanged(reason: "newDeviceAvailable")
-        case routeCategoryChangeRaw:
-            return .routeChanged(reason: "categoryChange")
-        default:
+        // Master ISSUE-03: only oldDeviceUnavailable is user-visible (e.g. BT
+        // disconnect). newDeviceAvailable / categoryChange often ride along
+        // with a phone-call interruption and must not tear down the session.
+        guard reasonRaw == routeOldDeviceUnavailableRaw else {
             return nil
         }
+        return .routeChanged(reason: "oldDeviceUnavailable")
     }
 }

@@ -264,13 +264,42 @@ private func consumeFirstEvent<T: Sendable>(
     await engine.handleInterruption(.routeChanged(reason: "oldDeviceUnavailable"))
 
     let event = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
-        if case .failed = event { return event } else { return nil }
+        if case .routeChanged = event { return event } else { return nil }
     }
-    guard case let .failed(message) = event else {
-        Issue.record("expected a .failed event from route change, got \(String(describing: event))")
-        return
+    #expect(event == .routeChanged("oldDeviceUnavailable"))
+}
+
+@available(iOS 17, macOS 14, *)
+@Test func liveAudioEngineHandleEndedShouldResumeFalseDoesNotYieldSystemInterruptEnded() async {
+    let engine = LiveAudioEngine(
+        decoder: RawPCM16FrameDecoder(),
+        interruptionObserver: RecordingAudioInterruptionObserver()
+    )
+    let stream = engine.events()
+
+    await engine.handleInterruption(.ended(shouldResume: false))
+
+    let event = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        if case .systemInterruptEnded = event { return event } else { return nil }
     }
-    #expect(message.contains("route_changed"))
+    #expect(event == nil)
+}
+
+@available(iOS 17, macOS 14, *)
+@Test func liveAudioEngineHandleEndedShouldResumeTrueAfterBeganYieldsSystemInterruptEnded() async {
+    let engine = LiveAudioEngine(
+        decoder: RawPCM16FrameDecoder(),
+        interruptionObserver: RecordingAudioInterruptionObserver()
+    )
+    let stream = engine.events()
+
+    await engine.handleInterruption(.began)
+    await engine.handleInterruption(.ended(shouldResume: true))
+
+    let event = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        if case .systemInterruptEnded = event { return event } else { return nil }
+    }
+    #expect(event == .systemInterruptEnded)
 }
 
 // MARK: - Test doubles

@@ -109,6 +109,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     // tests can assert the local-silence budget (≤ 200 ms) without depending on
     // hardware audio output.
     private var lastInterruptRequestedAt: ContinuousClock.Instant?
+    private var isSystemInterrupted = false
 
     private let sessionManager: any AudioSessionManaging
     private let decoder: any WSAudioFrameDecoder
@@ -235,6 +236,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         }
         playbackGate.reset()
         lastInterruptRequestedAt = nil
+        isSystemInterrupted = false
 
         // NOTE: Do NOT deactivate the audio session here.
         // Deactivating while AI audio is still playing (during aiSpeaking→waitingUser
@@ -310,21 +312,26 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     func handleInterruption(_ kind: AudioInterruptionKind) {
         switch kind {
         case .began:
+            isSystemInterrupted = true
+            _ = speechTracker.reset()
             if playerAttached {
                 playerNode.pause()
             }
             continuation.yield(.interruptedBySystem)
         case .ended(let shouldResume):
-            if shouldResume, playerAttached {
-                playerNode.play()
-            }
+            // docs/22: only resume the speech session when iOS says we may.
+            // Do not `playerNode.play()` — interruptedBySystem already asked
+            // the machine to stopPlayback, and resume lands in waitingUser.
+            guard shouldResume else { return }
+            isSystemInterrupted = false
             continuation.yield(.systemInterruptEnded)
         case .routeChanged(let reason):
-            continuation.yield(.failed("route_changed: \(reason)"))
+            continuation.yield(.routeChanged(reason))
         }
     }
 
     private func processInput(_ buffer: AVAudioPCMBuffer) async {
+        guard !isSystemInterrupted else { return }
         do {
             guard let pcm = try convertToPCM16(buffer) else { return }
             continuation.yield(.pcmChunk(pcm))
