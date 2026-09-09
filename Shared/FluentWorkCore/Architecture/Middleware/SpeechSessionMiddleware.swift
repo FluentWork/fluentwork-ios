@@ -230,6 +230,7 @@ private func interpretSpeechSessionSideEffect(
                 // The timer is part of the transport task so cancellation of the
                 // transport task cancels the timer via the same CancellationID.
                 if startTurnTimeout, let tracking = turnTimeoutTracking {
+                    // # weak-required: TrackerClientProtocol is not class-bound (production ConsoleTracker is a struct).
                     Task {
                         try? await Task.sleep(for: .seconds(defaultTurnTimeoutSeconds))
                         // Check if still armed (ai.turn.end didn't cancel it) before firing.

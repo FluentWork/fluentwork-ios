@@ -107,7 +107,7 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         await heartbeatTask.cancel()
         let transport = self.transport
         let interval = self.heartbeatInterval
-        let task = Task {
+        let task = Task { [transport] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: interval)
                 guard !Task.isCancelled else { return }

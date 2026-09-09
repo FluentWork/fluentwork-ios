@@ -369,6 +369,7 @@ public struct SpeakingRoomView: View {
         switch action {
         case let .start(title, systemImage):
             Button {
+                // # weak-required: SpeakingRoomView is a struct; Task hops the Button action onto async permission.
                 Task {
                     await requestStartWithPermission()
                 }

@@ -189,6 +189,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
         inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak self] buffer, _ in
             guard let self else { return }
+            // # weak-required: actor value after guard; Task retains this engine for one buffer hop.
             Task {
                 await self.processInput(buffer)
             }

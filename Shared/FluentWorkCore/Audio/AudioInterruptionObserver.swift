@@ -88,7 +88,7 @@ public final class AudioInterruptionObserver: AudioInterruptionObserving, @unche
                 queue: nil
             ) { notification in
                 guard let kind = Self.interruptionKind(from: notification) else { return }
-                Task {
+                Task { [onEvent] in
                     await onEvent(kind)
                 }
             }
@@ -100,7 +100,7 @@ public final class AudioInterruptionObserver: AudioInterruptionObserving, @unche
                 queue: nil
             ) { notification in
                 guard let kind = Self.routeKind(from: notification) else { return }
-                Task {
+                Task { [onEvent] in
                     await onEvent(kind)
                 }
             }
