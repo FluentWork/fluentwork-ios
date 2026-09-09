@@ -353,6 +353,41 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
 }
 
 @MainActor
+@Test func defaultSpeechSessionClientSendsTurnAbortWithoutSpeechEnd() async throws {
+    let transport = InMemorySocketTransport()
+    try await transport.connect(
+        url: URL(string: "ws://127.0.0.1/ws")!,
+        sessionID: "s-1",
+        ticket: "ticket"
+    )
+    let storage = InMemorySecureStorage()
+    let tokenStore = SecureAuthTokenStore(
+        storage: storage,
+        idGenerator: FixedIDGenerator(value: UUID(uuidString: "88888888-8888-8888-8888-888888888888")!)
+    )
+
+    let client = DefaultSpeechSessionClient(
+        api: SessionAPIClient(
+            network: StubNetworkClient { _ in Data() },
+            baseURL: URL(string: "http://127.0.0.1:8080/api/v1")!
+        ),
+        tokens: tokenStore,
+        transport: transport
+    )
+
+    try await client.sendSpeechBoundary(started: true, turnID: nil, text: nil)
+    try await client.sendTurnAbort(turnID: "turn-1", outcome: "timeout")
+
+    let sentControls = await transport.sentControlFrames
+    #expect(
+        sentControls == [
+            .userSpeechStart,
+            .clientTurnAbort(turnID: "turn-1", outcome: "timeout"),
+        ]
+    )
+}
+
+@MainActor
 @Test func defaultSpeechSessionClientClearsActiveSessionWhenEnded() async throws {
     let transport = InMemorySocketTransport()
     let storage = InMemorySecureStorage()

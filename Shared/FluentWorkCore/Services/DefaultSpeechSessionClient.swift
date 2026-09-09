@@ -138,6 +138,10 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         }
     }
 
+    public func sendTurnAbort(turnID: String, outcome: String) async throws {
+        try await transport.send(control: .clientTurnAbort(turnID: turnID, outcome: outcome))
+    }
+
     public func sendAudioPCM(_ data: Data) async throws {
         try await transport.send(audio: data)
     }

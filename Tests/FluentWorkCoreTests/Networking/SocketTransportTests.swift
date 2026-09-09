@@ -10,6 +10,7 @@ import Testing
         .sessionStart(.init(materialContext: "ctx", scene: "interview", voiceID: "v1")),
         .userSpeechStart,
         .userSpeechEnd(text: "thank you", turnID: "turn-1"),
+        .clientTurnAbort(turnID: "turn-1", outcome: "timeout"),
         .aiTextDelta(text: "你好"),
         .aiAudioChunk(sequence: 42),
         .aiTTSStart(turnID: "turn-9", voiceID: "mock_voice_01", sampleRate: 24_000, codec: "opus"),

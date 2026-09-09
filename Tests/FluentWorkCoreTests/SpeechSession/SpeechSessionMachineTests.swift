@@ -192,6 +192,7 @@ import Testing
         (.failed, .networkLost),
         (.ended, .sessionStartTap),
         (.processingASR, .vadSpeechStart),
+        (.processingASR, .recordingTimedOut),
         (.waitingUser, .aiFirstAudioChunk),
     ]
 
@@ -259,6 +260,45 @@ import Testing
     #expect(timeouts.llm == .seconds(45))
     #expect(timeouts.review == .seconds(30))
     #expect(timeouts.totalCap == .seconds(70))
+}
+
+@Test func recordingTimedOutAbortsTurnWithoutFailingSession() {
+    var state = SpeechSessionState(phase: .recording)
+    let effects = SpeechSessionMachine.reduce(&state, event: .recordingTimedOut)
+
+    #expect(state.phase == .waitingUser)
+    #expect(state.processingSubStage == nil)
+    #expect(state.userTurnCount == 1)
+    #expect(state.failureReason == nil)
+    #expect(effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: "timeout")))
+    #expect(effects.contains(.trackTransition(from: .recording, to: .waitingUser)))
+    #expect(!effects.contains(.turnTimeoutExpired))
+    #expect(!effects.contains(.endSession))
+}
+
+@Test func recordingTimedOutWhileSuspendedStillAbortsTurn() {
+    var state = SpeechSessionState(phase: .recording)
+    _ = SpeechSessionMachine.reduce(&state, event: .interruptedBySystem)
+    #expect(state.suspendedPhase == .recording)
+
+    let effects = SpeechSessionMachine.reduce(&state, event: .recordingTimedOut)
+    #expect(state.phase == .waitingUser)
+    #expect(effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: "timeout")))
+}
+
+@Test func recordingTimedOutFromWaitingUserIsNoOp() {
+    var state = SpeechSessionState(phase: .waitingUser)
+    let before = state
+    let effects = SpeechSessionMachine.reduce(&state, event: .recordingTimedOut)
+    #expect(state == before)
+    #expect(effects.isEmpty)
+}
+
+@Test func vadSpeechEndAfterRecordingDoesNotSendTurnAbort() {
+    var state = SpeechSessionState(phase: .recording)
+    let effects = SpeechSessionMachine.reduce(&state, event: .vadSpeechEnd(turnID: nil))
+    #expect(state.phase == .processingASR)
+    #expect(!effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: "timeout")))
 }
 
 @Test func reconnectSucceededClearsReconnectFlag() {

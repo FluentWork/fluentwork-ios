@@ -14,7 +14,7 @@ public enum SpeechSessionMachine {
         // cannot drive the machine under a stale live phase (§2.2 interruptedBySystem).
         if state.suspendedPhase != nil {
             switch event {
-            case .systemInterruptEnded, .endTap, .forceClose, .failed:
+            case .systemInterruptEnded, .endTap, .forceClose, .failed, .recordingTimedOut:
                 break
             default:
                 return []
@@ -65,6 +65,17 @@ public enum SpeechSessionMachine {
             state.phase = .processingASR
             state.processingSubStage = .asr
             state.userTurnCount += 1
+
+        case (.recording, .recordingTimedOut):
+            // I20 T-I20-1: user still recording after 60s. Abort this turn, keep
+            // the session. Do not enter processingASR (that would arm B15's 70s
+            // collectTurn fallback) and do not emit user.speech.end.
+            state.phase = .waitingUser
+            state.processingSubStage = nil
+            state.userTurnCount += 1
+            effects.append(
+                .sendTurnAbort(turnID: "turn-\(state.userTurnCount)", outcome: "timeout")
+            )
 
         case (.processingASR, .serverASRReceived),
              (.processingASR, .processingSubStageReached(.llm)):

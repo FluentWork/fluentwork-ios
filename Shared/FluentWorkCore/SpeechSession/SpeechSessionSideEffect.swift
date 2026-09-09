@@ -5,6 +5,9 @@ import Foundation
 public enum SpeechSessionSideEffect: Equatable, Sendable {
     case createSession
     case sendInterrupt
+    /// I20 T-I20-1: send `client.turn.abort` for an in-progress recording turn.
+    /// Does not end the session and must not be folded into `.turnTimeoutExpired`.
+    case sendTurnAbort(turnID: String, outcome: String)
     case stopPlayback
     case startReconnectWindow
     /// B15: turn-level timeout fired (backend 60s collectTurn expired).

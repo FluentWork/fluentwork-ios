@@ -112,3 +112,22 @@ private let backendDevEchoFeedbackBadgeJSON = #"""
     let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
     #expect(decoded == .aiTurnEnd(turnID: nil, outcome: nil, logID: nil))
 }
+
+// MARK: - I20 T-I20-1: client.turn.abort (recording abort, not B15 70s)
+
+@Test func clientTurnAbortEncodesTimeoutOutcome() throws {
+    let encoded = try WSControlFrameCodec.encode(
+        .clientTurnAbort(turnID: "turn-1", outcome: "timeout")
+    )
+    let json = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    #expect(json["type"] as? String == "client.turn.abort")
+    #expect(json["turn_id"] as? String == "turn-1")
+    #expect(json["outcome"] as? String == "timeout")
+    #expect(json["session_id"] == nil)
+}
+
+@Test func clientTurnAbortDecodesWireFrame() throws {
+    let json = #"{"type":"client.turn.abort","turn_id":"turn-2","outcome":"timeout"}"#
+    let decoded = try WSControlFrameCodec.decode(Data(json.utf8))
+    #expect(decoded == .clientTurnAbort(turnID: "turn-2", outcome: "timeout"))
+}

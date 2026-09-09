@@ -27,6 +27,9 @@ public protocol AudioEngineProtocol: Sendable {
     func stopCapture() async
     func play(frame: WSAudioFrame) async
     func interruptNow() async
+    /// Drop in-progress VAD speech without emitting `.speechEnded`.
+    /// Used by I20 recording abort so middleware does not send `user.speech.end`.
+    func discardActiveSpeech() async
 }
 
 /// Decodes an inbound `WSAudioFrame` (Opus payload) into 16 kHz mono
@@ -113,6 +116,8 @@ public protocol SpeechSessionClientProtocol: Sendable {
     /// `text` is the optional client ASR transcription result (B13). Pass `nil`
     /// to fall back to server-side ASR.
     func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws
+    /// I20 T-I20-1: abort an in-progress recording turn. Not `session.end`.
+    func sendTurnAbort(turnID: String, outcome: String) async throws
     func sendAudioPCM(_ data: Data) async throws
     func submitTranscript(_ text: String) async
     func transportEvents() -> AsyncStream<SocketTransportEvent>
@@ -229,6 +234,8 @@ public final class PlaceholderAudioEngine: AudioEngineProtocol, Sendable {
     public func play(frame: WSAudioFrame) async {}
 
     public func interruptNow() async {}
+
+    public func discardActiveSpeech() async {}
 }
 
 public final class PlaceholderSpeechSessionClient: SpeechSessionClientProtocol, Sendable {
@@ -241,6 +248,8 @@ public final class PlaceholderSpeechSessionClient: SpeechSessionClientProtocol, 
     public func submitTranscript(_ text: String) async {}
 
     public func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {}
+
+    public func sendTurnAbort(turnID: String, outcome: String) async throws {}
 
     public func sendAudioPCM(_ data: Data) async throws {}
 

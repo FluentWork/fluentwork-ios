@@ -93,6 +93,32 @@ struct SpeechSessionMiddlewareTests {
         }
         #expect(acceptSendable(box) == true)
     }
+
+    @Test func speechCaptureGateDropsPCMAfterAbortUntilNextSpeech() {
+        let gate = SpeechCaptureGate()
+        #expect(gate.shouldForwardPCM)
+        #expect(!gate.isOpen)
+
+        gate.beginSpeech()
+        #expect(gate.isOpen)
+        #expect(gate.shouldForwardPCM)
+
+        gate.abort()
+        #expect(!gate.isOpen)
+        #expect(!gate.shouldForwardPCM)
+
+        gate.beginSpeech()
+        #expect(gate.isOpen)
+        #expect(gate.shouldForwardPCM)
+    }
+
+    @Test func speechCaptureGateEndSpeechStillForwardsPCM() {
+        let gate = SpeechCaptureGate()
+        gate.beginSpeech()
+        gate.endSpeech()
+        #expect(!gate.isOpen)
+        #expect(gate.shouldForwardPCM)
+    }
 }
 
 // MARK: - SpeechSessionMiddleware Integration Tests
@@ -205,6 +231,46 @@ struct SpeechSessionMiddlewareB14Tests {
 
         #expect(store.state.speakingRoom.liveTranscript == "Transport transcript")
         #expect(await speechClient.getBoundaryCallCount() == boundariesAfterVAD)
+    }
+
+    @MainActor
+    @Test func recordingTimeoutSendsClientTurnAbortAndKeepsSessionAlive() async throws {
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+
+        audioEngine.emit(.speechStarted)
+        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+
+        store.dispatch(.speakingRoom(.session(.recordingTimedOut)))
+        try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
+        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+            await speechClient.getTurnAbortCalls().count == 1
+        }
+
+        let aborts = await speechClient.getTurnAbortCalls()
+        #expect(aborts.count == 1)
+        #expect(aborts.first?.turnID == "turn-1")
+        #expect(aborts.first?.outcome == "timeout")
+        #expect(await speechClient.getEndBoundaries().isEmpty)
+        #expect(await speechClient.endSessionCalled == false)
+        #expect(store.state.speakingRoom.phase == .waitingUser)
+        #expect(store.state.speakingRoom.session.failureReason == nil)
+
+        audioEngine.emit(.speechEnded)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(await speechClient.getEndBoundaries().isEmpty)
+        #expect(store.state.speakingRoom.phase == .waitingUser)
     }
 
     // MARK: - Degraded Text Tests
@@ -571,6 +637,7 @@ private final class StubAudioEngineForMiddleware: AudioEngineProtocol, @unchecke
     }
     func play(frame: WSAudioFrame) async {}
     func interruptNow() async {}
+    func discardActiveSpeech() async {}
 
     func events() -> AsyncStream<AudioEngineEvent> {
         stream
@@ -589,6 +656,11 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
         let text: String?
     }
 
+    struct AbortCall: Sendable {
+        let turnID: String
+        let outcome: String
+    }
+
     private let stream: AsyncStream<SocketTransportEvent>
     private let continuation: AsyncStream<SocketTransportEvent>.Continuation
 
@@ -600,6 +672,7 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
     var closeTransportCalled: Bool { get async { await _closeTransportCalled.get() } }
 
     private let _speechBoundaryCalls = AsyncValue<[BoundaryCall]>([])
+    private let _turnAbortCalls = AsyncValue<[AbortCall]>([])
     private let _degradedTextMessageSent = AsyncValue(false)
     var degradedTextMessageSent: Bool { get async { await _degradedTextMessageSent.get() } }
 
@@ -631,6 +704,14 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
         await _speechBoundaryCalls.update { calls in
             var newCalls = calls
             newCalls.append(call)
+            return newCalls
+        }
+    }
+
+    func sendTurnAbort(turnID: String, outcome: String) async throws {
+        await _turnAbortCalls.update { calls in
+            var newCalls = calls
+            newCalls.append(AbortCall(turnID: turnID, outcome: outcome))
             return newCalls
         }
     }
@@ -676,6 +757,10 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
 
     func getEndBoundaries() async -> [BoundaryCall] {
         await _speechBoundaryCalls.get().filter { !$0.started }
+    }
+
+    func getTurnAbortCalls() async -> [AbortCall] {
+        await _turnAbortCalls.get()
     }
 }
 

@@ -33,6 +33,17 @@ import TGReduxKitTesting
     #expect(tracker.reset() == nil)
 }
 
+@available(iOS 17, macOS 14, *)
+@Test func audioSpeechActivityTrackerDiscardDoesNotEmitSpeechEnded() {
+    var tracker = AudioSpeechActivityTracker()
+    let now = ContinuousClock().now
+
+    _ = tracker.register(energy: 0.02, at: now)
+    tracker.discard()
+    #expect(tracker.reset() == nil)
+    #expect(tracker.register(energy: 0.02, at: now) == .speechStarted)
+}
+
 @Test func audioPlaybackGateDropsFramesAtAndBeforeInterruptWatermark() {
     var gate = AudioPlaybackGate()
     let first = WSAudioFrame(sequence: 10, opusPayload: Data([0x01]))

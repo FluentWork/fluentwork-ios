@@ -13,6 +13,8 @@ public enum SpeechSessionTaskID {
     // expires without an ai.turn.end. iOS uses this as a client-side fallback so
     // we don't hang indefinitely if the backend fails to surface the outcome.
     public static let turnTimeout: CancellationID = "speechSession.turnTimeout"
+    // I20 T-I20-1: 60s cap while still recording. Distinct from `turnTimeout`.
+    public static let recordingAbortTimeout: CancellationID = "speechSession.recordingAbortTimeout"
     public static let processingASRTimeout: CancellationID = "speechSession.processingASRTimeout"
     public static let processingLLMTimeout: CancellationID = "speechSession.processingLLMTimeout"
     public static let processingReviewTimeout: CancellationID = "speechSession.processingReviewTimeout"
@@ -21,6 +23,9 @@ public enum SpeechSessionTaskID {
 /// B15 total-cap + per-stage processing timeouts. Compile-time defaults until
 /// `FeatureFlagSnapshot` can carry numeric values.
 private let processingTimeouts = ProcessingTimeouts.standard
+/// I20 T-I20-1: max time in `.recording` before `client.turn.abort`.
+/// Not B15's 70s collectTurn fallback (`processingTimeouts.totalCap`).
+private let recordingAbortTimeout: Duration = .seconds(60)
 
 /// Owns SpeechSessionMachine invocation + SideEffect interpretation.
 ///
@@ -41,6 +46,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
     // when ai.turn.end arrives or the session ends. Lives here so both the
     // middleware dispatch path and the timeout tasks can access it.
     let turnTimeoutTracking = TurnTimeoutTracking()
+    let speechCaptureGate = SpeechCaptureGate()
     let ttsDispatcher = TTSFrameDispatcher(decoder: resolvedContainer.ttsDecoder())
 
     return { store, action, next in
@@ -62,6 +68,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
         // .recording. Sub-stage timers are scheduled as `.task(id:)` so they
         // cancel independently of the transport loop.
         let enteredProcessing = previousPhase == .recording && session.phase == .processingASR
+        let enteredRecording = previousPhase != .recording && session.phase == .recording
 
         let apply = next(.speakingRoom(.applySession(session)))
         let interpreted = effects.map {
@@ -73,6 +80,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
                 turnCounter: turnCounter,
                 timings: timings,
                 turnTimeoutTracking: turnTimeoutTracking,
+                speechCaptureGate: speechCaptureGate,
                 ttsDispatcher: ttsDispatcher
             )
         }
@@ -80,7 +88,9 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
             from: previousPhase,
             to: session.phase,
             enteredProcessing: enteredProcessing,
+            enteredRecording: enteredRecording,
             turnTimeoutTracking: turnTimeoutTracking,
+            speechCaptureGate: speechCaptureGate,
             tracker: resolvedContainer.tracker()
         )
         return .merge([apply] + interpreted + timeoutEffects)
@@ -123,6 +133,47 @@ internal final class TurnCountBox: @unchecked Sendable {
     func set(_ newValue: Int) { storage.withLock { $0 = newValue } }
 }
 
+/// I20 T-I20-1: tracks whether the current user utterance is still open on the
+/// wire. After a recording abort we drop PCM and ignore the trailing VAD
+/// `speechEnded` so we never send `user.speech.end` for an aborted turn.
+internal final class SpeechCaptureGate: @unchecked Sendable {
+    private struct State {
+        var open = false
+        var dropPCMUntilNextSpeech = false
+    }
+
+    private let storage = OSAllocatedUnfairLock<State>(initialState: State())
+
+    func beginSpeech() {
+        storage.withLock {
+            $0.open = true
+            $0.dropPCMUntilNextSpeech = false
+        }
+    }
+
+    func endSpeech() {
+        storage.withLock { $0.open = false }
+    }
+
+    func abort() {
+        storage.withLock {
+            $0.open = false
+            $0.dropPCMUntilNextSpeech = true
+        }
+    }
+
+    var isOpen: Bool {
+        storage.withLock { $0.open }
+    }
+
+    var shouldForwardPCM: Bool {
+        storage.withLock {
+            if $0.dropPCMUntilNextSpeech && !$0.open { return false }
+            return true
+        }
+    }
+}
+
 /// B15: Tracks whether a turn-level timeout is currently armed.
 /// Used to prevent double-firing when both the timeout task and ai.turn.end
 /// race at the boundary. Cancelation is stored as a bool (not a Task) so the
@@ -158,6 +209,7 @@ private func interpretSpeechSessionSideEffect(
     turnCounter: TurnCountBox,
     timings: SpeechSessionTimingsRecorder,
     turnTimeoutTracking: TurnTimeoutTracking? = nil,
+    speechCaptureGate: SpeechCaptureGate,
     ttsDispatcher: TTSFrameDispatcher
 ) -> Effect<AppAction> {
     let audioEngine = container.audioEngine()
@@ -175,6 +227,8 @@ private func interpretSpeechSessionSideEffect(
         timings.mark(event: "session_create", properties: ["stage": "orchestration"])
     case .sendInterrupt:
         timings.mark(event: "session_interrupt")
+    case .sendTurnAbort:
+        timings.mark(event: "recording_turn_abort", properties: ["stage": "turn_boundary"])
     case .stopPlayback:
         timings.mark(event: "playback_stop")
     case .startReconnectWindow:
@@ -236,6 +290,7 @@ private func interpretSpeechSessionSideEffect(
                         case .feedbackBadge:  typeTag = "feedback.badge"
                         case .userSpeechStart: typeTag = "user.speech.start"
                         case .userSpeechEnd:   typeTag = "user.speech.end"
+                        case .clientTurnAbort: typeTag = "client.turn.abort"
                         case let .aiTurnEnd(_, outcome, _):
                             typeTag = "ai.turn.end" + (outcome.map { "(\($0.rawValue))" } ?? "")
                         case .ping:            typeTag = "ping"
@@ -439,6 +494,7 @@ private func interpretSpeechSessionSideEffect(
                             // Reset PCM buffer at the start of each turn
                             pcmBuffer.removeAll()
                             isCapturingSpeech = true
+                            speechCaptureGate.beginSpeech()
 
                             // No turnID on start — backend uses the next
                             // user.speech.end's turnID as the dedupe scope.
@@ -457,6 +513,13 @@ private func interpretSpeechSessionSideEffect(
                     case .speechEnded:
                         do {
                             isCapturingSpeech = false
+                            // I20: abort already closed the utterance. Do not send
+                            // user.speech.end — that would start collectTurn.
+                            guard speechCaptureGate.isOpen else {
+                                pcmBuffer.removeAll()
+                                continue
+                            }
+                            speechCaptureGate.endSpeech()
 
                             // B14 change: Server-side ASR (Volcengine Duplex relay) now provides
                             // the authoritative transcript via WSS `client.asr.transcription` frame.
@@ -495,7 +558,8 @@ private func interpretSpeechSessionSideEffect(
                             if isCapturingSpeech {
                                 pcmBuffer.append(data)
                             }
-                            
+                            guard speechCaptureGate.shouldForwardPCM else { continue }
+
                             try await speechClient.sendAudioPCM(data)
                         } catch {
                             await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
@@ -524,6 +588,19 @@ private func interpretSpeechSessionSideEffect(
     case .sendInterrupt:
         return .fireAndForget {
             await speechClient.submitTranscript("__interrupt__")
+        }
+
+    case let .sendTurnAbort(turnID, outcome):
+        return .fireAndForget {
+            speechCaptureGate.abort()
+            await audioEngine.discardActiveSpeech()
+            do {
+                try await speechClient.sendTurnAbort(turnID: turnID, outcome: outcome)
+            } catch {
+                await dispatchBox.dispatch(
+                    .speakingRoom(.session(.failed(error.localizedDescription)))
+                )
+            }
         }
 
     case .stopPlayback:
@@ -561,6 +638,7 @@ private func interpretSpeechSessionSideEffect(
         return .merge(
             .cancel(id: SpeechSessionTaskID.transportEvents),
             .cancel(id: SpeechSessionTaskID.audioEngineEvents),
+            .cancel(id: SpeechSessionTaskID.recordingAbortTimeout),
             cancelProcessingTimeoutTasks(includeTotalCap: true),
             .fireAndForget {
                 let sessionID = await speechClient.activeSessionID()
@@ -582,6 +660,7 @@ private func interpretSpeechSessionSideEffect(
         return .merge(
             .cancel(id: SpeechSessionTaskID.transportEvents),
             .cancel(id: SpeechSessionTaskID.audioEngineEvents),
+            .cancel(id: SpeechSessionTaskID.recordingAbortTimeout),
             cancelProcessingTimeoutTasks(includeTotalCap: true),
             .fireAndForget {
                 let taskID = await backgroundTasks.begin(
@@ -626,14 +705,25 @@ private func interpretSpeechSessionSideEffect(
 }
 
 /// Arms / cancels processing sub-timers and the B15 70s total cap via `.task(id:)`.
+/// Also arms the I20 60s recording abort (separate CancellationID, separate path).
 private func processingTimeoutEffects(
     from previousPhase: SpeechSessionPhase,
     to newPhase: SpeechSessionPhase,
     enteredProcessing: Bool,
+    enteredRecording: Bool,
     turnTimeoutTracking: TurnTimeoutTracking,
+    speechCaptureGate: SpeechCaptureGate,
     tracker: TrackerClientProtocol
 ) -> [Effect<AppAction>] {
     var effects: [Effect<AppAction>] = []
+
+    if enteredRecording {
+        effects.append(scheduleRecordingAbortTask(captureGate: speechCaptureGate))
+    }
+
+    if previousPhase == .recording, newPhase != .recording {
+        effects.append(.cancel(id: SpeechSessionTaskID.recordingAbortTimeout))
+    }
 
     if enteredProcessing {
         turnTimeoutTracking.arm()
@@ -661,6 +751,15 @@ private func processingTimeoutEffects(
     }
 
     return effects
+}
+
+private func scheduleRecordingAbortTask(captureGate: SpeechCaptureGate) -> Effect<AppAction> {
+    .task(id: SpeechSessionTaskID.recordingAbortTimeout) {
+        try? await Task.sleep(for: recordingAbortTimeout)
+        guard !Task.isCancelled else { return nil }
+        captureGate.abort()
+        return .speakingRoom(.session(.recordingTimedOut))
+    }
 }
 
 private func scheduleTurnTimeoutTask(

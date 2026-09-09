@@ -12,6 +12,9 @@ public enum SpeechSessionEvent: Equatable, Sendable {
     case holdStart
     case vadSpeechEnd(turnID: String?)
     case holdEnd(turnID: String?)
+    /// I20 T-I20-1: 60s cap while `.recording`. Not B15's 70s processing cap.
+    /// Machine returns to `.waitingUser` and emits `.sendTurnAbort` — session stays alive.
+    case recordingTimedOut
     /// B14: Server-side ASR transcript relayed from the voice provider via WSS.
     /// This is the authoritative transcript for this turn. When received, the
     /// middleware immediately calls `sendSpeechBoundary(text:)` so the backend

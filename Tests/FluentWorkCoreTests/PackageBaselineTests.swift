@@ -70,7 +70,17 @@ import Foundation
     #expect(defs["aiTTSAudio"] != nil)
     #expect(refs.contains("#/$defs/aiTTSStart"))
     #expect(refs.contains("#/$defs/aiTTSEnd"))
+    #expect(refs.contains("#/$defs/clientTurnAbort"))
     #expect(!refs.contains("#/$defs/aiTTSAudio"))
+
+    let abort = try #require(defs["clientTurnAbort"] as? [String: Any])
+    let abortProperties = try #require(abort["properties"] as? [String: Any])
+    let abortType = try #require(abortProperties["type"] as? [String: Any])
+    let abortOutcome = try #require(abortProperties["outcome"] as? [String: Any])
+    #expect(abortType["const"] as? String == "client.turn.abort")
+    #expect(abortOutcome["const"] as? String == "timeout")
+    #expect(abortProperties["turn_id"] != nil)
+    #expect(abortProperties["session_id"] == nil)
 
     let textDelta = try #require(defs["aiTextDelta"] as? [String: Any])
     let textDeltaProperties = try #require(textDelta["properties"] as? [String: Any])

@@ -262,7 +262,8 @@ backend 这一侧实现 + 4 个测试都到位了。但 iOS 那一侧几次想�
 - [x] `SpeechSessionMiddleware` 不再为 `client.asr.transcription` 触发 `sendSpeechBoundary`
 - [x] 回归测试 `serverASRFromTransportDoesNotResendSpeechBoundary`
 - [x] 文档 `docs/13_ClientASR集成与使用指南.md` 更新为 "B14 后此协议已废弃"
-- [ ] 加 turn_timeout 兜底（provider 60s 响应窗口）
+- [x] B15 70s `turn_timeout` 兜底（`user.speech.end` 之后等 `ai.turn.end`）
+- [x] I20 T-I20-1 录音 60s → `client.turn.abort`（维护合同见 `docs/24_voice_turn_timeout_contingency.md`）
 - [ ] 增加音频 decoder 延时指标的 unit test
 
 ### Backend
@@ -276,7 +277,7 @@ backend 这一侧实现 + 4 个测试都到位了。但 iOS 那一侧几次想�
 
 - [x] 本文（`docs/20_I20_voice_turn_boundary_pitfalls.md`）
 - [x] `docs/13_ClientASR集成与使用指南.md`（顶部加 "B14 已废弃" 标注）
-- [ ] `docs/24_voice_turn_timeout_contingency.md`（next batch）
+- [x] `docs/24_voice_turn_timeout_contingency.md`（B15 + I20 双超时路径）
 
 ---
 

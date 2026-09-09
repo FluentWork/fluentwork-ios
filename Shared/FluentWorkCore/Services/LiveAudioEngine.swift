@@ -41,11 +41,16 @@ struct AudioSpeechActivityTracker: Sendable {
         return .speechEnded
     }
 
-    mutating func reset() -> AudioEngineEvent? {
+        mutating func reset() -> AudioEngineEvent? {
         let wasActive = isSpeechActive
+        discard()
+        return wasActive ? .speechEnded : nil
+    }
+
+    /// Clear in-progress speech without emitting `.speechEnded`.
+    mutating func discard() {
         isSpeechActive = false
         lastSpeechAt = nil
-        return wasActive ? .speechEnded : nil
     }
 }
 
@@ -289,6 +294,10 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         if playerAttached {
             playerNode.stop()
         }
+    }
+
+    public func discardActiveSpeech() async {
+        speechTracker.discard()
     }
 
     /// Snapshot of the last `interruptNow()` instant for barge-in latency tests.

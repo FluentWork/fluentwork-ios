@@ -21,6 +21,15 @@ public enum WSControlFrame: Equatable, Sendable {
     case sessionStart(SessionStartPayload)
     case userSpeechStart
     case userSpeechEnd(text: String?, turnID: String?)
+    /// I20 T-I20-1: client → gateway abort of an in-progress **recording** turn.
+    ///
+    /// Distinct from B15. B15's 70s cap (and `ai.turn.end outcome=timeout`) fire
+    /// **after** `user.speech.end`, while waiting for collectTurn, and kill the
+    /// session via `.failed("turn_timeout")`. This frame fires **during**
+    /// `.recording` (no `user.speech.end` yet), keeps the session alive, and
+    /// must not start collectTurn. `session_id` is connection-scoped and omitted
+    /// — same as `user.speech.end`.
+    case clientTurnAbort(turnID: String?, outcome: String)
     /// B14: server → client ASR transcription relayed from the voice provider
     /// (e.g., Volcengine Duplex). This is the authoritative transcript for the
     /// current user turn, consistent with what the AI model heard.
@@ -158,6 +167,12 @@ extension WSControlFrame: Codable {
                 turnID: try container.decodeIfPresent(String.self, forKey: .turnID)
             )
 
+        case "client.turn.abort":
+            self = .clientTurnAbort(
+                turnID: try container.decodeIfPresent(String.self, forKey: .turnID),
+                outcome: try container.decode(String.self, forKey: .outcome)
+            )
+
         case "client.asr.transcription":
             self = .clientASRTranscription(
                 text: try container.decode(String.self, forKey: .text),
@@ -257,6 +272,11 @@ extension WSControlFrame: Codable {
             try container.encode("user.speech.end", forKey: .type)
             try container.encodeIfPresent(text, forKey: .text)
             try container.encodeIfPresent(turnID, forKey: .turnID)
+
+        case let .clientTurnAbort(turnID, outcome):
+            try container.encode("client.turn.abort", forKey: .type)
+            try container.encodeIfPresent(turnID, forKey: .turnID)
+            try container.encode(outcome, forKey: .outcome)
 
         case let .clientASRTranscription(text, turnID):
             try container.encode("client.asr.transcription", forKey: .type)

@@ -88,6 +88,8 @@ private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unche
         await state.recordBoundary(started, turnID: turnID)
     }
 
+    func sendTurnAbort(turnID: String, outcome: String) async throws {}
+
     func sendAudioPCM(_ data: Data) async throws {
         if let sendAudioError {
             throw sendAudioError
@@ -203,6 +205,8 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
         await state.recordInterrupt()
     }
 
+    func discardActiveSpeech() async {}
+
     func emit(_ event: AudioEngineEvent) {
         continuation.yield(event)
     }
@@ -238,6 +242,8 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     func play(frame: WSAudioFrame) async {}
 
     func interruptNow() async {}
+
+    func discardActiveSpeech() async {}
 }
 
 @Test func applySessionConnectingResetsBadgeAndTranscript() throws {
