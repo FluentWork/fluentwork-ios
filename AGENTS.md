@@ -38,6 +38,25 @@ Shared topics:
 5. Do not perform destructive git operations without explicit approval.
 6. Call out any impact on state, audio, or release behavior.
 7. After each completed ticket whose code gate passes, write a numbered implementation note under `docs/` and commit it together with the code and tests.
+8. A reported defect is not fixed until a test that reproduces it exists — see Defect Fix Discipline.
+
+## Defect Fix Discipline
+
+Source of truth: `fluentwork-meta/agents/shared/defect-fix-discipline.md`.
+
+**Every fix for a reported problem starts with a failing test that reproduces it.**
+
+1. Write the test first. It must fail on the current code.
+2. Run it. Confirm it fails, and that the failure points at the real cause. A test that passes on the first run means the problem is not reproduced — go back, or admit the diagnosis was wrong.
+3. Only then change the code, and only until the test passes.
+4. Run the full gate (`swift test` plus the Debug build).
+5. Keep the test. It is the guard for that defect; do not delete it once it goes green.
+
+Reproduce with local doubles rather than the device: `InMemorySocketTransport`, `StubAudioEngine`, `StubSpeechSessionClient`, `FixedClock`. "It needs real hardware" is rarely true for the mechanism — it is usually true only for the final confirmation.
+
+Three exceptions, each of which must be stated in the implementation note: new capability (no failing state exists — pin the expected behaviour instead), device-only (reproduce with a double, then confirm on device), genuinely not automatable (write the manual steps and the expected log lines). "Cannot test" is not an acceptable omission.
+
+The implementation note's test section must quote the **actual pre-fix failure output**, not a paraphrase of it.
 
 ## High-Risk Paths
 
