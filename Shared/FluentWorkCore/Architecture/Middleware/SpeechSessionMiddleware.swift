@@ -369,6 +369,16 @@ private func interpretSpeechSessionSideEffect(
                         return nil
                     }
 
+                    // The one event that can leave `.connecting`. Marked
+                    // separately from everything else because a room stuck on
+                    // 「连接中」 has exactly two explanations — the consumer was
+                    // not running when this was emitted, or it was running and
+                    // the event went somewhere else — and this line is what
+                    // tells them apart.
+                    if case .stateChanged(.connected) = event {
+                        timings.mark(event: "transport_consumer_saw_connected")
+                    }
+
                     // B14 debug: log all incoming transport control events to diagnose
                     // missing feedback.badge frames. Remove after root cause is confirmed.
                     #if DEBUG
@@ -631,11 +641,18 @@ private func interpretSpeechSessionSideEffect(
                         await dispatchBox.dispatch(.speakingRoom(action))
                     }
                 }
-                // Reached only when the stream itself ends (the transport
-                // finishing its continuation) — a cancellation returns from
-                // inside the loop, above. So this marks "the consumer stopped
-                // for a reason that is not a cancellation".
-                timings.mark(event: "transport_consumer_stream_ended")
+                // The loop exits for two very different reasons and this mark
+                // has to say which. `for await` on a cancelled task returns nil
+                // and ends the loop *normally* — it does not re-enter the body,
+                // so the check inside cannot catch it. Reading `isCancelled`
+                // here is what separates "cancelled" from "the transport's
+                // stream is finished and can never yield again": the first is a
+                // stale cancellation, the second means the transport object is
+                // gone, and they need opposite fixes. Anything else is a guess.
+                timings.mark(
+                    event: "transport_consumer_exit",
+                    properties: ["cancelled": Task.isCancelled ? "true" : "false"]
+                )
                 return nil
             },
             .task(id: SpeechSessionTaskID.audioEngineEvents) {
