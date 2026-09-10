@@ -68,10 +68,22 @@ public enum SpeechSessionMachine {
             state.processingSubStage = nil
 
         case (.waitingForEvaluation, .evaluationTimedOut):
-            // Badge never arrived. Keep the session; leftover TTS is dropped.
+            // Badge never arrived. Keep the session; end the turn.
+            //
+            // No `.stopPlayback` here. "Leftover TTS is dropped" was the old
+            // reasoning, and it assumed the audio had finished — but the timer
+            // and the audio are unrelated clocks. Speech arrives as one burst at
+            // turn end and takes as long to play as the reply is long, while
+            // `evaluationWait` is a fixed 20s, so every reply longer than that
+            // lost its tail: measured on device, 276 frames (27.6s of audio)
+            // delivered in 88ms and playback stopped 20.6s later.
+            //
+            // Nothing needs the timer for silence. A badge that arrives in time
+            // lands in this same phase without stopping playback, and barge-in
+            // stops it on both paths that mean it — from `.aiSpeaking` and from
+            // this phase, both via `vadSpeechStart` / `holdStart`.
             state.phase = .waitingUser
             state.processingSubStage = nil
-            effects.append(.stopPlayback)
 
         case (.aiSpeaking, .vadSpeechStart), (.aiSpeaking, .holdStart):
             state.phase = .recording

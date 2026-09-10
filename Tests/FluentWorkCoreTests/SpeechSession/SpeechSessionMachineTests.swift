@@ -38,6 +38,28 @@ import Testing
     #expect(effects.contains(.trackTransition(from: .aiSpeaking, to: .waitingUser)))
 }
 
+/// The evaluation timer exists to stop a late badge from stranding the turn. It
+/// says nothing about the audio, and the two run on unrelated clocks: assistant
+/// speech arrives as one burst at turn end and takes as long to play as the
+/// reply is long, while `evaluationWait` is a fixed 20s.
+///
+/// Ending the turn on that timer cut the tail off every reply longer than 20s.
+/// Measured on a physical device: 276 frames (27.6s of audio) delivered in 88ms,
+/// playback stopped 20.6s later — the 20s evaluation timeout, to the decimal.
+///
+/// The sibling branch proves which one is the odd one out: a badge that arrives
+/// in time (`evaluationReceived`) lands in the same phase *without* stopping
+/// playback. And barge-in stops it on both paths that mean it — `vadSpeechStart`
+/// / `holdStart` from this phase, and from `aiSpeaking` — so silence never
+/// depended on the timer.
+@Test func evaluationTimeoutEndsTheTurnWithoutCuttingPlayback() {
+    var state = SpeechSessionState(phase: .waitingForEvaluation)
+    let effects = SpeechSessionMachine.reduce(&state, event: .evaluationTimedOut)
+
+    #expect(state.phase == .waitingUser)
+    #expect(effects.contains(.stopPlayback) == false)
+}
+
 @Test func vadDuringAISpeakingTriggersInterruptSideEffects() {
     var state = SpeechSessionState(phase: .aiSpeaking)
     let effects = SpeechSessionMachine.reduce(&state, event: .vadSpeechStart)
@@ -503,9 +525,16 @@ import Testing
     let effects = SpeechSessionMachine.reduce(&state, event: .evaluationTimedOut)
     #expect(state.phase == .waitingUser)
     #expect(state.failureReason == nil)
-    #expect(effects.contains(.stopPlayback))
     #expect(effects.contains(.trackTransition(from: .waitingForEvaluation, to: .waitingUser)))
     #expect(!effects.contains(.endSession))
+
+    // This used to assert `.stopPlayback`, under the reasoning that "leftover
+    // TTS is dropped" once the badge is late. That contract does not hold: the
+    // timer is a fixed 20s and the audio is as long as the reply, so the
+    // "leftover" was un-played speech — measured on device, 276 frames (27.6s)
+    // delivered in 88ms and playback killed 20.6s later.
+    // See `evaluationTimeoutEndsTheTurnWithoutCuttingPlayback`.
+    #expect(effects.contains(.stopPlayback) == false)
 }
 
 @Test func evaluationTimedOutFromWaitingUserIsNoOp() {
