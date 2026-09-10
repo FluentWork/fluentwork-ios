@@ -347,8 +347,27 @@ private func interpretSpeechSessionSideEffect(
                 return nil
             },
             .task(id: SpeechSessionTaskID.transportEvents) {
+                // A session that never leaves `.connecting` has exactly one
+                // place to look: this loop. The transport emits `.connected`
+                // locally the moment the auth frame is sent, so if the machine
+                // stayed in `.connecting` the event was either never seen here
+                // or dropped by the cancellation check below — and until now
+                // neither left a trace.
+                timings.mark(event: "transport_consumer_start")
                 for await event in speechClient.transportEvents() {
-                    if Task.isCancelled { return nil }
+                    // Checked *after* `for await` has already taken the event, so
+                    // this branch discards a delivered event. That is the shape
+                    // of a lost `.connected`: a stale cancellation lands as the
+                    // session is starting, and the first event of the new
+                    // session — the only one that can leave `.connecting` — is
+                    // thrown away in silence. Record it instead.
+                    if Task.isCancelled {
+                        timings.mark(
+                            event: "transport_consumer_cancelled_with_event",
+                            properties: ["dropped": describeTransportEvent(event)]
+                        )
+                        return nil
+                    }
 
                     // B14 debug: log all incoming transport control events to diagnose
                     // missing feedback.badge frames. Remove after root cause is confirmed.
@@ -612,6 +631,11 @@ private func interpretSpeechSessionSideEffect(
                         await dispatchBox.dispatch(.speakingRoom(action))
                     }
                 }
+                // Reached only when the stream itself ends (the transport
+                // finishing its continuation) — a cancellation returns from
+                // inside the loop, above. So this marks "the consumer stopped
+                // for a reason that is not a cancellation".
+                timings.mark(event: "transport_consumer_stream_ended")
                 return nil
             },
             .task(id: SpeechSessionTaskID.audioEngineEvents) {
@@ -934,6 +958,23 @@ private func processingTimeoutEffects(
 /// on 「连接中」 indefinitely — no timeout, no error, and no way forward but
 /// backing out of the screen. Failing is the honest outcome: the user gets a
 /// retryable message instead of a screen that never moves.
+/// Names a transport event for the tracker. Only the two that can strand
+/// `.connecting` need names — everything else is already visible through the
+/// events it produces downstream.
+private func describeTransportEvent(_ event: SocketTransportEvent) -> String {
+    switch event {
+    case .stateChanged(.connected): return "stateChanged.connected"
+    case .stateChanged(.connecting): return "stateChanged.connecting"
+    case .stateChanged(.reconnecting): return "stateChanged.reconnecting"
+    case .stateChanged(.disconnected): return "stateChanged.disconnected"
+    case .stateChanged(.idle): return "stateChanged.idle"
+    case .control: return "control"
+    case .audio: return "audio"
+    case .diagnostic: return "diagnostic"
+    case .failure: return "failure"
+    }
+}
+
 private func scheduleConnectWaitTask(timeouts: ProcessingTimeouts) -> Effect<AppAction> {
     .task(id: SpeechSessionTaskID.connectTimeout) {
         try? await Task.sleep(for: timeouts.connectWait)

@@ -534,7 +534,13 @@ public extension Container {
     /// and observe an overrun in milliseconds. Waiting out the real 15s ASR
     /// budget in `swift test` is why the overrun path had no coverage.
     var processingTimeouts: Factory<ProcessingTimeouts> {
-        self { .standard }.singleton
+        // Deliberately **not** `.singleton`. This is a stateless value type, so
+        // caching buys nothing — but it does make the registration sticky
+        // process-wide, and a test that injects a short budget to exercise a
+        // timeout then leaks it into every test running concurrently. Measured:
+        // an 80ms `connectWait` in one test failed two others ~half the time,
+        // with nothing in either test to suggest why.
+        self { .standard }
     }
 
     var idGenerator: Factory<IDGeneratorProtocol> {
