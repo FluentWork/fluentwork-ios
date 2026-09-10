@@ -99,6 +99,41 @@ import Testing
     }
 }
 
+/// `stopCapture()` runs on `endSession`, which tears down the engine the player
+/// node is attached to — but the socket still holds assistant audio in flight,
+/// and cancelling the transport task is not instant. Those frames must not reach
+/// `play()`: with the node detached and the engine stopped, `play()` raises an
+/// uncaught `NSException` ("player started when in a disconnected state") and
+/// terminates the app. Capture and playback share one graph, so ending the
+/// session has to retire both.
+@available(iOS 17, macOS 14, *)
+@Test func liveAudioEngineRetiresPlaybackWhenCaptureStops() async {
+    let decoder = CapturingFrameDecoder(log: CallLog(), samplesPerFrame: 4)
+    let engine = LiveAudioEngine(decoder: decoder)
+    let stream = engine.events()
+
+    // Live session: playback works.
+    await engine.play(frame: WSAudioFrame(sequence: 1, opusPayload: Data(repeating: 0x01, count: 8)))
+    #expect(await engine._testPlaybackStarted() == true)
+
+    // Session ends; a frame that was already in flight arrives afterwards.
+    await engine.stopCapture()
+    await engine.play(frame: WSAudioFrame(sequence: 2, opusPayload: Data(repeating: 0x02, count: 8)))
+
+    #expect(
+        await engine._testPlaybackStarted() == false,
+        "a frame that outlives its session must not start a node whose graph is gone"
+    )
+
+    let failure = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        if case .failed = event { return event } else { return nil }
+    }
+    guard case .failed = failure else {
+        Issue.record("expected the retired frame to surface as .failed, got \(String(describing: failure))")
+        return
+    }
+}
+
 /// `setSpeechBoundaryMode` owns the tracker's configuration, and `startCapture()`
 /// runs immediately after it to begin the session. Rebuilding the tracker there
 /// with a bare `AudioSpeechActivityTracker()` restored the auto-VAD defaults, so

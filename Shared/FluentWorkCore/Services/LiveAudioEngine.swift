@@ -166,6 +166,20 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     private let playerNode = AVAudioPlayerNode()
     private var playerAttached = false
 
+    /// Set when `stopCapture()` tears the audio graph down.
+    ///
+    /// Capture and playback share one `AVAudioEngine`, so ending a session
+    /// retires **both** directions — the player node goes down with the graph.
+    /// Retiring it is not bookkeeping: `AVAudioPlayerNode.play()` on a node
+    /// whose engine has been torn down raises an uncaught `NSException`
+    /// ("player started when in a disconnected state"). It does not throw, so
+    /// there is no error to catch and no state to inspect — refusing the frame
+    /// is the only safe answer.
+    ///
+    /// Defaults to `false`: a freshly built engine can play, and a session that
+    /// never called `stopCapture()` behaves exactly as before.
+    private var playbackRetired = false
+
     // Barge-in timing — captured at the moment `interruptNow()` is requested so
     // tests can assert the local-silence budget (≤ 200 ms) without depending on
     // hardware audio output.
@@ -287,6 +301,10 @@ public actor LiveAudioEngine: AudioEngineProtocol {
                 )
             }
         }
+        // The engine is up, so the playback direction is usable again. Only
+        // cleared once the start succeeded — a session that failed to come up
+        // must not advertise a graph it does not have.
+        playbackRetired = false
         startInterruptionObservation()
     }
 
@@ -331,9 +349,17 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             engine.inputNode.removeTap(onBus: 0)
         }
         // Also stop any in-flight AI playback so a session end always leaves
-        // the engine silent on both directions.
+        // the engine silent on both directions, and detach the node so the next
+        // session re-attaches it against a graph that actually exists.
+        //
+        // Leaving it attached is what makes the *next* `play()` dangerous: the
+        // graph below is about to be torn down, and `playerAttached` would go on
+        // claiming the node is fine. See `playbackRetired`.
+        playbackRetired = true
         if playerAttached {
             playerNode.stop()
+            engine.detach(playerNode)
+            playerAttached = false
         }
         if engine.isRunning {
             engine.stop()
@@ -361,6 +387,16 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     }
 
     public func play(frame: WSAudioFrame) async {
+        // Checked before anything else: after `stopCapture()` the frame has
+        // nowhere to go, and every path below ends in a `play()` that raises
+        // rather than returns. `endSession` cancels the transport task that
+        // feeds this, but cancellation is not instant — the socket still holds
+        // frames in flight, and the first one to land here used to take the
+        // process down.
+        guard !playbackRetired else {
+            continuation.yield(.failed("playback retired; dropped audio frame"))
+            return
+        }
         guard playbackGate.shouldAccept(frame) else { return }
 
         let pcm: Data
@@ -423,6 +459,16 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         }
         guard engine.isRunning else {
             continuation.yield(.failed("playback engine is not running; dropped frame"))
+            return false
+        }
+        // `playerAttached` is this actor's cached belief; `playerNode.engine` is
+        // what AVFoundation will actually consult. They disagree exactly when
+        // the graph was torn down underneath us — deactivating the audio session
+        // does that — and "disconnected state" in the raised exception is this
+        // condition, not the engine's run state.
+        guard playerNode.engine === engine else {
+            continuation.yield(.failed("playback node is detached from the engine; dropped frame"))
+            playerAttached = false
             return false
         }
         if !playerNode.isPlaying {
