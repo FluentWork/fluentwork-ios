@@ -97,8 +97,27 @@ xcodebuild -project FluentWorkHost.xcodeproj -scheme FluentWorkHost \
 |---|---|---|
 | `transportReaderIsBuiltOncePerStoreNotOncePerSession` | 读者属于连接，一个 store 只建一次；重进必须还能连上 | `Caught error: TimeoutError()`（第二个会话到不了 `.aiSpeaking`） |
 
-## 8. 本票不做
+## 8. 音频引擎那条消费者：同一形状，第二半（本票已做）
 
-- **不动音频引擎那条消费者**：`.task(id: audioEngineEvents)` 是**同样的形状**，但它的状态（`pcmBuffer`、`speechCaptureGate`）**确实是会话级**的。它也需要重新划边界，但和读者不是同一刀 —— 见 meta `77_` F21 备注。
+第一版把这条留在"不做"里，理由是"它的状态是会话级的"。**真机立刻证明这个理由不成立** —— 重进修好之后（45ms 连上），点「开始说话」**没有任何反应**：
+
+```
+transport_consumer_saw_connected   total_ms 45.219
+connecting → aiSpeaking            total_ms 45.753    ← 传输泵修好了
+session.ready → ai.turn.end → waitingUser
+   ⋯⋯ 30 秒什么都没有 ⋯⋯                              ← 点「开始说话」之后
+```
+
+点「开始说话」直接调 `audioEngine.beginManualSpeech()`，引擎把 `.speechStarted` 发进流里 —— **但没人读**。机器停在 `waitingUser`，界面看起来就是"按钮坏了"。
+
+**"状态是会话级的"这个理由错在哪**：`pcmBuffer` / `isCapturingSpeech` 确实是会话级**语义**，但它们**恰好是安全的**跨会话残留 —— `.speechStarted` 里先 `pcmBuffer.removeAll()` 再 `speechCaptureGate.beginSpeech()`，顺序保证上一会话的 PCM 到不了线路。**语义是会话级的，不代表持有它的那个循环必须是会话级的。**
+
+修法与传输泵完全一致：`audioEventPump`，与 `transportEventPump` 一起在"第一次要会话"时启动，store 级、永不取消。
+
+| 测试 | 守住的不变量 | 改动前 |
+|---|---|---|
+| `audioReaderSurvivesSessionEnd` | 重进之后点「开始说话」必须能进入 `.recording` | `Caught error: TimeoutError()` |
+
+## 9. 本票不做
 - **不加重连**：`receive()` 出错即终结，需要重建 task。目前由 `connect()` 重建，未验证重连路径。
 - **不设 `maximumMessageSize`**：我们的帧是 3.2 KB，未触发；研究提示这是常见坑，已记录。
