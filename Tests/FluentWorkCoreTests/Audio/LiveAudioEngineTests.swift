@@ -108,6 +108,33 @@ import Testing
     #expect(tracker.forceEnd() == nil)
 }
 
+/// The boundary mode owns both the auto-start flag and the endpointing hold,
+/// so a mode switch has to move them together. Tap-to-start in particular must
+/// not inherit the auto-VAD hold, which submits a turn the moment the speaker
+/// pauses to think.
+@Test func liveAudioEngineSpeechBoundaryModeConfiguresTracker() async {
+    let engine = LiveAudioEngine(
+        sessionManager: ThrowingAudioSessionManager(),
+        decoder: RawPCM16FrameDecoder(),
+        requestMicrophonePermission: { true }
+    )
+
+    await engine.setSpeechBoundaryMode(.tapToStart)
+    let tapToStart = await engine._testSpeechTracker()
+    #expect(tapToStart.autoStart == false)
+    #expect(tapToStart.silenceHold == AudioSpeechActivityTracker.tapToStartSilenceHold)
+
+    await engine.setSpeechBoundaryMode(.autoVAD)
+    let autoVAD = await engine._testSpeechTracker()
+    #expect(autoVAD.autoStart == true)
+    #expect(autoVAD.silenceHold == AudioSpeechActivityTracker.autoVADSilenceHold)
+
+    // Legacy tap-to-talk consults neither energy flag.
+    await engine.setSpeechBoundaryMode(.manual)
+    let manual = await engine._testSpeechTracker()
+    #expect(manual.autoStart == false)
+}
+
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineStartCaptureConfiguresFullDuplexAndPropagatesSessionError() async {
     let sessionManager = ThrowingAudioSessionManager()

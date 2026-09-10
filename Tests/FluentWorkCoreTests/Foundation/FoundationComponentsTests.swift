@@ -66,6 +66,39 @@ import TGReduxKitTesting
     #expect(tracker.register(energy: 0.0, at: start + .milliseconds(1600)) == .speechEnded)
 }
 
+/// Tap-to-start must tolerate a speaker pausing to think. The 1.5s auto-VAD
+/// hold cut learners off mid-sentence: a turn that should run 20s was being
+/// submitted after 2s because the user paused to find a word.
+@available(iOS 17, macOS 14, *)
+@Test func audioSpeechActivityTrackerTapToStartToleratesAThinkingPause() {
+    var tracker = AudioSpeechActivityTracker(
+        silenceHold: AudioSpeechActivityTracker.tapToStartSilenceHold,
+        autoStart: false
+    )
+    let clock = ContinuousClock()
+    let start = clock.now
+
+    #expect(tracker.forceStart() == .speechStarted)
+    #expect(tracker.register(energy: 0.02, at: start) == nil)
+
+    // The auto-VAD hold would already have submitted here.
+    #expect(tracker.register(energy: 0.0, at: start + .milliseconds(1600)) == nil)
+    #expect(tracker.register(energy: 0.0, at: start + .milliseconds(3000)) == nil)
+    #expect(tracker.isSpeechActive)
+
+    // Only a genuinely settled silence closes the turn.
+    #expect(tracker.register(energy: 0.0, at: start + .milliseconds(4200)) == .speechEnded)
+}
+
+/// The hold is a property of the mode, not a single global.
+@available(iOS 17, macOS 14, *)
+@Test func tapToStartSilenceHoldOutlastsAutoVADHold() {
+    #expect(
+        AudioSpeechActivityTracker.tapToStartSilenceHold
+            > AudioSpeechActivityTracker.autoVADSilenceHold
+    )
+}
+
 /// A tap followed by silence must not submit an empty turn: `lastSpeechAt`
 /// stays nil until the user actually speaks, so the turn falls through to the
 /// 60s recording abort instead of ending with nothing in it.

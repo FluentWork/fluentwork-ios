@@ -12,10 +12,20 @@ public enum AudioEngineError: Error {
 }
 
 struct AudioSpeechActivityTracker: Sendable {
+    /// Endpointing hold for auto-VAD. Nobody taps in that mode, so silence is
+    /// the only signal and a short hold is what keeps turn-taking responsive.
+    static let autoVADSilenceHold: Duration = .milliseconds(1500)
+    /// Endpointing hold for tap-to-start. Deliberately much longer: the user
+    /// opened the turn on purpose and is usually mid-thought, and a learner
+    /// pausing to find a word routinely exceeds the auto-VAD hold. A 1.5s hold
+    /// cut turns off mid-sentence, so the auto-submit is a fallback here rather
+    /// than the expected way to finish — 「说完了」 is always available.
+    static let tapToStartSilenceHold: Duration = .milliseconds(4000)
+
     private(set) var isSpeechActive = false
     private(set) var lastSpeechAt: ContinuousClock.Instant?
     let speechThreshold: Float
-    let silenceHold: Duration
+    var silenceHold: Duration
     /// When false an utterance can only begin via `forceStart()`; energy is
     /// still what closes it. This is the tap-to-start mode: the tap opens the
     /// turn, a stable silence submits it, so a turn costs one gesture instead
@@ -24,7 +34,7 @@ struct AudioSpeechActivityTracker: Sendable {
 
     init(
         speechThreshold: Float = 0.015,
-        silenceHold: Duration = .milliseconds(1500),
+        silenceHold: Duration = AudioSpeechActivityTracker.autoVADSilenceHold,
         autoStart: Bool = true
     ) {
         self.speechThreshold = speechThreshold
@@ -361,6 +371,12 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     public func setSpeechBoundaryMode(_ mode: SpeechBoundaryMode) async {
         speechBoundaryMode = mode
         speechTracker.autoStart = (mode == .autoVAD)
+        // The endpointing hold belongs to the mode: tap-to-start has to tolerate
+        // a speaker pausing to think, auto-VAD does not.
+        speechTracker.silenceHold =
+            mode == .tapToStart
+            ? AudioSpeechActivityTracker.tapToStartSilenceHold
+            : AudioSpeechActivityTracker.autoVADSilenceHold
         speechTracker.discard()
     }
 
@@ -469,6 +485,13 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         let audioBuffer = output.audioBufferList.pointee.mBuffers
         guard let bytes = audioBuffer.mData else { return nil }
         return Data(bytes: bytes, count: Int(audioBuffer.mDataByteSize))
+    }
+
+    /// Test-only hook exposing the tracker a mode switch configured. The
+    /// endpointing hold and auto-start both come from the mode, so a unit test
+    /// has to read them through the same path `setSpeechBoundaryMode` writes.
+    func _testSpeechTracker() -> AudioSpeechActivityTracker {
+        speechTracker
     }
 
     /// Test-only hook exercising `convertToPCM16` for the supplied input
