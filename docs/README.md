@@ -60,7 +60,8 @@
 35. `36_sync_lock_boxes.md` — `OSAllocatedUnfairLock` 同步盒子；按真实双写路径覆盖并发
 36. `37_wait_phase_watchdog_and_failure_matrix.md` — abort 落点语义、评价 20s watchdog、重连丢 turn、路由重配
 37. `38_wait_phase_update_analysis.md` — 本次收口的问题分析与图例（评审误判、死边、重连、badge 误清）
-38. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
+38. `39_真机联调_I20_B15.md` — 回家 192.168 真机联调（iOS 侧）；完整清单在 backend `docs/41`
+39. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
 
 ---
 
