@@ -21,6 +21,15 @@ public enum SpeechSessionTaskID {
     public static let processingReviewTimeout: CancellationID = "speechSession.processingReviewTimeout"
     /// Wait for `feedback.badge` after `ai.turn.end`. Distinct from B15 70s.
     public static let evaluationTimeout: CancellationID = "speechSession.evaluationTimeout"
+    /// Wait for `.socketReady` after entering `.connecting`.
+    ///
+    /// Every session starts in `.connecting` and nothing else bounded it: the
+    /// ASR / LLM / review / evaluation / recording / reconnect / turn timers all
+    /// begin later. A connect that never delivered `.socketReady` — the
+    /// transport emitted nothing, the handshake stalled, a race ate the event —
+    /// left the room showing 「连接中」 with no timeout, no error and no way
+    /// forward but backing out of the screen.
+    public static let connectTimeout: CancellationID = "speechSession.connectTimeout"
 }
 
 /// I20 T-I20-1: max time in `.recording` before `client.turn.abort`.
@@ -908,7 +917,29 @@ private func processingTimeoutEffects(
         effects.append(.cancel(id: SpeechSessionTaskID.evaluationTimeout))
     }
 
+    if previousPhase != .connecting, newPhase == .connecting {
+        effects.append(scheduleConnectWaitTask(timeouts: timeouts))
+    }
+
+    if previousPhase == .connecting, newPhase != .connecting {
+        effects.append(.cancel(id: SpeechSessionTaskID.connectTimeout))
+    }
+
     return effects
+}
+
+/// Bounds the very first phase of a session.
+///
+/// Nothing else did. A connect that never produced `.socketReady` left the room
+/// on 「连接中」 indefinitely — no timeout, no error, and no way forward but
+/// backing out of the screen. Failing is the honest outcome: the user gets a
+/// retryable message instead of a screen that never moves.
+private func scheduleConnectWaitTask(timeouts: ProcessingTimeouts) -> Effect<AppAction> {
+    .task(id: SpeechSessionTaskID.connectTimeout) {
+        try? await Task.sleep(for: timeouts.connectWait)
+        guard !Task.isCancelled else { return nil }
+        return .speakingRoom(.session(.failed("连接超时，请重试")))
+    }
 }
 
 /// Counts TTS binary frames between `ai.tts.start` and `ai.tts.end` so we can
@@ -1051,6 +1082,7 @@ private func cancelProcessingTimeoutTasks(includeTotalCap: Bool) -> Effect<AppAc
         .cancel(id: SpeechSessionTaskID.processingASRTimeout),
         .cancel(id: SpeechSessionTaskID.processingLLMTimeout),
         .cancel(id: SpeechSessionTaskID.processingReviewTimeout),
+        .cancel(id: SpeechSessionTaskID.connectTimeout),
     ]
     if includeTotalCap {
         effects.append(.cancel(id: SpeechSessionTaskID.turnTimeout))

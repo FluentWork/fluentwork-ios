@@ -559,6 +559,39 @@ struct SpeechSessionMiddlewareB14Tests {
     ///
     /// The budget is injected so the overrun is observable in milliseconds; the
     /// real 15s is why this path had no coverage at all.
+    /// Every session begins in `.connecting`, and nothing bounded it. The ASR /
+    /// LLM / review / evaluation / recording / reconnect / turn timers all start
+    /// later, so a connect that never delivered `.socketReady` — the transport
+    /// emitted nothing, the handshake stalled, a race ate the event — left the
+    /// room showing 「连接中」 with no timeout, no error, and no way forward but
+    /// backing out of the screen.
+    @MainActor
+    @Test func connectingPhaseTimesOutInsteadOfStrandingTheRoom() async throws {
+        let container = Container()
+        container.reset()
+        container.processingTimeouts.register {
+            ProcessingTimeouts(connectWait: .milliseconds(80))
+        }
+        defer {
+            // `processingTimeouts` is a `.singleton`. Leaving an 80ms connect
+            // budget registered hands the next test a room that fails to
+            // connect before it dispatches `.socketReady` — and nothing in that
+            // test says why. Restore the real budget on the way out.
+            container.processingTimeouts.register { .standard }
+        }
+        container.audioEngine.register { StubAudioEngineForMiddleware() }
+        container.speechSessionClient.register { StubSpeechSessionClientForMiddleware() }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+
+        // The stub transport never produces `.socketReady`. Without a watchdog
+        // this is where the room stays.
+        try await waitForPhase(store, phase: .failed, timeout: 2_000_000_000)
+        #expect(store.state.speakingRoom.failureReason != nil)
+    }
+
     @MainActor
     @Test func processingSubStageTimeoutDoesNotFailTheSession() async throws {
         let container = Container()
