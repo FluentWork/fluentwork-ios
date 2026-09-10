@@ -86,8 +86,18 @@ import TGReduxKitTesting
     #expect(tracker.register(energy: 0.0, at: start + .milliseconds(3000)) == nil)
     #expect(tracker.isSpeechActive)
 
+    // Derived from the constant rather than written out: the assertion is
+    // "a pause just short of the hold does not submit", which is what the mode
+    // promises. A literal here only restates whatever the hold happens to be.
+    let nearlySettled = AudioSpeechActivityTracker.tapToStartSilenceHold * 3 / 4
+    #expect(tracker.register(energy: 0.0, at: start + nearlySettled) == nil)
+    #expect(tracker.isSpeechActive)
+
     // Only a genuinely settled silence closes the turn.
-    #expect(tracker.register(energy: 0.0, at: start + .milliseconds(4200)) == .speechEnded)
+    #expect(
+        tracker.register(energy: 0.0, at: start + AudioSpeechActivityTracker.tapToStartSilenceHold)
+            == .speechEnded
+    )
 }
 
 /// The hold is a property of the mode, not a single global.

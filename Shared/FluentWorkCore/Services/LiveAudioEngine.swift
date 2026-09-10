@@ -20,7 +20,12 @@ struct AudioSpeechActivityTracker: Sendable {
     /// pausing to find a word routinely exceeds the auto-VAD hold. A 1.5s hold
     /// cut turns off mid-sentence, so the auto-submit is a fallback here rather
     /// than the expected way to finish — 「说完了」 is always available.
-    static let tapToStartSilenceHold: Duration = .milliseconds(4000)
+    ///
+    /// Raised 4s → 8s after the mode fix landed: until then this value never
+    /// reached the audio path (see `forMode`), so the first real tap-to-start
+    /// session was also the first chance to judge the hold, and a pause to
+    /// think still submitted the turn.
+    static let tapToStartSilenceHold: Duration = .milliseconds(8000)
 
     private(set) var isSpeechActive = false
     private(set) var lastSpeechAt: ContinuousClock.Instant?
@@ -86,6 +91,22 @@ struct AudioSpeechActivityTracker: Sendable {
         isSpeechActive = false
         lastSpeechAt = nil
     }
+
+    /// The tracker a boundary mode implies.
+    ///
+    /// One source of truth for the mode → (`autoStart`, `silenceHold`) mapping.
+    /// It used to live inline in `setSpeechBoundaryMode` while every other site
+    /// built trackers from the initializer defaults, and the two disagreed:
+    /// `startCapture()` runs immediately after the mode is set and rebuilt a
+    /// fresh tracker for the session, handing the audio path the auto-VAD
+    /// defaults — energy free to open a turn, 1.5s of silence able to close one
+    /// — whichever mode the session had actually asked for.
+    static func forMode(_ mode: SpeechBoundaryMode) -> AudioSpeechActivityTracker {
+        AudioSpeechActivityTracker(
+            silenceHold: mode == .tapToStart ? tapToStartSilenceHold : autoVADSilenceHold,
+            autoStart: mode == .autoVAD
+        )
+    }
 }
 
 struct AudioPlaybackGate: Sendable {
@@ -131,7 +152,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     private var converter: AVAudioConverter?
     private var sourceFormat: AVAudioFormat?
     private var hasInstalledTap = false
-    private var speechTracker = AudioSpeechActivityTracker()
+    private var speechTracker = AudioSpeechActivityTracker.forMode(.manual)
     private var playbackGate = AudioPlaybackGate()
     private var speechBoundaryMode: SpeechBoundaryMode = .manual
     private let clock = ContinuousClock()
@@ -155,6 +176,14 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     private let decoder: any WSAudioFrameDecoder
     private let interruptionObserver: any AudioInterruptionObserving
     private let requestMicrophonePermission: @Sendable () async -> Bool
+    /// How the playback direction brings the shared engine up.
+    ///
+    /// Injectable for the same reason as `requestMicrophonePermission`: the
+    /// branch that matters most is the one a real `AVAudioEngine` on a healthy
+    /// device will not take. Here that branch is "the engine refuses to start",
+    /// and reaching it with the real implementation is not a recoverable error
+    /// — see `startPlaybackIfNeeded()`.
+    private let startEngineForPlayback: @Sendable (AVAudioEngine) throws -> Void
 
     public init(
         sessionManager: any AudioSessionManaging = DefaultAudioSessionManager(),
@@ -162,8 +191,10 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         interruptionObserver: any AudioInterruptionObserving = AudioInterruptionObserver(),
         requestMicrophonePermission: @escaping @Sendable () async -> Bool = {
             await MicrophonePermission.request()
-        }
+        },
+        startEngineForPlayback: @escaping @Sendable (AVAudioEngine) throws -> Void = { try $0.start() }
     ) {
+        self.startEngineForPlayback = startEngineForPlayback
         let pair = AsyncStream.makeStream(
             of: AudioEngineEvent.self,
             bufferingPolicy: .bufferingNewest(64)
@@ -223,7 +254,10 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat)
         self.sourceFormat = inputFormat
         self.converter = converter
-        self.speechTracker = AudioSpeechActivityTracker()
+        // Rebuild from the configured mode, not from the initializer defaults.
+        // A bare `AudioSpeechActivityTracker()` here silently reinstated the
+        // auto-VAD configuration for every session.
+        self.speechTracker = .forMode(speechBoundaryMode)
         self.playbackGate.reset()
         self.hasInstalledTap = false
 
@@ -337,7 +371,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             return
         }
 
-        startPlaybackIfNeeded()
+        guard startPlaybackIfNeeded() else { return }
         guard let buffer = makePCMBuffer(from: pcm) else {
             continuation.yield(.failed("scheduling dropped: PCM length \(pcm.count) not a multiple of 2"))
             return
@@ -364,14 +398,37 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// silent even after the gateway began forwarding the assistant's audio.
     /// `interruptNow()` stops the node for barge-in, so this also has to bring
     /// it back on the next frame.
-    private func startPlaybackIfNeeded() {
+    ///
+    /// Returns whether the node is queued onto a running engine. Every caller
+    /// must treat `false` as "nothing will play" — the reason this returns a
+    /// value instead of being best-effort is the line it guards:
+    ///
+    /// `AVAudioPlayerNode.play()` does not throw. On a stopped engine it raises
+    /// an **uncaught `NSException`** ("player started when in a disconnected
+    /// state") and terminates the app. `try? engine.start()` was exactly the
+    /// wrong shape here — it swallowed the failure that leaves the engine
+    /// stopped, then ran the one call that cannot survive it. That is reachable
+    /// whenever an audio frame outlives the session playing it: `stopCapture()`
+    /// runs on `endSession`, the socket still holds frames in flight, and the
+    /// next one to arrive used to take the process down.
+    private func startPlaybackIfNeeded() -> Bool {
         attachPlayerIfNeeded()
         if !engine.isRunning {
-            try? engine.start()
+            do {
+                try startEngineForPlayback(engine)
+            } catch {
+                continuation.yield(.failed("playback engine did not start: \(error.localizedDescription)"))
+                return false
+            }
+        }
+        guard engine.isRunning else {
+            continuation.yield(.failed("playback engine is not running; dropped frame"))
+            return false
         }
         if !playerNode.isPlaying {
             playerNode.play()
         }
+        return true
     }
 
     public func interruptNow() async {
@@ -388,14 +445,11 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
     public func setSpeechBoundaryMode(_ mode: SpeechBoundaryMode) async {
         speechBoundaryMode = mode
-        speechTracker.autoStart = (mode == .autoVAD)
         // The endpointing hold belongs to the mode: tap-to-start has to tolerate
-        // a speaker pausing to think, auto-VAD does not.
-        speechTracker.silenceHold =
-            mode == .tapToStart
-            ? AudioSpeechActivityTracker.tapToStartSilenceHold
-            : AudioSpeechActivityTracker.autoVADSilenceHold
-        speechTracker.discard()
+        // a speaker pausing to think, auto-VAD does not. `forMode` also hands
+        // back a tracker with no speech in flight, which is the `discard()` a
+        // mode switch needs. See `AudioSpeechActivityTracker.forMode`.
+        speechTracker = .forMode(mode)
     }
 
     public func beginManualSpeech() async {
@@ -521,6 +575,16 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// decoder was reached.
     func _testPlaybackStarted() -> Bool {
         playerNode.isPlaying
+    }
+
+    /// Test-only hook reporting whether the shared engine is running.
+    ///
+    /// `AVAudioPlayerNode.play()` raises — it does not throw — when the engine
+    /// is stopped, so "was a node started while the engine was down?" is the
+    /// question the crash test has to ask, and it needs both halves of the
+    /// answer from the same instant.
+    func _testEngineRunning() -> Bool {
+        engine.isRunning
     }
 
     /// Test-only hook exercising `convertToPCM16` for the supplied input

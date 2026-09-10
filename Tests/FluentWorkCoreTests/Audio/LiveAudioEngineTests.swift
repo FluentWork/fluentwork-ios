@@ -68,6 +68,65 @@ import Testing
     #expect(await engine._testPlaybackStarted() == true)
 }
 
+/// `AVAudioPlayerNode.play()` on a stopped engine does not throw — it raises an
+/// uncaught `NSException` ("player started when in a disconnected state") and
+/// terminates the app. Nothing guarded the call: `try? engine.start()` swallowed
+/// exactly the failure that leaves the engine stopped, so `play()` ran anyway.
+@available(iOS 17, macOS 14, *)
+@Test func liveAudioEngineDoesNotStartPlaybackOnAStoppedEngine() async {
+    struct EngineRefusedToStart: Error {}
+    let decoder = CapturingFrameDecoder(log: CallLog(), samplesPerFrame: 4)
+    let engine = LiveAudioEngine(
+        decoder: decoder,
+        startEngineForPlayback: { _ in throw EngineRefusedToStart() }
+    )
+    let stream = engine.events()
+
+    await engine.play(frame: WSAudioFrame(sequence: 1, opusPayload: Data(repeating: 0x01, count: 8)))
+
+    #expect(await engine._testEngineRunning() == false)
+    #expect(
+        await engine._testPlaybackStarted() == false,
+        "starting a node on a stopped engine is what raises 'player started when in a disconnected state'"
+    )
+
+    let failure = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        if case .failed = event { return event } else { return nil }
+    }
+    guard case .failed = failure else {
+        Issue.record("expected the dropped frame to surface as .failed, got \(String(describing: failure))")
+        return
+    }
+}
+
+/// `setSpeechBoundaryMode` owns the tracker's configuration, and `startCapture()`
+/// runs immediately after it to begin the session. Rebuilding the tracker there
+/// with a bare `AudioSpeechActivityTracker()` restored the auto-VAD defaults, so
+/// every tap-to-start session silently ran with energy allowed to *open* a turn
+/// and a 1.5s pause able to close one — the mode the session asked for never
+/// reached the audio path at all.
+@available(iOS 17, macOS 14, *)
+@Test func liveAudioEngineStartCaptureKeepsTheConfiguredBoundaryMode() async {
+    let engine = LiveAudioEngine(
+        sessionManager: PermissiveAudioSessionManager(),
+        decoder: RawPCM16FrameDecoder(),
+        requestMicrophonePermission: { true }
+    )
+
+    await engine.setSpeechBoundaryMode(.tapToStart)
+    _ = try? await engine.startCapture()
+
+    let tracker = await engine._testSpeechTracker()
+    #expect(
+        tracker.autoStart == false,
+        "tap-to-start must not let energy open a turn"
+    )
+    #expect(
+        tracker.silenceHold == AudioSpeechActivityTracker.tapToStartSilenceHold,
+        "startCapture rebuilt the tracker with the \(tracker.silenceHold) auto-VAD hold"
+    )
+}
+
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineStartCaptureFailsWhenPermissionDenied() async {
     let engine = LiveAudioEngine(
@@ -444,6 +503,32 @@ final class ThrowingAudioSessionManager: AudioSessionManaging, @unchecked Sendab
 
     var isActive: Bool {
         get async { false }
+    }
+
+    var didConfigureFullDuplex: Bool {
+        queue.sync {
+            guard case .fullDuplex = configuredRoute else { return false }
+            return true
+        }
+    }
+}
+
+/// Accepts configuration so a test can drive `startCapture()` past the audio
+/// session and reach the state it sets up. `ThrowingAudioSessionManager` bails
+/// out at `configure`, which is before the engine touches any of that.
+final class PermissiveAudioSessionManager: AudioSessionManaging, @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.fluentwork.tests.permissive-audio-session")
+    private var configuredRoute: AudioRoute?
+
+    func configure(for route: AudioRoute) throws {
+        queue.sync { configuredRoute = route }
+    }
+
+    func pause() throws {}
+    func resume() throws {}
+
+    var isActive: Bool {
+        get async { true }
     }
 
     var didConfigureFullDuplex: Bool {
