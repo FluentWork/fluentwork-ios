@@ -22,10 +22,16 @@ public enum AudioEngineEvent: Equatable, Sendable {
 
 /// How `LiveAudioEngine` decides user-speech start/end.
 ///
-/// Manual is the speaking-room default (I20 Item 4). Auto VAD is opt-in via
-/// `AppFeatureFlag.voiceVadAuto`.
+/// `tapToStart` is the speaking-room default. Auto VAD is opt-in via
+/// `AppFeatureFlag.voiceVadAuto`; `manual` is the legacy tap-to-talk kept as a
+/// fallback.
 public enum SpeechBoundaryMode: Equatable, Sendable {
+    /// Energy opens and closes the utterance.
     case autoVAD
+    /// The tap opens the utterance, a stable silence closes it. One gesture per
+    /// turn: the user never has to press a second button to submit.
+    case tapToStart
+    /// The tap opens and the tap closes (legacy).
     case manual
 }
 

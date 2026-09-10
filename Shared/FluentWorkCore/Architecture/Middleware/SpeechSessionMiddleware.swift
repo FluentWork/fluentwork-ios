@@ -325,7 +325,7 @@ private func interpretSpeechSessionSideEffect(
             .task {
                 do {
                     try await speechClient.startSession()
-                    await audioEngine.setSpeechBoundaryMode(usesAutoVAD ? .autoVAD : .manual)
+                    await audioEngine.setSpeechBoundaryMode(usesAutoVAD ? .autoVAD : .tapToStart)
                     try await audioEngine.startCapture()
                 } catch let error as AudioEnginePermissionError {
                     let message: String

@@ -131,10 +131,10 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
         case .recording:
             return .init(
                 title: "录音中...",
-                detail: "点击停止后会提交这一轮语音。",
+                detail: "停顿一下就会自动提交这一轮，也可以点「说完了」提前结束。",
                 accent: .recording,
                 showsProgress: false,
-                primaryAction: .stop(title: "停止录音", systemImage: "stop.circle.fill")
+                primaryAction: .stop(title: "说完了", systemImage: "checkmark.circle.fill")
             )
         case .waitingUser:
             if usesAutoVAD {
@@ -148,7 +148,7 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
             }
             return .init(
                 title: "轮到你了",
-                detail: "点击开始说话，说完再点停止。",
+                detail: "点一次开始说话，说完停顿一下会自动提交。",
                 accent: .primary,
                 showsProgress: false,
                 primaryAction: .start(title: "开始说话", systemImage: "mic.circle.fill")
@@ -194,21 +194,24 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
                 showsProgress: false,
                 primaryAction: .start(title: "开始说话", systemImage: "mic.circle.fill")
             )
+        // Waiting for the badge is not a blocking state: the machine lets the
+        // user open the next turn from here, so showing a spinner *and* a start
+        // button said both "busy" and "go" at once.
         case .waitingForEvaluation:
             if usesAutoVAD {
                 return .init(
-                    title: "正在评价本次表现…",
-                    detail: "大约 20 秒。也可以直接开口开始下一轮。",
+                    title: "可以继续",
+                    detail: "这一轮的评价还在生成，也可以直接开口开始下一轮。",
                     accent: .neutral,
-                    showsProgress: true,
+                    showsProgress: false,
                     primaryAction: nil
                 )
             }
             return .init(
-                title: "正在评价本次表现…",
-                detail: "大约 20 秒。也可以点击开始下一轮。",
+                title: "可以继续",
+                detail: "这一轮的评价还在生成，你也可以直接开始下一轮。",
                 accent: .neutral,
-                showsProgress: true,
+                showsProgress: false,
                 primaryAction: .start(title: "开始说话", systemImage: "mic.circle.fill")
             )
         case .aiSpeaking:

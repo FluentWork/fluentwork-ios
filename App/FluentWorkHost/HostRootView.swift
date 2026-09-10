@@ -6,6 +6,7 @@ import SwiftUI
 struct HostRootView: View {
     var store: AppStore
     @State private var didLaunch = false
+    @State private var showsEndSessionConfirmation = false
 
     var body: some View {
         AppRootTabView(
@@ -254,10 +255,12 @@ struct HostRootView: View {
              .processingASR, .processingLLM, .processingReview,
              .waitingForAIAnswer, .waitingForEvaluation,
              .aiSpeaking, .degradedText:
+            // This ends the whole session, not the current turn — the label has
+            // to say so, and a mis-tap must not be enough to lose a practice run.
             Button {
-                store.dispatch(.speakingRoom(.session(.endTap)))
+                showsEndSessionConfirmation = true
             } label: {
-                Label("结束本轮", systemImage: "stop.circle.fill")
+                Label("结束练习", systemImage: "xmark.circle.fill")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
@@ -266,6 +269,18 @@ struct HostRootView: View {
             .tint(.red)
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
+            .confirmationDialog(
+                "结束这次练习？",
+                isPresented: $showsEndSessionConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("结束练习", role: .destructive) {
+                    store.dispatch(.speakingRoom(.session(.endTap)))
+                }
+                Button("继续练习", role: .cancel) {}
+            } message: {
+                Text("会话会结束并生成回顾，本轮要点会保留。")
+            }
         }
     }
 

@@ -16,23 +16,34 @@ struct AudioSpeechActivityTracker: Sendable {
     private(set) var lastSpeechAt: ContinuousClock.Instant?
     let speechThreshold: Float
     let silenceHold: Duration
+    /// When false an utterance can only begin via `forceStart()`; energy is
+    /// still what closes it. This is the tap-to-start mode: the tap opens the
+    /// turn, a stable silence submits it, so a turn costs one gesture instead
+    /// of two. Energy must *start* the turn in auto-VAD mode, where nobody taps.
+    var autoStart: Bool
 
     init(
         speechThreshold: Float = 0.015,
-        silenceHold: Duration = .milliseconds(1500)
+        silenceHold: Duration = .milliseconds(1500),
+        autoStart: Bool = true
     ) {
         self.speechThreshold = speechThreshold
         self.silenceHold = silenceHold
+        self.autoStart = autoStart
     }
 
     mutating func register(energy: Float, at now: ContinuousClock.Instant) -> AudioEngineEvent? {
         if energy >= speechThreshold {
             lastSpeechAt = now
             guard !isSpeechActive else { return nil }
+            guard autoStart else { return nil }
             isSpeechActive = true
             return .speechStarted
         }
 
+        // `lastSpeechAt` stays nil until the user actually speaks, so a tap
+        // followed by silence never submits an empty turn — it falls through to
+        // the 60s recording abort instead.
         guard isSpeechActive, let lastSpeechAt else { return nil }
         guard now - lastSpeechAt >= silenceHold else { return nil }
 
@@ -349,6 +360,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
     public func setSpeechBoundaryMode(_ mode: SpeechBoundaryMode) async {
         speechBoundaryMode = mode
+        speechTracker.autoStart = (mode == .autoVAD)
         speechTracker.discard()
     }
 
@@ -416,7 +428,10 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     }
 
     private func updateSpeechState(using pcm: Data) {
-        guard speechBoundaryMode == .autoVAD else { return }
+        // `.manual` decides both ends with taps, so energy is not consulted at
+        // all. The other modes let energy close the utterance; only `.autoVAD`
+        // also lets it open one (see AudioSpeechActivityTracker.autoStart).
+        guard speechBoundaryMode != .manual else { return }
         let energy = normalizedEnergy(for: pcm)
         let now = clock.now
 

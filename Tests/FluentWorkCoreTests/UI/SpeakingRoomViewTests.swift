@@ -32,7 +32,7 @@ import Testing
     let model = SpeakingRoomViewModel(phase: .waitingUser)
 
     #expect(model.controlState.title == "轮到你了")
-    #expect(model.controlState.detail == "点击开始说话，说完再点停止。")
+    #expect(model.controlState.detail == "点一次开始说话，说完停顿一下会自动提交。")
     #expect(
         model.controlState.primaryAction
             == .start(title: "开始说话", systemImage: "mic.circle.fill")
@@ -71,12 +71,34 @@ import Testing
     )
 }
 
-@Test func speakingRoomWaitingForEvaluationHidesHoldAndShowsProgress() {
+/// The evaluation wait is not a blocking state — the machine lets the user open
+/// the next turn from here — so it must not show a spinner *and* a start button
+/// at the same time. Progress is reserved for phases with no action to offer.
+@Test func speakingRoomWaitingForEvaluationOffersNextTurnWithoutProgress() {
     let model = SpeakingRoomViewModel(phase: .waitingForEvaluation, usesAutoVAD: true)
-    #expect(model.controlState.title == "正在评价本次表现…")
-    #expect(model.controlState.detail == "大约 20 秒。也可以直接开口开始下一轮。")
-    #expect(model.controlState.showsProgress == true)
+    #expect(model.controlState.title == "可以继续")
+    #expect(model.controlState.detail == "这一轮的评价还在生成，也可以直接开口开始下一轮。")
+    #expect(model.controlState.showsProgress == false)
     #expect(model.controlState.primaryAction == nil)
+}
+
+@Test func speakingRoomWaitingForEvaluationManualOffersStartButton() {
+    let model = SpeakingRoomViewModel(phase: .waitingForEvaluation)
+    #expect(model.controlState.title == "可以继续")
+    #expect(model.controlState.showsProgress == false)
+    #expect(
+        model.controlState.primaryAction
+            == .start(title: "开始说话", systemImage: "mic.circle.fill")
+    )
+}
+
+/// Recording submits on a pause, so the button is an early submit rather than
+/// the only way to end the turn.
+@Test func speakingRoomRecordingOffersEarlySubmit() {
+    let model = SpeakingRoomViewModel(phase: .recording)
+    #expect(model.controlState.primaryAction
+        == .stop(title: "说完了", systemImage: "checkmark.circle.fill"))
+    #expect(model.controlState.detail?.contains("自动提交") == true)
 }
 
 @Test func speakingRoomEndedStateAllowsRestart() {

@@ -44,6 +44,43 @@ import TGReduxKitTesting
     #expect(tracker.register(energy: 0.02, at: now) == .speechStarted)
 }
 
+/// Tap-to-start: the tap opens the turn and a stable silence submits it, so a
+/// turn costs one gesture. Energy must not open a turn on its own — that is
+/// what turns the microphone on without the user asking for it.
+@available(iOS 17, macOS 14, *)
+@Test func audioSpeechActivityTrackerTapToStartIgnoresEnergyUntilTapped() {
+    var tracker = AudioSpeechActivityTracker(autoStart: false)
+    let clock = ContinuousClock()
+    let start = clock.now
+
+    // Speaking before the tap must not open a turn.
+    #expect(tracker.register(energy: 0.02, at: start) == nil)
+    #expect(!tracker.isSpeechActive)
+
+    // The tap opens it.
+    #expect(tracker.forceStart() == .speechStarted)
+
+    // A stable silence after speech submits it — no second tap.
+    #expect(tracker.register(energy: 0.02, at: start + .milliseconds(50)) == nil)
+    #expect(tracker.register(energy: 0.0, at: start + .milliseconds(1400)) == nil)
+    #expect(tracker.register(energy: 0.0, at: start + .milliseconds(1600)) == .speechEnded)
+}
+
+/// A tap followed by silence must not submit an empty turn: `lastSpeechAt`
+/// stays nil until the user actually speaks, so the turn falls through to the
+/// 60s recording abort instead of ending with nothing in it.
+@available(iOS 17, macOS 14, *)
+@Test func audioSpeechActivityTrackerTapThenSilenceDoesNotSubmitEmptyTurn() {
+    var tracker = AudioSpeechActivityTracker(autoStart: false)
+    let clock = ContinuousClock()
+    let start = clock.now
+
+    #expect(tracker.forceStart() == .speechStarted)
+    #expect(tracker.register(energy: 0.0, at: start + .seconds(5)) == nil)
+    #expect(tracker.register(energy: 0.0, at: start + .seconds(30)) == nil)
+    #expect(tracker.isSpeechActive)
+}
+
 @Test func audioPlaybackGateDropsFramesAtAndBeforeInterruptWatermark() {
     var gate = AudioPlaybackGate()
     let first = WSAudioFrame(sequence: 10, opusPayload: Data([0x01]))
