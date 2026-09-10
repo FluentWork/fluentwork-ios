@@ -548,6 +548,54 @@ struct SpeechSessionMiddlewareB14Tests {
         #expect(await audioEngine.interruptCalls >= 1)
     }
 
+    /// A processing sub-stage budget overrun is a diagnostic, not a verdict.
+    ///
+    /// The budgets are 15s (ASR) / 45s (LLM) / 30s (review), while the gateway
+    /// waits 60s for the vendor. Killing the session on the client's budget made
+    /// the server's budget unreachable: every turn where the vendor took longer
+    /// than 15s died on the client even though the server would have answered.
+    /// Observed on a physical device on 2026-09-11 — the gateway was still
+    /// inside collectTurn at 60s when the client had already given up at 15.9s.
+    ///
+    /// The budget is injected so the overrun is observable in milliseconds; the
+    /// real 15s is why this path had no coverage at all.
+    @MainActor
+    @Test func processingSubStageTimeoutDoesNotFailTheSession() async throws {
+        let container = Container()
+        container.reset()
+        container.processingTimeouts.register {
+            ProcessingTimeouts(
+                asr: .milliseconds(80),
+                llm: .milliseconds(80),
+                review: .milliseconds(80),
+                totalCap: .seconds(30),
+                evaluationWait: .seconds(30)
+            )
+        }
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        audioEngine.emit(.speechStarted)
+        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        audioEngine.emit(.speechEnded)
+        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+
+        // Several times the injected ASR budget. No ai.turn.end arrives, so the
+        // only thing that could end this turn is a timeout.
+        try await Task.sleep(for: .milliseconds(400))
+
+        #expect(store.state.speakingRoom.phase == .processingASR)
+        #expect(store.state.speakingRoom.failureReason == nil)
+        #expect(await speechClient.endSessionCalled == false)
+    }
+
     @MainActor
     @Test func routeChangedReconfiguresCaptureWithoutChangingPhase() async throws {
         let container = Container()

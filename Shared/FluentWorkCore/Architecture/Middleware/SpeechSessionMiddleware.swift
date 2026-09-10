@@ -23,11 +23,8 @@ public enum SpeechSessionTaskID {
     public static let evaluationTimeout: CancellationID = "speechSession.evaluationTimeout"
 }
 
-/// B15 total-cap + per-stage processing timeouts. Compile-time defaults until
-/// `FeatureFlagSnapshot` can carry numeric values.
-private let processingTimeouts = ProcessingTimeouts.standard
 /// I20 T-I20-1: max time in `.recording` before `client.turn.abort`.
-/// Not B15's 70s collectTurn fallback (`processingTimeouts.totalCap`).
+/// Not B15's 70s collectTurn fallback (`ProcessingTimeouts.totalCap`).
 private let recordingAbortTimeout: Duration = .seconds(60)
 
 /// Owns SpeechSessionMachine invocation + SideEffect interpretation.
@@ -117,7 +114,8 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
             turnTimeoutTracking: turnTimeoutTracking,
             speechCaptureGate: speechCaptureGate,
             evaluationArrival: evaluationArrival,
-            tracker: resolvedContainer.tracker()
+            tracker: resolvedContainer.tracker(),
+            timeouts: resolvedContainer.processingTimeouts()
         )
         return .merge([apply] + interpreted + timeoutEffects)
     }
@@ -842,7 +840,8 @@ private func processingTimeoutEffects(
     turnTimeoutTracking: TurnTimeoutTracking,
     speechCaptureGate: SpeechCaptureGate,
     evaluationArrival: EvaluationArrivalBox,
-    tracker: TrackerClientProtocol
+    tracker: TrackerClientProtocol,
+    timeouts: ProcessingTimeouts
 ) -> [Effect<AppAction>] {
     var effects: [Effect<AppAction>] = []
 
@@ -856,18 +855,18 @@ private func processingTimeoutEffects(
 
     if enteredProcessing {
         turnTimeoutTracking.arm()
-        effects.append(scheduleTurnTimeoutTask(tracking: turnTimeoutTracking, tracker: tracker))
-        effects.append(scheduleProcessingTimeoutTask(stage: .asr))
+        effects.append(scheduleTurnTimeoutTask(tracking: turnTimeoutTracking, tracker: tracker, timeouts: timeouts))
+        effects.append(scheduleProcessingTimeoutTask(stage: .asr, timeouts: timeouts, tracker: tracker))
     }
 
     if previousPhase == .processingASR, newPhase == .processingLLM {
         effects.append(.cancel(id: SpeechSessionTaskID.processingASRTimeout))
-        effects.append(scheduleProcessingTimeoutTask(stage: .llm))
+        effects.append(scheduleProcessingTimeoutTask(stage: .llm, timeouts: timeouts, tracker: tracker))
     }
 
     if previousPhase == .processingLLM, newPhase == .processingReview {
         effects.append(.cancel(id: SpeechSessionTaskID.processingLLMTimeout))
-        effects.append(scheduleProcessingTimeoutTask(stage: .review))
+        effects.append(scheduleProcessingTimeoutTask(stage: .review, timeouts: timeouts, tracker: tracker))
     }
 
     if previousPhase.isProcessing, !newPhase.isProcessing {
@@ -885,7 +884,7 @@ private func processingTimeoutEffects(
                 return .speakingRoom(.session(.evaluationReceived))
             })
         } else {
-            effects.append(scheduleEvaluationWaitTask())
+            effects.append(scheduleEvaluationWaitTask(timeouts: timeouts))
         }
     }
 
@@ -958,9 +957,9 @@ private func scheduleRecordingAbortTask(captureGate: SpeechCaptureGate) -> Effec
     }
 }
 
-private func scheduleEvaluationWaitTask() -> Effect<AppAction> {
+private func scheduleEvaluationWaitTask(timeouts: ProcessingTimeouts) -> Effect<AppAction> {
     .task(id: SpeechSessionTaskID.evaluationTimeout) {
-        try? await Task.sleep(for: processingTimeouts.evaluationWait)
+        try? await Task.sleep(for: timeouts.evaluationWait)
         guard !Task.isCancelled else { return nil }
         return .speakingRoom(.session(.evaluationTimedOut))
     }
@@ -968,9 +967,10 @@ private func scheduleEvaluationWaitTask() -> Effect<AppAction> {
 
 private func scheduleTurnTimeoutTask(
     tracking: TurnTimeoutTracking,
-    tracker: TrackerClientProtocol
+    tracker: TrackerClientProtocol,
+    timeouts: ProcessingTimeouts
 ) -> Effect<AppAction> {
-    let timeout = processingTimeouts.totalCap
+    let timeout = timeouts.totalCap
     return .task(id: SpeechSessionTaskID.turnTimeout) {
         try? await Task.sleep(for: timeout)
         guard !Task.isCancelled else { return nil }
@@ -983,28 +983,50 @@ private func scheduleTurnTimeoutTask(
     }
 }
 
-private func scheduleProcessingTimeoutTask(stage: ProcessingSubStage) -> Effect<AppAction> {
+private func scheduleProcessingTimeoutTask(
+    stage: ProcessingSubStage,
+    timeouts: ProcessingTimeouts,
+    tracker: TrackerClientProtocol
+) -> Effect<AppAction> {
     let duration: Duration
     let cancellationID: CancellationID
-    let reason: String
+    let trackEvent: String
+    let stageName: String
     switch stage {
     case .asr:
-        duration = processingTimeouts.asr
+        duration = timeouts.asr
         cancellationID = SpeechSessionTaskID.processingASRTimeout
-        reason = "processing_timeout_asr"
+        trackEvent = "processing_timeout_asr"
+        stageName = "asr"
     case .llm:
-        duration = processingTimeouts.llm
+        duration = timeouts.llm
         cancellationID = SpeechSessionTaskID.processingLLMTimeout
-        reason = "processing_timeout_llm"
+        trackEvent = "processing_timeout_llm"
+        stageName = "llm"
     case .review:
-        duration = processingTimeouts.review
+        duration = timeouts.review
         cancellationID = SpeechSessionTaskID.processingReviewTimeout
-        reason = "processing_timeout_review"
+        trackEvent = "processing_timeout_review"
+        stageName = "review"
     }
     return .task(id: cancellationID) {
         try? await Task.sleep(for: duration)
         guard !Task.isCancelled else { return nil }
-        return .speakingRoom(.session(.failed(reason)))
+        // A budget overrun is diagnostic, not a verdict.
+        //
+        // These budgets are 15s / 45s / 30s while the gateway waits 60s for the
+        // vendor, so ending the session here made the server's budget
+        // unreachable: any turn where the vendor took longer than 15s died on
+        // the client even though the server would have answered. Observed on a
+        // physical device on 2026-09-11 — the gateway was still inside
+        // collectTurn at its 60s window when the client had already given up at
+        // 15.9s.
+        //
+        // The authoritative end of a turn is `ai.turn.end` from the gateway, or
+        // the B15 total cap (`timeouts.totalCap`) when nothing arrives. Report
+        // the overrun and leave the turn running.
+        tracker.track(event: trackEvent, properties: ["stage": stageName])
+        return nil
     }
 }
 

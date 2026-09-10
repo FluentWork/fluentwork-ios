@@ -528,6 +528,15 @@ public extension Container {
         self { SystemClock() }.singleton
     }
 
+    /// B15 total cap and the per-stage processing budgets.
+    ///
+    /// Registered rather than compiled in so a test can inject a short budget
+    /// and observe an overrun in milliseconds. Waiting out the real 15s ASR
+    /// budget in `swift test` is why the overrun path had no coverage.
+    var processingTimeouts: Factory<ProcessingTimeouts> {
+        self { .standard }.singleton
+    }
+
     var idGenerator: Factory<IDGeneratorProtocol> {
         self { SystemIDGenerator() }.singleton
     }
