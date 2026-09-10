@@ -220,7 +220,7 @@ t>60    迟到的 VAD speechEnded
         gate.isOpen == false → 不发 user.speech.end，不 dispatch vadSpeechEnd
 
         迟到的 pcmChunk
-        dropPCMUntilNextSpeech && !open → 丢弃，不发 binary
+        gate.isOpen == false → 丢弃，不发 binary
 ```
 
 ### 5.3 正常说完（abort 不得插队）
@@ -240,13 +240,15 @@ t<60    speechEnded
 
 存在原因：音频循环是独立 `.task`，abort 发生在另一条 task。不能靠读 `@MainActor` store 的 phase 来决定是否还发 PCM / `user.speech.end`。
 
-| 方法 | open | dropPCMUntilNextSpeech | PCM | 迟到 speechEnded |
-|---|---|---|---|---|
-| `beginSpeech()` | true | false | 发 | 会发 `user.speech.end` |
-| `endSpeech()`（正常 VAD 结束） | false | false | **仍发**（保持历史行为：非说话区间也前向） | 已处理过，不会再进 |
-| `abort()` | false | true | **丢**直到下一次 `beginSpeech` | **忽略**，禁止 `user.speech.end` |
+| 方法 | open | PCM | 迟到 speechEnded |
+|---|---|---|---|
+| `beginSpeech()` | true | 发 | 会发 `user.speech.end` |
+| `endSpeech()`（正常 VAD 结束） | false | **不发** | 已处理过，不会再进 |
+| `abort()` | false | **不发** | **忽略**，禁止 `user.speech.end` |
 
-`endSpeech` 与 `abort` 对 PCM 的差异是有意的：正常结束后的尾包仍按旧契约前向；abort 必须切断，否则会重演 `docs/20` 里 80+ `provider audio forward failed`。
+PCM 一律以 `open` 为界。麦克风 tap 从 `startCapture()` 一直跑到会话结束，若"采到什么就发什么"，用户没有开口的时间段也会上行；网关在 `user.speech.end` 时 commit 供应商缓冲，那段音频就被并进**下一轮**的 transcript。见 `docs/40`。
+
+`endSpeech` 与 `abort` 保留为两个入口，是给调用点表达意图（正常收轮 vs 超时放弃），并让 `isOpen` 继续承担"迟到的 `speechEnded` 不得发 `user.speech.end`"这条判断。两者对 PCM 的效果现在相同。
 
 ### 5.5 `turn_id`
 
@@ -316,7 +318,9 @@ B15 另有 `TurnTimeoutTracking.arm/disarm`，防止 70s timer 与 `ai.turn.end`
 | `vadSpeechEndAfterRecordingDoesNotSendTurnAbort` | 正常结束不走 abort |
 | `illegalCombinations` 含 processingASR + recordingTimedOut | 处理中忽略 abort 事件 |
 | `speechCaptureGateDropsPCMAfterAbortUntilNextSpeech` | abort 后门闩 |
-| `speechCaptureGateEndSpeechStillForwardsPCM` | 正常结束 PCM 契约不变 |
+| `speechCaptureGateEndSpeechStopsPCM` | 正常结束即停 PCM |
+| `speechCaptureGateForwardsPCMOnlyInsideTheOpenTurn` | 轮次间隙不上行 |
+| `speechCaptureGateDoesNotForwardPCMBeforeFirstSpeech` | 首次开口前不上行 |
 | `audioSpeechActivityTrackerDiscardDoesNotEmitSpeechEnded` | discard ≠ reset |
 | `recordingTimeoutSendsClientTurnAbortAndKeepsSessionAlive` | middleware：出 abort、不出 speech.end、会话不 end |
 | `defaultSpeechSessionClientSendsTurnAbortWithoutSpeechEnd` | 线格式 |

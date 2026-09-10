@@ -159,44 +159,47 @@ internal final class TurnCountBox: @unchecked Sendable {
     func set(_ newValue: Int) { storage.withLock { $0 = newValue } }
 }
 
-/// I20 T-I20-1: tracks whether the current user utterance is still open on the
-/// wire. After a recording abort we drop PCM and ignore the trailing VAD
-/// `speechEnded` so we never send `user.speech.end` for an aborted turn.
+/// Tracks whether the current user utterance is still open on the wire.
+///
+/// I20 T-I20-1: after a recording abort the trailing VAD `speechEnded` is
+/// ignored so we never send `user.speech.end` for an aborted turn — callers
+/// check `isOpen` before dispatching.
+///
+/// PCM egress is bounded by the same flag. The microphone tap runs from
+/// `startCapture()` until the session ends, so "forward everything that was
+/// captured" leaks audio the user never opened a turn for. The gateway
+/// commits its provider buffer on `user.speech.end`, so that leaked audio
+/// lands in the *next* turn's transcript.
 internal final class SpeechCaptureGate: @unchecked Sendable {
     private struct State {
         var open = false
-        var dropPCMUntilNextSpeech = false
     }
 
     private let storage = OSAllocatedUnfairLock<State>(initialState: State())
 
     func beginSpeech() {
-        storage.withLock {
-            $0.open = true
-            $0.dropPCMUntilNextSpeech = false
-        }
+        storage.withLock { $0.open = true }
     }
 
+    /// Normal turn end (`vadSpeechEnd` / `endManualSpeech`).
     func endSpeech() {
         storage.withLock { $0.open = false }
     }
 
+    /// I20 recording abort. Identical wire effect to `endSpeech`; kept as a
+    /// separate entry point because the call site also relies on the closed
+    /// gate to swallow the trailing `speechEnded`.
     func abort() {
-        storage.withLock {
-            $0.open = false
-            $0.dropPCMUntilNextSpeech = true
-        }
+        storage.withLock { $0.open = false }
     }
 
     var isOpen: Bool {
         storage.withLock { $0.open }
     }
 
+    /// PCM only leaves the device while the user has an utterance open.
     var shouldForwardPCM: Bool {
-        storage.withLock {
-            if $0.dropPCMUntilNextSpeech && !$0.open { return false }
-            return true
-        }
+        storage.withLock { $0.open }
     }
 }
 

@@ -94,9 +94,19 @@ struct SpeechSessionMiddlewareTests {
         #expect(acceptSendable(box) == true)
     }
 
+    /// A gate that was never opened must not egress PCM. The microphone tap
+    /// runs from `startCapture()` onward, so audio captured before the user
+    /// opens a turn used to reach the provider and be committed into the
+    /// *next* turn's transcript.
+    @Test func speechCaptureGateDoesNotForwardPCMBeforeFirstSpeech() {
+        let gate = SpeechCaptureGate()
+        #expect(!gate.isOpen)
+        #expect(!gate.shouldForwardPCM)
+    }
+
     @Test func speechCaptureGateDropsPCMAfterAbortUntilNextSpeech() {
         let gate = SpeechCaptureGate()
-        #expect(gate.shouldForwardPCM)
+        #expect(!gate.shouldForwardPCM)
         #expect(!gate.isOpen)
 
         gate.beginSpeech()
@@ -127,12 +137,37 @@ struct SpeechSessionMiddlewareTests {
         #expect(!box.consume())
     }
 
-    @Test func speechCaptureGateEndSpeechStillForwardsPCM() {
+    /// PCM egress ends with the turn. The gateway commits its provider buffer
+    /// on `user.speech.end`, so anything forwarded after that is transcribed
+    /// into the *next* turn — the defect behind a 83-character transcript
+    /// coming back from a 2.9s tap.
+    @Test func speechCaptureGateEndSpeechStopsPCM() {
         let gate = SpeechCaptureGate()
         gate.beginSpeech()
+        #expect(gate.shouldForwardPCM)
+
         gate.endSpeech()
         #expect(!gate.isOpen)
+        #expect(!gate.shouldForwardPCM)
+    }
+
+    /// The inter-turn gap is the regression window: PCM captured there used to
+    /// be forwarded and committed together with the following turn.
+    @Test func speechCaptureGateForwardsPCMOnlyInsideTheOpenTurn() {
+        let gate = SpeechCaptureGate()
+
+        #expect(!gate.shouldForwardPCM) // before any turn
+
+        gate.beginSpeech()
         #expect(gate.shouldForwardPCM)
+        gate.endSpeech()
+        #expect(!gate.shouldForwardPCM)
+        #expect(!gate.shouldForwardPCM) // gap between turns
+
+        gate.beginSpeech()
+        #expect(gate.shouldForwardPCM)
+        gate.endSpeech()
+        #expect(!gate.shouldForwardPCM)
     }
 
     /// Middleware `set(userTurnCount)` vs audio-loop `get()+1` for `turn-N`.
