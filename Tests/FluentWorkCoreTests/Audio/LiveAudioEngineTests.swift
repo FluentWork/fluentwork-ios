@@ -502,6 +502,38 @@ private func consumeFirstEvent<T: Sendable>(
     #expect(event == nil)
 }
 
+/// An interruption that iOS will not let us resume has to end the run, not
+/// strand it.
+///
+/// `.began` puts the machine into its suspended phase, and a suspended machine
+/// **drops every event except five**. Emitting nothing when `shouldResume` is
+/// false left nothing that could lift that suspension: playback stopped, the
+/// UI kept showing the phase it was in, and every later audio event was
+/// discarded — no error, no affordance, no way to tell what happened. The user
+/// sees "the sound just stopped and the screen is stuck", which is exactly the
+/// report this covers.
+@available(iOS 17, macOS 14, *)
+@Test func liveAudioEngineReportsAnInterruptionItCannotResume() async {
+    let engine = LiveAudioEngine(
+        decoder: RawPCM16FrameDecoder(),
+        interruptionObserver: RecordingAudioInterruptionObserver()
+    )
+    let stream = engine.events()
+
+    await engine.handleInterruption(.began)
+    await engine.handleInterruption(.ended(shouldResume: false))
+
+    let failure = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        if case .failed = event { return event } else { return nil }
+    }
+    guard case .failed = failure else {
+        Issue.record(
+            "an interruption iOS will not resume must surface as .failed or the session hangs suspended; got \(String(describing: failure))"
+        )
+        return
+    }
+}
+
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineHandleEndedShouldResumeTrueAfterBeganYieldsSystemInterruptEnded() async {
     let engine = LiveAudioEngine(

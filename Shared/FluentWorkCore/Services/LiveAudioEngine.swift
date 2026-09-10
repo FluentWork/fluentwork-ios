@@ -566,7 +566,22 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             // docs/22: only resume the speech session when iOS says we may.
             // Do not `playerNode.play()` — interruptedBySystem already asked
             // the machine to stopPlayback, and resume lands in waitingUser.
-            guard shouldResume else { return }
+            //
+            // Saying nothing when iOS withholds resume was a trap, not caution.
+            // `.began` parked the machine in its suspended phase, and a
+            // suspended machine discards every event but five — so with no
+            // `.systemInterruptEnded` and no failure, nothing on any path could
+            // lift the suspension. Playback stopped, the UI kept rendering the
+            // phase it was in, and every later audio event was dropped. The run
+            // was over and nothing said so.
+            //
+            // Ending it is the honest outcome: we may not resume, so we cannot
+            // continue, and `.failed` is one of the five events that still land
+            // — it reaches the user as a retryable error instead of a freeze.
+            guard shouldResume else {
+                continuation.yield(.failed("音频被系统中断，本轮练习已停止"))
+                return
+            }
             isSystemInterrupted = false
             continuation.yield(.systemInterruptEnded)
         case .routeChanged(let reason):
