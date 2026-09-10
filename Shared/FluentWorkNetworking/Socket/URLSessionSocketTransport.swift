@@ -33,6 +33,8 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
     private var pingTask: Task<Void, Never>?
     private var dropGate = AudioFrameDropGate()
     private var connectionState: SocketConnectionState = .idle
+    /// Barge-in drop bookkeeping. See ``AudioDropReport``.
+    private var dropReport = AudioDropReport()
     private var consecutivePingFailures = 0
     private var activeSessionID: String?
     private var activeTicket: String?
@@ -91,6 +93,7 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         activeSessionID = sessionID
         activeTicket = ticket
         dropGate = AudioFrameDropGate()
+        dropReport.reset()
         consecutivePingFailures = 0
 
         emit(.stateChanged(.connecting))
@@ -139,6 +142,8 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
 
     public func markInterrupted() async {
         dropGate.markInterrupted()
+        // A new watermark is a new run: the previous one's report is spent.
+        dropReport.reset()
     }
 
     // MARK: - Private
@@ -281,7 +286,10 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
                 let frame = try WSAudioFrameCodec.decode(data)
                 dropGate.observe(sequence: frame.sequence)
                 if dropGate.shouldDeliver(sequence: frame.sequence) {
+                    closeDroppedAudioRunIfNeeded()
                     emit(.audio(frame))
+                } else {
+                    recordDroppedAudioFrame(sequence: frame.sequence)
                 }
             } catch {
                 throw SocketTransportError.decodingFailed(
@@ -335,6 +343,26 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         continuation.yield(.diagnostic(
             .receiveLatency(frameType: frameType, sizeBytes: sizeBytes, elapsedMs: elapsedMs)
         ))
+    }
+
+    /// Reports a frame the barge-in watermark discarded.
+    ///
+    /// The gate drops silently, and that silence is expensive: a watermark
+    /// numbering a turn that has already finished discards the *front* of every
+    /// later turn, which reaches the user as "the reply is half missing" with
+    /// nothing in any log to explain it. See ``AudioDropReport`` for the rule.
+    private func recordDroppedAudioFrame(sequence: UInt32) {
+        guard let watermark = dropGate.interruptMaxSequence else { return }
+        if let report = dropReport.recordDrop(sequence: sequence, watermark: watermark) {
+            emit(.diagnostic(report))
+        }
+    }
+
+    /// Closes an open drop run once a frame is delivered again.
+    private func closeDroppedAudioRunIfNeeded() {
+        if let report = dropReport.closeRun(watermark: dropGate.interruptMaxSequence) {
+            emit(.diagnostic(report))
+        }
     }
 
     private func emit(_ event: SocketTransportEvent) {

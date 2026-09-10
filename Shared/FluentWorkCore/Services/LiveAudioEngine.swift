@@ -431,14 +431,27 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // already-scheduled chunks to drain, but a fresh `play(frame:)` after
         // a fresh `interruptNow()` should resume cleanly because the gate has
         // been reset by `startCapture`/session re-enter.
-        //
-        // Use the callback-based overload (not `await scheduleBuffer`) — the
-        // `async` overload blocks until the buffer is consumed by the running
-        // engine, which never happens when `startCapture()` hasn't been called
-        // (the common case in tests that only assert on the gate / decoder
-        // path). Queuing with a no-op completion handler returns immediately
-        // and the audio graph is irrelevant for the assertions we make.
-        playerNode.scheduleBuffer(buffer, at: nil, options: []) {}
+        enqueueWithoutWaiting(buffer)
+    }
+
+    /// Queues a buffer and returns immediately.
+    ///
+    /// Deliberately **not** `await playerNode.scheduleBuffer(...)`, which is the
+    /// alternative the editor suggests here. That overload returns only once the
+    /// buffer has been *rendered*, so awaiting it would pace the gateway's
+    /// turn-end burst to real time: a 32-second reply arrives as one burst, and
+    /// the middleware's transport loop would spend those 32 seconds inside this
+    /// call — text frames, control frames and the next turn's audio all queued
+    /// behind it. Returning immediately also keeps the graph irrelevant to the
+    /// tests that only assert on the gate / decoder path.
+    ///
+    /// Extracted into a synchronous function with `completionHandler: nil` for
+    /// two reasons: the queue needs no completion bookkeeping, and the "consider
+    /// the asynchronous alternative" diagnostic is about handing a closure to
+    /// this API from an async context — neither applies once the call has a
+    /// signature of its own.
+    private func enqueueWithoutWaiting(_ buffer: AVAudioPCMBuffer) {
+        playerNode.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
     }
 
     /// Queues audio onto the player node and makes sure something is actually

@@ -111,6 +111,54 @@ import Testing
     #expect(gate.shouldDeliver(sequence: 8) == true)
 }
 
+/// The gate drops silently, and a silent run of drops is what turns a numbering
+/// regression on the gateway side into "the reply is half missing" with nothing
+/// in any log to explain it.
+@Test func audioDropReportAnnouncesTheRunThenClosesWithTheLoss() {
+    var report = AudioDropReport()
+
+    // Opening report: the first drop is what makes a run visible.
+    #expect(
+        report.recordDrop(sequence: 3, watermark: 240)
+            == .audioFrameDropped(sequence: 3, watermark: 240, dropped: 1)
+    )
+    // Same run, already announced — no repeat for every frame of a 300-frame loss.
+    #expect(report.recordDrop(sequence: 4, watermark: 240) == nil)
+
+    // Closing report carries the size of the loss.
+    #expect(
+        report.closeRun(watermark: 240)
+            == .audioFrameDropped(sequence: 0, watermark: 240, dropped: 2)
+    )
+    #expect(report.closeRun(watermark: 240) == nil)
+    #expect(report.dropped == 0)
+}
+
+/// A run that never closes is the worst case — the watermark keeps suppressing
+/// everything after it — so it must not be the one case that reports nothing.
+@Test func audioDropReportKeepsAnUnclosedRunVisible() {
+    var report = AudioDropReport()
+
+    _ = report.recordDrop(sequence: 1, watermark: 500)
+
+    #expect(report.dropped == 1)
+    #expect(report.reportedWatermark == 500)
+}
+
+@Test func audioDropReportResetStartsAFreshRun() {
+    var report = AudioDropReport()
+
+    _ = report.recordDrop(sequence: 9, watermark: 240)
+    report.reset()
+
+    #expect(report.dropped == 0)
+    #expect(report.reportedWatermark == nil)
+    #expect(
+        report.recordDrop(sequence: 1, watermark: 240)
+            == .audioFrameDropped(sequence: 1, watermark: 240, dropped: 1)
+    )
+}
+
 @Test func inMemoryTransportDropsStaleAudioAfterInterrupt() async {
     let transport = InMemorySocketTransport()
     try? await transport.connect(

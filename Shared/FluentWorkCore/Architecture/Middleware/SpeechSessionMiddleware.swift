@@ -578,6 +578,22 @@ private func interpretSpeechSessionSideEffect(
                             ]
                         )
 
+                    // The barge-in watermark discarding inbound audio. Reported
+                    // at the start and end of each run, so `dropped` is the size
+                    // of the loss. A `sequence` at or below `watermark` on a
+                    // later turn is the signature of the gateway's numbering
+                    // going backwards — which is what makes this event worth
+                    // more than the silence it replaces.
+                    case let .diagnostic(.audioFrameDropped(sequence, watermark, dropped)):
+                        tracker.track(
+                            event: "transport_audio_dropped",
+                            properties: [
+                                "sequence": String(sequence),
+                                "watermark": String(watermark),
+                                "dropped": String(dropped),
+                            ]
+                        )
+
                     default:
                         guard let mapped = SocketTransportEventMapper.speakingRoomAction(for: event),
                               let action = SpeakingRoomAction(mapped)

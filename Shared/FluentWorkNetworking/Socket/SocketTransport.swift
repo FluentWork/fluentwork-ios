@@ -40,6 +40,15 @@ public enum SocketTransportDiagnostic: Equatable, Sendable {
     /// successful frame so timing regressions in the decode / dispatch path
     /// show up next to the frame type instead of being averaged out.
     case receiveLatency(frameType: String, sizeBytes: Int, elapsedMs: Double)
+
+    /// A barge-in watermark discarded an inbound audio frame.
+    ///
+    /// Reported once per watermark rather than once per frame: the gate drops
+    /// silently, and a run of silent drops is what turns a numbering regression
+    /// into "the reply is half missing" with nothing in any log to say why. The
+    /// watermark value is the datum — an audio sequence at or below it, arriving
+    /// after the turn that set it, is what says the numbering went backwards.
+    case audioFrameDropped(sequence: UInt32, watermark: UInt32, dropped: Int)
 }
 
 public protocol SocketTransportProtocol: Sendable {
