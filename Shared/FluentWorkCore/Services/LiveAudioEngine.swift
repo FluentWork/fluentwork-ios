@@ -1,5 +1,6 @@
 @preconcurrency import AVFoundation
 import FluentWorkNetworking
+import FluentWorkObjCSupport
 import Foundation
 
 public enum AudioEnginePermissionError: Error {
@@ -284,6 +285,20 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         }
         hasInstalledTap = true
 
+        // Build the WHOLE graph before the engine starts — including the
+        // playback node.
+        //
+        // It used to be attached lazily on the first assistant audio frame,
+        // which arrives while capture is already running. Attaching and
+        // connecting into a *live* render graph and then calling `play()` in
+        // the same synchronous block leaves the node looking disconnected to
+        // AVFoundation: the connection has not been committed yet, and `play()`
+        // raises "player started when in a disconnected state" rather than
+        // returning. Every crash so far landed on the first audio frame of a
+        // session, which is the only moment attach, connect and play ever
+        // happened together.
+        attachPlayerIfNeeded()
+
         if !engine.isRunning {
             do {
                 try engine.start()
@@ -472,7 +487,16 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             return false
         }
         if !playerNode.isPlaying {
-            playerNode.play()
+            // `play()` raises rather than returning when the node has nothing to
+            // play into, and "has nothing to play into" is not a state this
+            // layer can read — three device builds died here on the first audio
+            // frame of a session. Every precondition above narrows the window;
+            // this is what makes the window not matter.
+            var raised: NSError?
+            guard FWTryCatch({ self.playerNode.play() }, &raised) else {
+                continuation.yield(.failed("player start raised: \(raised?.localizedDescription ?? "unknown")"))
+                return false
+            }
         }
         return true
     }

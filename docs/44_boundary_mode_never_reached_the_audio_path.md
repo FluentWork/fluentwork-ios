@@ -82,6 +82,24 @@ AVAudioPlayerNode.mm:658  Player@0x1237ea080: Engine is not running because it w
 
 **教训**：`engine.start()` 成功 ≠ 节点有地方播放。AVAudioEngine 内部图的生命周期（会话去激活、系统打断、`stop()`）不是我们能从外部可靠预测的 —— 试图预测就是这次返工的原因。
 
+### D：C 的修复也不够 —— 会崩在**全新会话的第一帧**
+
+02:36 又一次，同一个位置。这一次日志的形状变了：
+
+```
+timing_ai_turn_end  turn-1  outcome ok
+timing_ai_first_chunk  sequence 1  prev_event ai_turn_end  delta_ms 3.412
+*** Terminating ... 'player started when in a disconnected state'
+```
+
+**没有 `AVAudioPlayerNode.mm:658` 那条警告了**，直接从 sequence 1 抛。而且这是个**全新会话**（turn-1，`waitingForEvaluation` 刚过），`stopCapture()` 从未被调用 —— 所以 C 的 `playbackRetired` **正确地没有触发**，`playerNode.engine === engine` 也通过了。节点挂着、引擎在跑，`play()` 还是抛。
+
+把三次崩溃并排看，共同点就一个：**全部落在会话的第一帧音频上**。而那是 `playerAttached == false` 的唯一时刻 —— 也就是说，**attach、connect、play 三件事只在那一刻挤在同一个同步块里发生**。
+
+`attachPlayerIfNeeded()` 是惰性的，被调用于第一帧到达时，而那一刻**引擎已经在跑了**（采集是活的）。往一张**运行中的 render graph** 里 attach + connect，然后在同一个 tick 里立刻 `play()` —— 连接尚未提交到渲染图，AVFoundation 看这个节点就是"没连上"。
+
+**这是唯一能同时解释三次崩溃的假设**，也是前两轮修复都失效的原因：它们都在修"引擎/节点状态"，而真正的问题在**什么时候改图**。
+
 ---
 
 ## 3. 方案
@@ -142,6 +160,34 @@ guard playerNode.engine === engine else {   // playerAttached 是我们的缓存
 }
 ```
 
+### D：整张图在 `engine.start()` 之前建好，运行期不再改
+
+```swift
+// startCapture()
+attachPlayerIfNeeded()          // ← 播放节点在这里就位，而不是等到第一帧
+if !engine.isRunning { try engine.start() }
+```
+
+**运行中的 render graph 不改动** —— 这是 D 的全部内容。图的构建（attach + connect）和图的启动（`start()`）合成一个有序序列，两者之间没有音频帧能插进来。
+
+### D'：`play()` 包一层 ObjC 异常兜底
+
+前三轮都在**预测** `play()` 什么时候会抛。`play()` 抛的是 `NSException`，Swift 捕不到 —— 要接住它只能在 ObjC 层。新增 `FluentWorkObjCSupport` target（整个 target 只有这一件事）：
+
+```objc
+BOOL FWTryCatch(NS_NOESCAPE void (^block)(void), NSError **error);
+```
+
+```swift
+var raised: NSError?
+guard FWTryCatch({ self.playerNode.play() }, &raised) else {
+    continuation.yield(.failed("player start raised: \(raised?.localizedDescription ?? "unknown")"))
+    return false
+}
+```
+
+于是"节点无处可播"这个我们读不到的状态，从**一次崩溃**变成**一条日志 + 丢掉那一帧**。上面的前置校验把窗口收窄；这一层让窗口是否收窄变得不重要。
+
 ---
 
 ## 4. 新方案理由
@@ -166,7 +212,7 @@ guard playerNode.engine === engine else {   // playerAttached 是我们的缓存
 ## 6. 门禁
 
 ```bash
-swift test                      # 419/419
+swift test                      # 421/421
 xcodebuild -project FluentWorkHost.xcodeproj -scheme FluentWorkHost \
   -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.5' build
 # ** BUILD SUCCEEDED **
@@ -179,6 +225,8 @@ xcodebuild -project FluentWorkHost.xcodeproj -scheme FluentWorkHost \
 | `liveAudioEngineStartCaptureKeepsTheConfiguredBoundaryMode` | `startCapture()` 之后 tracker 仍是会话配置的模式 | `(autoStart → true) == false` / `(silenceHold → 1.5s) == 4.0s` |
 | `liveAudioEngineDoesNotStartPlaybackOnAStoppedEngine` | 引擎起不来时不启动播放节点，并上报 `.failed` | `expected the dropped frame to surface as .failed, got nil` |
 | `liveAudioEngineRetiresPlaybackWhenCaptureStops` | 会话结束后到达的帧不启动播放节点，并上报 `.failed` | `Expectation failed: await engine._testPlaybackStarted() == false` |
+| `objcExceptionCatcherTurnsARaiseIntoAnError` | ObjC 异常被转成 `NSError` 而不是终止进程 —— 播放路径的兜底依赖它 | 新 API，随 D′ 一起落地 |
+| `objcExceptionCatcherReportsSuccessWhenNothingRaises` | 不抛时如实返回 `YES`，不吞掉正常路径 | 同上 |
 
 第三个测试是把 `LiveAudioEngine.swift` 临时还原到 HEAD 跑出来的 —— 它复现的正是真机第二次崩溃：`stopCapture()` 之后 `play()` 仍然启动节点。
 
@@ -188,7 +236,8 @@ xcodebuild -project FluentWorkHost.xcodeproj -scheme FluentWorkHost \
 
 ## 7. 本票不做
 
-- **不加 ObjC 异常兜底**：`play()` 抛的是 `NSException`，Swift 捕不到（要 `@try/@catch` 就得引一个 ObjC target）。本票改为从源头消除可达路径。**如果真机第三次崩在同一处，这就是下一步** —— 那时说明还有一条我没想到的路径，而兜底能让它变成一条日志而不是一次崩溃。
+- ~~不加 ObjC 异常兜底~~：**原计划"第三次崩再做"，第三次真的崩了，已做**（§3 D′）。这条预判本身值得记下来 —— 三轮里前两轮都在赌"这次预测对了"，而兜底从一开始就能把赌注取消。
+- **不重构播放与采集分属两个 AVAudioEngine**：那是消除整类问题的根治方案（两套图，播放的生死与采集无关），但会改变 `interruptNow()` 的 barge-in 时序，需要单独一张票。
 - **不验 AEC**：见 meta `77_` §3.3 的受控实验。
 - **不做真流式**：音频仍在轮末一次性到达。见 meta `77_` **P1-2**。
 - **不改半双工兜底**：barge-in 仍依赖全双工。

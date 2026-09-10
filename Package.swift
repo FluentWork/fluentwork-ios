@@ -59,6 +59,13 @@ let package = Package(
             dependencies: ["FluentWorkCore"],
             path: "Shared/FluentWorkUI"
         ),
+        // Objective-C, and only for one thing: `FWTryCatch`. Swift cannot catch
+        // `NSException`, and `AVAudioPlayerNode.play()` raises instead of
+        // returning an error. See the header.
+        .target(
+            name: "FluentWorkObjCSupport",
+            path: "Shared/FluentWorkObjCSupport"
+        ),
         .target(
             name: "FluentWorkCore",
             dependencies: [
@@ -69,6 +76,7 @@ let package = Package(
                 "FluentWorkPluginSupport",
                 "FluentWorkNetworking",
                 "FluentWorkDiagnostics",
+                "FluentWorkObjCSupport",
             ],
             path: "Shared/FluentWorkCore",
             resources: [
@@ -83,6 +91,7 @@ let package = Package(
                 "FluentWorkPluginSupport",
                 "FluentWorkDiagnostics",
                 "FluentWorkNetworking",
+                "FluentWorkObjCSupport",
                 "FluentWorkUI",
                 .product(name: "Moya", package: "Moya"),
                 .product(name: "TGReduxKit", package: "TGReduxKit"),

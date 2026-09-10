@@ -1,9 +1,41 @@
 import AVFoundation
 import Dispatch
 import FluentWorkNetworking
+import FluentWorkObjCSupport
 import Foundation
 import Testing
 @testable import FluentWorkCore
+
+// MARK: - Objective-C exception bridge
+
+/// The backstop under `AVAudioPlayerNode.play()`.
+///
+/// `play()` raises rather than returning an error when the node has nothing to
+/// play into. Three device builds died on exactly that, at the same place, with
+/// the same message — so the playback path now depends on being able to catch
+/// it rather than on predicting it. This test is that dependency: if the bridge
+/// stops catching, nothing in the playback path can be trusted.
+@Test func objcExceptionCatcherTurnsARaiseIntoAnError() {
+    var raised: NSError?
+    let completed = FWTryCatch(
+        { NSException(name: .genericException, reason: "boom", userInfo: nil).raise() },
+        &raised
+    )
+
+    #expect(completed == false)
+    #expect(raised?.localizedDescription == "boom")
+    #expect(raised?.userInfo["FWExceptionName"] as? String == NSExceptionName.genericException.rawValue)
+}
+
+@Test func objcExceptionCatcherReportsSuccessWhenNothingRaises() {
+    var raised: NSError?
+    var ran = false
+    let completed = FWTryCatch({ ran = true }, &raised)
+
+    #expect(completed == true)
+    #expect(ran)
+    #expect(raised == nil)
+}
 
 // MARK: - Decoder tests
 
