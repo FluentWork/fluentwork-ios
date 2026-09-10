@@ -20,12 +20,22 @@ import Testing
 }
 
 @Test func duplicateSocketReadyWhileActiveIsIdempotent() {
-    var state = SpeechSessionState(phase: .aiSpeaking, isReconnecting: true)
+    var state = SpeechSessionState(phase: .aiSpeaking)
     let effects = SpeechSessionMachine.reduce(&state, event: .socketReady)
 
     #expect(state.phase == .aiSpeaking)
     #expect(state.isReconnecting == false)
     #expect(effects.isEmpty)
+}
+
+@Test func socketReadyWhileReconnectingFromAISpeakingDiscardsTurn() {
+    var state = SpeechSessionState(phase: .aiSpeaking, isReconnecting: true)
+    let effects = SpeechSessionMachine.reduce(&state, event: .socketReady)
+
+    #expect(state.phase == .waitingUser)
+    #expect(state.isReconnecting == false)
+    #expect(effects.contains(.stopPlayback))
+    #expect(effects.contains(.trackTransition(from: .aiSpeaking, to: .waitingUser)))
 }
 
 @Test func vadDuringAISpeakingTriggersInterruptSideEffects() {
@@ -282,11 +292,21 @@ import Testing
     #expect(state.processingSubStage == .review)
 }
 
-@Test func duplicateSocketReadyWhileProcessingASRIsIdempotent() {
+@Test func socketReadyWhileReconnectingFromProcessingDiscardsTurn() {
     var state = SpeechSessionState(phase: .processingASR, isReconnecting: true)
     let effects = SpeechSessionMachine.reduce(&state, event: .socketReady)
-    #expect(state.phase == .processingASR)
+
+    #expect(state.phase == .waitingUser)
+    #expect(state.processingSubStage == nil)
     #expect(state.isReconnecting == false)
+    #expect(effects.contains(.stopPlayback))
+    #expect(effects.contains(.trackTransition(from: .processingASR, to: .waitingUser)))
+}
+
+@Test func duplicateSocketReadyWhileProcessingASRWithoutReconnectIsIdempotent() {
+    var state = SpeechSessionState(phase: .processingASR)
+    let effects = SpeechSessionMachine.reduce(&state, event: .socketReady)
+    #expect(state.phase == .processingASR)
     #expect(effects.isEmpty)
 }
 
@@ -296,6 +316,7 @@ import Testing
     #expect(timeouts.llm == .seconds(45))
     #expect(timeouts.review == .seconds(30))
     #expect(timeouts.totalCap == .seconds(70))
+    #expect(timeouts.evaluationWait == .seconds(20))
 }
 
 @Test func recordingTimedOutAbortsTurnWithoutFailingSession() {
@@ -473,7 +494,60 @@ import Testing
     var state = SpeechSessionState(phase: .waitingForEvaluation)
     let effects = SpeechSessionMachine.reduce(&state, event: .vadSpeechStart)
     #expect(state.phase == .recording)
+    #expect(effects.contains(.stopPlayback))
     #expect(effects.contains(.trackTransition(from: .waitingForEvaluation, to: .recording)))
+}
+
+@Test func evaluationTimedOutReturnsToWaitingUserWithoutFailing() {
+    var state = SpeechSessionState(phase: .waitingForEvaluation)
+    let effects = SpeechSessionMachine.reduce(&state, event: .evaluationTimedOut)
+    #expect(state.phase == .waitingUser)
+    #expect(state.failureReason == nil)
+    #expect(effects.contains(.stopPlayback))
+    #expect(effects.contains(.trackTransition(from: .waitingForEvaluation, to: .waitingUser)))
+    #expect(!effects.contains(.endSession))
+}
+
+@Test func evaluationTimedOutFromWaitingUserIsNoOp() {
+    var state = SpeechSessionState(phase: .waitingUser)
+    let before = state
+    let effects = SpeechSessionMachine.reduce(&state, event: .evaluationTimedOut)
+    #expect(state == before)
+    #expect(effects.isEmpty)
+}
+
+@Test func networkLostFromProcessingKeepsPhaseAndStopsPlayback() {
+    var state = SpeechSessionState(phase: .processingASR)
+    let effects = SpeechSessionMachine.reduce(&state, event: .networkLost)
+    #expect(state.phase == .processingASR)
+    #expect(state.isReconnecting)
+    #expect(effects.contains(.startReconnectWindow))
+    #expect(effects.contains(.stopPlayback))
+}
+
+@Test func reconnectSucceededFromProcessingDiscardsTurn() {
+    var state = SpeechSessionState(phase: .processingLLM, isReconnecting: true)
+    let effects = SpeechSessionMachine.reduce(&state, event: .reconnectSucceeded)
+    #expect(state.phase == .waitingUser)
+    #expect(state.isReconnecting == false)
+    #expect(effects.contains(.stopPlayback))
+}
+
+@Test func reconnectSucceededFromWaitingForAIAnswerKeepsAbortLanding() {
+    var state = SpeechSessionState(phase: .waitingForAIAnswer, isReconnecting: true)
+    let effects = SpeechSessionMachine.reduce(&state, event: .reconnectSucceeded)
+    #expect(state.phase == .waitingForAIAnswer)
+    #expect(state.isReconnecting == false)
+    #expect(!effects.contains(.stopPlayback))
+}
+
+@Test func processingPhaseDiscardsTurnOnReconnect() {
+    #expect(SpeechSessionPhase.processingASR.discardsTurnOnReconnect)
+    #expect(SpeechSessionPhase.aiSpeaking.discardsTurnOnReconnect)
+    #expect(SpeechSessionPhase.waitingForEvaluation.discardsTurnOnReconnect)
+    #expect(!SpeechSessionPhase.waitingForAIAnswer.discardsTurnOnReconnect)
+    #expect(!SpeechSessionPhase.waitingUser.discardsTurnOnReconnect)
+    #expect(!SpeechSessionPhase.recording.discardsTurnOnReconnect)
 }
 
 @Test func isValidTransitionAcceptsLiveGraphAndRejectsIllegalHops() {

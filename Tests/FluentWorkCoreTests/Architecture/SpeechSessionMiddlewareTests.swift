@@ -112,6 +112,21 @@ struct SpeechSessionMiddlewareTests {
         #expect(gate.shouldForwardPCM)
     }
 
+    @Test func evaluationArrivalBoxConsumeClearsMark() {
+        let box = EvaluationArrivalBox()
+        #expect(!box.consume())
+        box.mark()
+        #expect(box.consume())
+        #expect(!box.consume())
+    }
+
+    @Test func evaluationArrivalBoxResetDropsPendingBadge() {
+        let box = EvaluationArrivalBox()
+        box.mark()
+        box.reset()
+        #expect(!box.consume())
+    }
+
     @Test func speechCaptureGateEndSpeechStillForwardsPCM() {
         let gate = SpeechCaptureGate()
         gate.beginSpeech()
@@ -386,6 +401,173 @@ struct SpeechSessionMiddlewareB14Tests {
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
         #expect(store.state.speakingRoom.phase == .recording)
+        #expect(store.state.speakingRoom.failureReason == nil)
+        #expect(await speechClient.endSessionCalled == false)
+    }
+
+    @MainActor
+    @Test func feedbackBadgeLeavesWaitingForEvaluationWithoutFailing() async throws {
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        audioEngine.emit(.speechStarted)
+        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        audioEngine.emit(.speechEnded)
+        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+
+        speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil)))
+        try await waitForPhase(store, phase: .waitingForEvaluation, timeout: 1_000_000_000)
+
+        speechClient.emit(.control(.feedbackBadge(
+            badge: "表达自然",
+            phraseBlockID: "block-1",
+            tier: .soft,
+            turnID: "turn-1"
+        )))
+        try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
+
+        #expect(store.state.speakingRoom.phase == .waitingUser)
+        #expect(store.state.speakingRoom.failureReason == nil)
+        #expect(store.state.speakingRoom.lastBadge == "表达自然")
+        #expect(await speechClient.endSessionCalled == false)
+    }
+
+    @MainActor
+    @Test func feedbackBadgeBeforeTurnEndLeavesEvaluationWaitImmediately() async throws {
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        audioEngine.emit(.speechStarted)
+        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        audioEngine.emit(.speechEnded)
+        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+
+        speechClient.emit(.control(.feedbackBadge(
+            badge: "ship it",
+            phraseBlockID: "block-2",
+            tier: .highlight,
+            turnID: "turn-1"
+        )))
+        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+            store.state.speakingRoom.lastBadge == "ship it"
+        }
+        #expect(store.state.speakingRoom.phase == .processingASR)
+
+        speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil)))
+        try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
+
+        #expect(store.state.speakingRoom.phase == .waitingUser)
+        #expect(store.state.speakingRoom.failureReason == nil)
+        #expect(await speechClient.endSessionCalled == false)
+    }
+
+    @MainActor
+    @Test func evaluationTimedOutReturnsToWaitingUserWithoutEndingSession() async throws {
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        audioEngine.emit(.speechStarted)
+        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        audioEngine.emit(.speechEnded)
+        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+
+        speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil)))
+        try await waitForPhase(store, phase: .waitingForEvaluation, timeout: 1_000_000_000)
+
+        store.dispatch(.speakingRoom(.session(.evaluationTimedOut)))
+        try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
+        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+            await audioEngine.interruptCalls >= 1
+        }
+
+        #expect(store.state.speakingRoom.phase == .waitingUser)
+        #expect(store.state.speakingRoom.failureReason == nil)
+        #expect(await speechClient.endSessionCalled == false)
+        #expect(await audioEngine.interruptCalls >= 1)
+    }
+
+    @MainActor
+    @Test func routeChangedReconfiguresCaptureWithoutChangingPhase() async throws {
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+
+        audioEngine.emit(.routeChanged("oldDeviceUnavailable"))
+        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+            await audioEngine.reconfigureCalls == 1
+        }
+
+        #expect(store.state.speakingRoom.phase == .aiSpeaking)
+        #expect(store.state.speakingRoom.failureReason == nil)
+        #expect(await audioEngine.reconfigureCalls == 1)
+    }
+
+    @MainActor
+    @Test func reconnectDuringProcessingDiscardsTurnWhenSocketReady() async throws {
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        audioEngine.emit(.speechStarted)
+        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        audioEngine.emit(.speechEnded)
+        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+
+        store.dispatch(.speakingRoom(.session(.networkLost)))
+        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+            store.state.speakingRoom.session.isReconnecting
+        }
+        #expect(store.state.speakingRoom.phase == .processingASR)
+
+        speechClient.emit(.stateChanged(.connected))
+        try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
+
+        #expect(store.state.speakingRoom.phase == .waitingUser)
+        #expect(store.state.speakingRoom.session.isReconnecting == false)
         #expect(store.state.speakingRoom.failureReason == nil)
         #expect(await speechClient.endSessionCalled == false)
     }
@@ -680,7 +862,7 @@ struct SpeechSessionMiddlewareReconnectTests {
         }
 
         #expect(store.state.speakingRoom.session.isReconnecting == false)
-        #expect(store.state.speakingRoom.phase == .aiSpeaking)
+        #expect(store.state.speakingRoom.phase == .waitingUser)
     }
 }
 
@@ -1057,6 +1239,10 @@ private final class StubAudioEngineForMiddleware: AudioEngineProtocol, @unchecke
 
     private let _stopCaptureCalled = AsyncValue(false)
     var stopCaptureCalled: Bool { get async { await _stopCaptureCalled.get() } }
+    private let _interruptCalls = AsyncValue(0)
+    var interruptCalls: Int { get async { await _interruptCalls.get() } }
+    private let _reconfigureCalls = AsyncValue(0)
+    var reconfigureCalls: Int { get async { await _reconfigureCalls.get() } }
 
     init() {
         let pair = AsyncStream.makeStream(of: AudioEngineEvent.self)
@@ -1069,8 +1255,13 @@ private final class StubAudioEngineForMiddleware: AudioEngineProtocol, @unchecke
         await _stopCaptureCalled.set(true)
     }
     func play(frame: WSAudioFrame) async {}
-    func interruptNow() async {}
+    func interruptNow() async {
+        await _interruptCalls.update { $0 + 1 }
+    }
     func discardActiveSpeech() async {}
+    func reconfigureForRouteChange() async {
+        await _reconfigureCalls.update { $0 + 1 }
+    }
 
     func beginManualSpeech() async {
         emit(.speechStarted)

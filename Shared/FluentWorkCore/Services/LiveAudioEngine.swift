@@ -235,6 +235,39 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         startInterruptionObservation()
     }
 
+    public func reconfigureForRouteChange() async {
+        do {
+            try sessionManager.configure(for: .fullDuplex)
+        } catch {
+            // Keep the existing graph. Killing the session on a headset unplug
+            // is worse than a brief format mismatch.
+            return
+        }
+
+        guard hasInstalledTap else { return }
+
+        let inputNode = engine.inputNode
+        let inputFormat = inputNode.inputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else { return }
+
+        inputNode.removeTap(onBus: 0)
+        hasInstalledTap = false
+        sourceFormat = inputFormat
+        converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat)
+
+        inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak self] buffer, _ in
+            guard let self else { return }
+            Task {
+                await self.processInput(buffer)
+            }
+        }
+        hasInstalledTap = true
+
+        if !engine.isRunning {
+            try? engine.start()
+        }
+    }
+
     public func stopCapture() async {
         stopInterruptionObservation()
         let shouldRemoveTap = hasInstalledTap

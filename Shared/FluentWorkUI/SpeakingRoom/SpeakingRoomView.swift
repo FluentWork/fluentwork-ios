@@ -180,25 +180,25 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
         case .waitingForAIAnswer:
             if usesAutoVAD {
                 return .init(
-                    title: "AI 思考中…",
-                    detail: "最长约 10s。也可以直接开口开始下一轮。",
-                    accent: .neutral,
-                    showsProgress: true,
+                    title: "本轮已超时",
+                    detail: "直接开口开始下一轮。",
+                    accent: .warning,
+                    showsProgress: false,
                     primaryAction: nil
                 )
             }
             return .init(
-                title: "AI 思考中…",
-                detail: "也可以点击开始下一轮。",
-                accent: .neutral,
-                showsProgress: true,
+                title: "本轮已超时",
+                detail: "录音超时已取消这一轮，点击开始说话继续。",
+                accent: .warning,
+                showsProgress: false,
                 primaryAction: .start(title: "开始说话", systemImage: "mic.circle.fill")
             )
         case .waitingForEvaluation:
             if usesAutoVAD {
                 return .init(
                     title: "正在评价本次表现…",
-                    detail: "评价结束后可以继续开口。",
+                    detail: "大约 20 秒。也可以直接开口开始下一轮。",
                     accent: .neutral,
                     showsProgress: true,
                     primaryAction: nil
@@ -206,7 +206,7 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
             }
             return .init(
                 title: "正在评价本次表现…",
-                detail: "也可以点击开始下一轮。",
+                detail: "大约 20 秒。也可以点击开始下一轮。",
                 accent: .neutral,
                 showsProgress: true,
                 primaryAction: .start(title: "开始说话", systemImage: "mic.circle.fill")

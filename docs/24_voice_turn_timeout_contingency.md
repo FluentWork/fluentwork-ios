@@ -120,7 +120,9 @@ processingLLM → processingReview 或 aiFirstAudioChunk
     │  ai.turn.end（outcome ≠ timeout）
     ▼
 waitingForEvaluation
-    │  evaluationReceived 或下一轮 VAD
+    │  feedback.badge → evaluationReceived
+    │  或 20s evaluationTimedOut（不杀会话）
+    │  或下一轮开口
     ▼
 waitingUser / recording
 ```
@@ -138,6 +140,7 @@ recording
 waitingForAIAnswer userTurnCount += 1
                    effect: .sendTurnAbort(turnID: "turn-N", outcome: .timeout)
                    不进入 processingASR  →  因此 B15 70s 不会 armed
+                   UI：「本轮已超时」，不是「AI 思考中」。不 arm 评价 20s / B15 90s。
 ```
 
 合法：仅 `(.recording, .recordingTimedOut)`。  

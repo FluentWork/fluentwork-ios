@@ -68,7 +68,7 @@ go test ./internal/voiceproto/ -run TestClientTurnAbortJSONRoundTrip
 ## 7. 真机步骤
 
 1. 进说的房间，开口后 **按住不放 60 秒**（不要松手，否则会发 `user.speech.end`，变成 B15）
-2. 期望：约 60s 后进入「AI 思考中…」，WSS 还在，**没有**失败弹层 / `session.end`
+2. 期望：约 60s 后进入「本轮已超时」，WSS 还在，**没有**失败弹层 / `session.end`
 3. 日志：出站 `client.turn.abort` `outcome=timeout`；**没有** `unsupported_frame`；**没有** `ai.turn.end(timeout)`；**没有** `turn_timeout_fired`
 4. 再开口：能重新进录音
 

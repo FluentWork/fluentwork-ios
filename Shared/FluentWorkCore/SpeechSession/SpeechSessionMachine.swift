@@ -67,16 +67,27 @@ public enum SpeechSessionMachine {
             state.phase = .waitingUser
             state.processingSubStage = nil
 
+        case (.waitingForEvaluation, .evaluationTimedOut):
+            // Badge never arrived. Keep the session; leftover TTS is dropped.
+            state.phase = .waitingUser
+            state.processingSubStage = nil
+            effects.append(.stopPlayback)
+
         case (.aiSpeaking, .vadSpeechStart), (.aiSpeaking, .holdStart):
             state.phase = .recording
             state.processingSubStage = nil
             effects.append(contentsOf: [.stopPlayback, .sendInterrupt])
 
         case (.waitingUser, .vadSpeechStart), (.waitingUser, .holdStart),
-             (.waitingForAIAnswer, .vadSpeechStart), (.waitingForAIAnswer, .holdStart),
-             (.waitingForEvaluation, .vadSpeechStart), (.waitingForEvaluation, .holdStart):
+             (.waitingForAIAnswer, .vadSpeechStart), (.waitingForAIAnswer, .holdStart):
             state.phase = .recording
             state.processingSubStage = nil
+
+        case (.waitingForEvaluation, .vadSpeechStart), (.waitingForEvaluation, .holdStart):
+            // Next utterance may overlap leftover TTS after ai.turn.end.
+            state.phase = .recording
+            state.processingSubStage = nil
+            effects.append(.stopPlayback)
 
         case (.recording, .vadSpeechEnd), (.recording, .holdEnd):
             state.phase = .processingASR
@@ -158,12 +169,12 @@ public enum SpeechSessionMachine {
         case (_, .networkLost) where isActive(state.phase):
             state.isReconnecting = true
             effects.append(.startReconnectWindow)
+            if state.phase.discardsTurnOnReconnect {
+                effects.append(.stopPlayback)
+            }
 
         case (_, .reconnectSucceeded) where state.isReconnecting:
-            state.isReconnecting = false
-            if state.phase == .connecting {
-                state.phase = .aiSpeaking
-            }
+            effects.append(contentsOf: completeReconnect(&state))
 
         case (_, .reconnectTimedOut) where state.isReconnecting || isActive(state.phase):
             state.isReconnecting = false
@@ -211,7 +222,12 @@ public enum SpeechSessionMachine {
             state.processingSubStage = nil
             effects.append(.endSession)
 
-        // Idempotent: duplicate socketReady while connecting/reconnecting after first ready.
+        // Production reconnect: transport maps `.connected` to `.socketReady`,
+        // not `.reconnectSucceeded`. In-flight turns cannot be replayed.
+        case (_, .socketReady) where state.isReconnecting:
+            effects.append(contentsOf: completeReconnect(&state))
+
+        // Idempotent: duplicate socketReady while already live.
         case (.aiSpeaking, .socketReady), (.waitingUser, .socketReady), (.recording, .socketReady),
              (.processingASR, .socketReady), (.processingLLM, .socketReady),
              (.processingReview, .socketReady), (.waitingForAIAnswer, .socketReady),
@@ -279,6 +295,22 @@ public enum SpeechSessionMachine {
 
     private static func isActive(_ phase: SpeechSessionPhase) -> Bool {
         phase.isActive
+    }
+
+    /// Socket came back. Connecting finishes handshake; an in-flight AI turn
+    /// is discarded (no PCM replay) and the user can speak again.
+    private static func completeReconnect(
+        _ state: inout SpeechSessionState
+    ) -> [SpeechSessionSideEffect] {
+        state.isReconnecting = false
+        if state.phase == .connecting {
+            state.phase = .aiSpeaking
+            return []
+        }
+        guard state.phase.discardsTurnOnReconnect else { return [] }
+        state.phase = .waitingUser
+        state.processingSubStage = nil
+        return [.stopPlayback]
     }
 
     /// Consume the open recording turn and emit `client.turn.abort`.

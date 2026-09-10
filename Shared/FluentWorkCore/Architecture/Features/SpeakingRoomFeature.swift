@@ -166,8 +166,9 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
         break
 
     case let .applySession(session):
+        let enteredConnecting = state.session.phase != .connecting && session.phase == .connecting
         state.session = session
-        if session.phase == .connecting {
+        if enteredConnecting {
             state.liveTranscript = ""
             state.lastBadge = nil
             state.badgeHits = 0

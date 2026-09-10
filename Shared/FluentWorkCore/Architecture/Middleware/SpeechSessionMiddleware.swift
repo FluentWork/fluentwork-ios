@@ -19,6 +19,8 @@ public enum SpeechSessionTaskID {
     public static let processingASRTimeout: CancellationID = "speechSession.processingASRTimeout"
     public static let processingLLMTimeout: CancellationID = "speechSession.processingLLMTimeout"
     public static let processingReviewTimeout: CancellationID = "speechSession.processingReviewTimeout"
+    /// Wait for `feedback.badge` after `ai.turn.end`. Distinct from B15 70s.
+    public static let evaluationTimeout: CancellationID = "speechSession.evaluationTimeout"
 }
 
 /// B15 total-cap + per-stage processing timeouts. Compile-time defaults until
@@ -48,6 +50,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
     // middleware dispatch path and the timeout tasks can access it.
     let turnTimeoutTracking = TurnTimeoutTracking()
     let speechCaptureGate = SpeechCaptureGate()
+    let evaluationArrival = EvaluationArrivalBox()
     let ttsDispatcher = TTSFrameDispatcher(decoder: resolvedContainer.ttsDecoder())
     let ttsTrace = TTSStreamTrace()
 
@@ -82,6 +85,12 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
         // cancel independently of the transport loop.
         let enteredProcessing = previousPhase == .recording && session.phase == .processingASR
         let enteredRecording = previousPhase != .recording && session.phase == .recording
+        if event == .sessionStartTap {
+            evaluationArrival.reset()
+        }
+        if enteredRecording {
+            evaluationArrival.reset()
+        }
 
         let apply = next(.speakingRoom(.applySession(session)))
         let interpreted = effects.map {
@@ -94,6 +103,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
                 timings: timings,
                 turnTimeoutTracking: turnTimeoutTracking,
                 speechCaptureGate: speechCaptureGate,
+                evaluationArrival: evaluationArrival,
                 ttsDispatcher: ttsDispatcher,
                 ttsTrace: ttsTrace,
                 usesAutoVAD: store.state.featureFlags.isEnabled(.voiceVadAuto)
@@ -106,6 +116,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
             enteredRecording: enteredRecording,
             turnTimeoutTracking: turnTimeoutTracking,
             speechCaptureGate: speechCaptureGate,
+            evaluationArrival: evaluationArrival,
             tracker: resolvedContainer.tracker()
         )
         return .merge([apply] + interpreted + timeoutEffects)
@@ -189,6 +200,29 @@ internal final class SpeechCaptureGate: @unchecked Sendable {
     }
 }
 
+/// Remembers a `feedback.badge` that arrived before `.waitingForEvaluation`.
+/// Consume on enter so the wait does not hang when the badge beat `ai.turn.end`.
+internal final class EvaluationArrivalBox: @unchecked Sendable {
+    private let storage = OSAllocatedUnfairLock(initialState: false)
+
+    func mark() {
+        storage.withLock { $0 = true }
+    }
+
+    /// Returns true and clears if a badge already landed for this turn.
+    func consume() -> Bool {
+        storage.withLock {
+            let value = $0
+            $0 = false
+            return value
+        }
+    }
+
+    func reset() {
+        storage.withLock { $0 = false }
+    }
+}
+
 /// B15: Tracks whether a turn-level timeout is currently armed.
 /// Used to prevent double-firing when both the timeout task and ai.turn.end
 /// race at the boundary. Cancelation is stored as a bool (not a Task) so the
@@ -225,6 +259,7 @@ private func interpretSpeechSessionSideEffect(
     timings: SpeechSessionTimingsRecorder,
     turnTimeoutTracking: TurnTimeoutTracking? = nil,
     speechCaptureGate: SpeechCaptureGate,
+    evaluationArrival: EvaluationArrivalBox,
     ttsDispatcher: TTSFrameDispatcher,
     ttsTrace: TTSStreamTrace,
     usesAutoVAD: Bool = false
@@ -441,6 +476,24 @@ private func interpretSpeechSessionSideEffect(
                             )
                         }
 
+                    case let .control(.feedbackBadge(badge, phraseBlockID, tier, turnID)):
+                        // WSS has no eval.frame. `feedback.badge` is the turn-level
+                        // signal that can leave `.waitingForEvaluation`. Session
+                        // review stays on REST (I16).
+                        evaluationArrival.mark()
+                        let displayTier = tier.map(BadgeFeedEntry.Tier.from(transport:))
+                        await dispatchBox.dispatch(
+                            .speakingRoom(.badgeHit(
+                                badge: badge,
+                                phraseBlockID: phraseBlockID,
+                                tier: displayTier,
+                                turnID: turnID
+                            ))
+                        )
+                        await dispatchBox.dispatch(
+                            .speakingRoom(.session(.evaluationReceived))
+                        )
+
                     case let .control(.aiTurnEnd(turnID, outcome, logID)):
                         // B15-I3: capture the vendor log_id from the first ai.turn.end.
                         // setLogID is idempotent (only the first call stores the value).
@@ -636,6 +689,7 @@ private func interpretSpeechSessionSideEffect(
 
                     case let .routeChanged(reason):
                         timings.mark(event: "audio_route_changed", properties: ["reason": reason])
+                        await audioEngine.reconfigureForRouteChange()
 
                     case let .failed(message):
                         timings.mark(event: "audio_engine_failed", properties: ["message": message])
@@ -706,6 +760,7 @@ private func interpretSpeechSessionSideEffect(
             .cancel(id: SpeechSessionTaskID.transportEvents),
             .cancel(id: SpeechSessionTaskID.audioEngineEvents),
             .cancel(id: SpeechSessionTaskID.recordingAbortTimeout),
+            .cancel(id: SpeechSessionTaskID.evaluationTimeout),
             cancelProcessingTimeoutTasks(includeTotalCap: true),
             .fireAndForget {
                 let sessionID = await speechClient.activeSessionID()
@@ -728,6 +783,7 @@ private func interpretSpeechSessionSideEffect(
             .cancel(id: SpeechSessionTaskID.transportEvents),
             .cancel(id: SpeechSessionTaskID.audioEngineEvents),
             .cancel(id: SpeechSessionTaskID.recordingAbortTimeout),
+            .cancel(id: SpeechSessionTaskID.evaluationTimeout),
             cancelProcessingTimeoutTasks(includeTotalCap: true),
             .fireAndForget {
                 let taskID = await backgroundTasks.begin(
@@ -782,6 +838,7 @@ private func processingTimeoutEffects(
     enteredRecording: Bool,
     turnTimeoutTracking: TurnTimeoutTracking,
     speechCaptureGate: SpeechCaptureGate,
+    evaluationArrival: EvaluationArrivalBox,
     tracker: TrackerClientProtocol
 ) -> [Effect<AppAction>] {
     var effects: [Effect<AppAction>] = []
@@ -817,6 +874,20 @@ private func processingTimeoutEffects(
     if newPhase == .waitingUser || newPhase == .ended || newPhase == .failed {
         turnTimeoutTracking.disarm()
         effects.append(cancelProcessingTimeoutTasks(includeTotalCap: true))
+    }
+
+    if previousPhase != .waitingForEvaluation, newPhase == .waitingForEvaluation {
+        if evaluationArrival.consume() {
+            effects.append(.task {
+                return .speakingRoom(.session(.evaluationReceived))
+            })
+        } else {
+            effects.append(scheduleEvaluationWaitTask())
+        }
+    }
+
+    if previousPhase == .waitingForEvaluation, newPhase != .waitingForEvaluation {
+        effects.append(.cancel(id: SpeechSessionTaskID.evaluationTimeout))
     }
 
     return effects
@@ -881,6 +952,14 @@ private func scheduleRecordingAbortTask(captureGate: SpeechCaptureGate) -> Effec
         guard !Task.isCancelled else { return nil }
         captureGate.abort()
         return .speakingRoom(.session(.recordingTimedOut))
+    }
+}
+
+private func scheduleEvaluationWaitTask() -> Effect<AppAction> {
+    .task(id: SpeechSessionTaskID.evaluationTimeout) {
+        try? await Task.sleep(for: processingTimeouts.evaluationWait)
+        guard !Task.isCancelled else { return nil }
+        return .speakingRoom(.session(.evaluationTimedOut))
     }
 }
 

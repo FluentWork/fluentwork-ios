@@ -54,15 +54,16 @@ import Testing
     #expect(model.startTapIntent == .none)
 }
 
-@Test func speakingRoomWaitingForAIAnswerHidesHoldAndShowsProgress() {
+@Test func speakingRoomWaitingForAIAnswerHidesHoldAfterAbort() {
     let model = SpeakingRoomViewModel(phase: .waitingForAIAnswer, usesAutoVAD: true)
-    #expect(model.controlState.title == "AI 思考中…")
-    #expect(model.controlState.showsProgress == true)
+    #expect(model.controlState.title == "本轮已超时")
+    #expect(model.controlState.showsProgress == false)
     #expect(model.controlState.primaryAction == nil)
 }
 
 @Test func speakingRoomWaitingForAIAnswerManualShowsBeginTurn() {
     let model = SpeakingRoomViewModel(phase: .waitingForAIAnswer)
+    #expect(model.controlState.title == "本轮已超时")
     #expect(model.startTapIntent == .beginTurn)
     #expect(
         model.controlState.primaryAction
@@ -73,6 +74,7 @@ import Testing
 @Test func speakingRoomWaitingForEvaluationHidesHoldAndShowsProgress() {
     let model = SpeakingRoomViewModel(phase: .waitingForEvaluation, usesAutoVAD: true)
     #expect(model.controlState.title == "正在评价本次表现…")
+    #expect(model.controlState.detail == "大约 20 秒。也可以直接开口开始下一轮。")
     #expect(model.controlState.showsProgress == true)
     #expect(model.controlState.primaryAction == nil)
 }

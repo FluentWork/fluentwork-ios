@@ -15,11 +15,13 @@
 
 离开等待：
 
-- 两个等待态都可以 VAD / hold 进 `.recording`
-- `.evaluationReceived`：`.waitingForEvaluation` → `.waitingUser`
+- 两个等待态都可以 VAD / hold 进 `.recording`（评价等待会 `.stopPlayback`，避免残留 TTS）
+- `.evaluationReceived`：`.waitingForEvaluation` → `.waitingUser`（WSS `feedback.badge`；badge 若先于 `ai.turn.end` 到达，进入等待后立刻离开）
+- `.evaluationTimedOut`：20s 无 badge → `.waitingUser` + `.stopPlayback`。**不是** B15，不杀会话
 - `endTap` / `forceClose`：等待态 → `.ended`
 
 B15 的 `ai.turn.end outcome=timeout` **不走** 这条图，仍由 middleware 派发 `.failed("turn_timeout")` 杀会话。
+不要给 abort 落点再 arm 70s/90s「等 AI」——那一轮已经被 abort。
 
 ## 2. 根因
 
@@ -28,7 +30,7 @@ T-I21-1 只有类型。abort 仍回 `.waitingUser`，正常 `ai.turn.end` 也直
 ## 3. 方案
 
 - `SpeechSessionMachine.isValidTransition(from:to:)`：allow-list，含打断恢复 `* → waitingUser`、`isActive → ended/degradedText`、`!= ended → failed`
-- 新事件 `.evaluationReceived`（eval.frame 未到之前，下一轮开口也能离开评价等待）
+- 新事件 `.evaluationReceived` / `.evaluationTimedOut`（WSS 无 eval.frame 时用 `feedback.badge` + 20s watchdog；下一轮开口也能离开）
 - 机器仍纯函数；埋点继续 `.trackTransition`，不在 reduce 里打 tracker
 
 ## 4. 为何不折进现有路径
@@ -39,8 +41,8 @@ T-I21-1 只有类型。abort 仍回 `.waitingUser`，正常 `ai.turn.end` 也直
 
 ## 5. 影响面
 
-状态机边变了：abort 落点、正常 turn 结束落点。音频 / WSS 不变。`eval.frame` 还没有时，用户开口即可离开评价等待。
+状态机边变了：abort 落点、正常 turn 结束落点。`feedback.badge` 现在会离开评价等待。音频图在评价等待开口 / 评价超时 / 重连丢 turn 时会 `stopPlayback`。
 
 ## 6. 测试
 
-`swift test --filter "waitingForAIAnswer|waitingForEvaluation|isValidTransition|recordingTimedOutAborts|aiTurnEndHappyPathGreeting|bootstrapAITurnEnd"`
+`swift test --filter "waitingForAIAnswer|waitingForEvaluation|evaluationTimedOut|evaluationReceived|feedbackBadgeLeaves|isValidTransition|recordingTimedOutAborts|aiTurnEndHappyPathGreeting|bootstrapAITurnEnd"`

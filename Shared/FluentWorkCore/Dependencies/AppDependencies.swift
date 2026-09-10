@@ -43,12 +43,16 @@ public protocol AudioEngineProtocol: Sendable {
     func beginManualSpeech() async
     /// Emit `.speechEnded` for tap-to-talk. No-op if speech is not open.
     func endManualSpeech() async
+    /// Headset unplug / Bluetooth switch: re-apply full-duplex session and
+    /// reinstall the input tap. No-op if capture is not running.
+    func reconfigureForRouteChange() async
 }
 
 extension AudioEngineProtocol {
     public func setSpeechBoundaryMode(_ mode: SpeechBoundaryMode) async {}
     public func beginManualSpeech() async {}
     public func endManualSpeech() async {}
+    public func reconfigureForRouteChange() async {}
 }
 
 /// Decodes an inbound `WSAudioFrame` (Opus payload) into 16 kHz mono

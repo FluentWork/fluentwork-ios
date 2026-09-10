@@ -65,6 +65,19 @@ public enum SpeechSessionPhase: String, Equatable, Sendable, CaseIterable {
         processingSubStage != nil
     }
 
+    /// In-flight AI turn cannot be recovered after the socket comes back.
+    /// PCM is not replayed; land in `.waitingUser`.
+    public var discardsTurnOnReconnect: Bool {
+        switch self {
+        case .processingASR, .processingLLM, .processingReview,
+             .aiSpeaking, .waitingForEvaluation:
+            return true
+        case .idle, .connecting, .waitingUser, .recording,
+             .waitingForAIAnswer, .degradedText, .ended, .failed:
+            return false
+        }
+    }
+
     /// Derived from `phase` so callers do not have to keep a parallel field in sync.
     public var processingSubStage: ProcessingSubStage? {
         switch self {

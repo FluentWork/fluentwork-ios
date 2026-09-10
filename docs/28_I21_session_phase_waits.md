@@ -9,8 +9,8 @@
 
 本票只增加两个具名等待相位，不改 `SpeechSessionMachine` 的边。
 
-- `waitingForAIAnswer`：turn 已发出、还在等 AI 开口（I20 abort 之后的插入态，T-I21-2 再接线）
-- `waitingForEvaluation`：本轮说完、还在等评价帧
+- `waitingForAIAnswer`：I20 abort 落点。**不是**「等 AI 开口」。后端不应再 collectTurn；用户点「开始说话」进下一轮。票面曾写「等 `ai.text.start`」，实现已订正，见 `docs/37`。
+- `waitingForEvaluation`：`ai.turn.end` 之后等本轮 `feedback.badge`。WSS **没有**独立 eval.frame；20s 不到则回 `.waitingUser`，不 `.failed`。
 
 它们 **不是** processing 子阶段。`isProcessing == false`，避免 abort 后误 arm B15 70s。
 

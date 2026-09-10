@@ -312,6 +312,8 @@ private func consumeFirstEvent<T: Sendable>(
         if case .routeChanged = event { return event } else { return nil }
     }
     #expect(event == .routeChanged("oldDeviceUnavailable"))
+
+    await engine.reconfigureForRouteChange()
 }
 
 @available(iOS 17, macOS 14, *)

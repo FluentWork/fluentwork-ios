@@ -58,7 +58,9 @@
 33. `34_I20_manual_speech_boundary.md` — I20 Item 4 手动开口主路径，自动 VAD 降级
 34. `35_I20_trace_alignment_joint_debug.md` — I20 Item 3 `turn_id` + `log_id` 跨仓联调
 35. `36_sync_lock_boxes.md` — `OSAllocatedUnfairLock` 同步盒子；按真实双写路径覆盖并发
-36. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
+36. `37_wait_phase_watchdog_and_failure_matrix.md` — abort 落点语义、评价 20s watchdog、重连丢 turn、路由重配
+37. `38_wait_phase_update_analysis.md` — 本次收口的问题分析与图例（评审误判、死边、重连、badge 误清）
+38. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
 
 ---
 

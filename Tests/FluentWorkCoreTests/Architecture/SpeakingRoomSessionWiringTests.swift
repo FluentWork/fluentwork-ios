@@ -277,6 +277,20 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     try store.assert(equals: expected)
 }
 
+@Test func applySessionConnectingAgainDoesNotClearBadge() throws {
+    let initial = AppState(
+        speakingRoom: SpeakingRoomState(
+            phase: .connecting,
+            isBootstrapReady: true,
+            lastBadge: "表达自然",
+            badgeHits: 1
+        )
+    )
+    let store = TestStore(initialState: initial, reducer: appReducer)
+    store.send(.speakingRoom(.applySession(SpeechSessionState(phase: .connecting))))
+    try store.assert(equals: initial)
+}
+
 @Test func rawSessionEventsDoNotMutateStateInReducer() throws {
     let initial = AppState(
         speakingRoom: SpeakingRoomState(
