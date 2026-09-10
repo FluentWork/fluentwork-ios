@@ -293,7 +293,12 @@ private actor SuccessCounter {
 ///    another one here starts a ghost turn with no audio and the gateway hangs for 60s.)
 /// 3. Degraded text message handling
 /// 4. Transition telemetry emission
-@Suite("SpeechSessionMiddleware B14 Integration")
+/// `.serialized` because these tests register stubs into `Container`, whose
+/// `.shared` / `.singleton` scopes cache process-wide: two of them running at
+/// once can resolve each other's stub, and the loser's `emit` then goes to an
+/// engine nobody is reading. Serializing is what "these tests mutate global
+/// state" should look like — not a workaround for it.
+@Suite("SpeechSessionMiddleware B14 Integration", .serialized)
 struct SpeechSessionMiddlewareB14Tests {
 
     // MARK: - Server ASR Tests
@@ -615,6 +620,53 @@ struct SpeechSessionMiddlewareB14Tests {
             speechClient.transportEventsRequestCount == 1,
             "the reader belongs to the connection; one per session leaves competing iterators over one stream"
         )
+    }
+
+    /// The engine's reader has to survive a session ending too.
+    ///
+    /// Same shape as the transport's, same failure: the engine's `events` stream
+    /// lives as long as the engine, but the consumer was built by
+    /// `.createSession` and cancelled by `.endSession`. Measured on device, on
+    /// the first re-entered session: tapping 「开始说话」 did nothing at all.
+    /// `beginManualSpeech()` reached the engine and it emitted `.speechStarted`
+    /// — into a stream nobody was reading, so the machine stayed on
+    /// `waitingUser` and the tap looked like it had failed.
+    @MainActor
+    @Test func audioReaderSurvivesSessionEnd() async throws {
+        let container = Container()
+        container.reset()
+        container.processingTimeouts.register { ProcessingTimeouts(connectWait: .seconds(5)) }
+        defer { container.processingTimeouts.register { .standard } }
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+
+        // Session 1 — connect, then end it.
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        speechClient.emit(.stateChanged(.connected))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.endTap)))
+        try await waitForPhase(store, phase: .ended, timeout: 1_000_000_000)
+
+        // Session 2 — re-enter and connect.
+        store.dispatch(.speakingRoom(.applySession(.initial)))
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        speechClient.emit(.stateChanged(.connected))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+
+        // The tap: the engine reports speech starting. Nothing else carries it.
+        audioEngine.emit(.speechStarted)
+        do {
+            try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        } catch {
+            Issue.record("stuck at \(store.state.speakingRoom.phase) after emitting speechStarted")
+            throw error
+        }
     }
 
     /// Every session begins in `.connecting`, and nothing bounded it. The ASR /

@@ -75,7 +75,10 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
     // One reader per middleware instance (= per store), for its whole life.
     // Per instance rather than global so a test that builds its own store gets
     // its own pump instead of silently sharing one.
-    let transportPumpStarted = OnceFlag()
+    // The two readers, started once per middleware instance (= per store) and
+    // kept for its whole life. Per instance rather than global so a test that
+    // builds its own store gets its own pumps instead of silently sharing one.
+    let eventPumpsStarted = OnceFlag()
 
     return { store, action, next in
         if case .speakingRoom(.manualSpeechBegin) = action {
@@ -96,7 +99,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
         // 「连接中」 with nothing to show for it — the exact failure this whole
         // change exists to remove. See `transportEventPump`.
         var pumpEffects: [Effect<AppAction>] = []
-        if case .speakingRoom(.session(.sessionStartTap)) = action, transportPumpStarted.take() {
+        if case .speakingRoom(.session(.sessionStartTap)) = action, eventPumpsStarted.take() {
             pumpEffects.append(
                 transportEventPump(
                     container: resolvedContainer,
@@ -106,6 +109,19 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
                     evaluationArrival: evaluationArrival,
                     ttsDispatcher: ttsDispatcher,
                     ttsTrace: ttsTrace
+                )
+            )
+            // Both pumps, together. They are the two readers of process-lifetime
+            // streams, and leaving either one per-session reproduces the same
+            // failure for its own stream: the transport's leaves the room on
+            // 「连接中」, the engine's leaves 「开始说话」 doing nothing.
+            pumpEffects.append(
+                audioEventPump(
+                    container: resolvedContainer,
+                    dispatch: { store.dispatch($0) },
+                    turnCounter: turnCounter,
+                    timings: timings,
+                    speechCaptureGate: speechCaptureGate
                 )
             )
         }
@@ -312,6 +328,146 @@ internal final class TurnTimeoutTracking: @unchecked Sendable {
 /// The official guidance for `URLSessionWebSocketTask` is a long-lived receive
 /// loop; the transport already implements that. This is the same shape one
 /// layer up, so the reader outlives the sessions it reads for.
+/// The audio engine's event pump. One per store, never cancelled — the same
+/// shape as `transportEventPump`, and for the same reason: the engine's
+/// `events` stream lives as long as the engine, so a per-session consumer
+/// over it leaves a dying iterator competing with the next one, and a
+/// session-end cancellation can kill the *next* session's consumer instead.
+///
+/// Measured on device, on the first session re-entered after `.endSession`:
+/// tapping 「开始说话」 did nothing. `beginManualSpeech()` reached the engine
+/// and it emitted `.speechStarted` — into a stream nobody was reading. The
+/// machine stayed on `waitingUser`, so the tap looked like it had failed.
+///
+/// `pcmBuffer` / `isCapturingSpeech` are locals here and so now live as long
+/// as the store. Safe because `.speechStarted` clears the buffer *before*
+/// opening `speechCaptureGate`: nothing buffered in a previous session can
+/// reach the wire.
+private func audioEventPump(
+    container: Container,
+    dispatch: @escaping @MainActor (AppAction) -> Void,
+    turnCounter: TurnCountBox,
+    timings: SpeechSessionTimingsRecorder,
+    speechCaptureGate: SpeechCaptureGate
+) -> Effect<AppAction> {
+    let audioEngine = container.audioEngine()
+    let speechClient = container.speechSessionClient()
+    let dispatchBox = MainActorActionBox(dispatch: dispatch)
+    let tracker = container.tracker()
+
+    return .task {
+            // B13: Buffer PCM chunks during speech for client ASR transcription
+            var pcmBuffer: [Data] = []
+            var isCapturingSpeech = false
+            
+            for await event in audioEngine.events() {
+                if Task.isCancelled { return nil }
+    
+                switch event {
+                case .speechStarted:
+                    do {
+                        // Reset PCM buffer at the start of each turn
+                        pcmBuffer.removeAll()
+                        isCapturingSpeech = true
+                        speechCaptureGate.beginSpeech()
+    
+                        // No turnID on start — backend uses the next
+                        // user.speech.end's turnID as the dedupe scope.
+                        try await speechClient.sendSpeechBoundary(
+                            started: true,
+                            turnID: nil,
+                            text: nil
+                        )
+                        timings.mark(event: "vad_speech_start")
+                        await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechStart)))
+                    } catch {
+                        await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
+                        return nil
+                    }
+    
+                case .speechEnded:
+                    do {
+                        isCapturingSpeech = false
+                        // I20: abort already closed the utterance. Do not send
+                        // user.speech.end — that would start collectTurn.
+                        guard speechCaptureGate.isOpen else {
+                            pcmBuffer.removeAll()
+                            continue
+                        }
+                        speechCaptureGate.endSpeech()
+    
+                        // B14 change: Server-side ASR (Volcengine Duplex relay) now provides
+                        // the authoritative transcript via WSS `client.asr.transcription` frame.
+                        // We no longer run local Apple Speech ASR here.
+                        // We still signal turn-end so the backend can track the turn boundary.
+                        // The backend will use its own Doubao transcript for badge detection.
+                        let turnID = "turn-\(turnCounter.get() + 1)"
+    
+                        try await speechClient.sendSpeechBoundary(
+                            started: false,
+                            turnID: turnID,
+                            text: nil
+                        )
+                        timings.markTurnStarted(turnID)
+                        tracker.track(
+                            event: "speech_turn_ended",
+                            properties: [
+                                "turn_id": turnID,
+                                "source": "ios",
+                                "stage": "turn_boundary",
+                            ]
+                        )
+                        let sessionID = await container.speechSessionClient().activeSessionID()
+                        emitTurnOutcome(
+                            container: container,
+                            sessionID: sessionID,
+                            turnID: turnID,
+                            outcome: .ok
+                        )
+                        await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechEnd(turnID: turnID))))
+                        await dispatchBox.dispatch(.speakingRoom(.userTurnStarted(turnID: turnID)))
+                        
+                        // Clear buffer after use
+                        pcmBuffer.removeAll()
+                    } catch {
+                        await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
+                        return nil
+                    }
+    
+                case let .pcmChunk(data):
+                    do {
+                        // B13: Buffer PCM during speech capture for client ASR
+                        if isCapturingSpeech {
+                            pcmBuffer.append(data)
+                        }
+                        guard speechCaptureGate.shouldForwardPCM else { continue }
+    
+                        try await speechClient.sendAudioPCM(data)
+                    } catch {
+                        await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
+                        return nil
+                    }
+    
+                case .interruptedBySystem:
+                    await dispatchBox.dispatch(.speakingRoom(.session(.interruptedBySystem)))
+    
+                case .systemInterruptEnded:
+                    await dispatchBox.dispatch(.speakingRoom(.session(.systemInterruptEnded)))
+    
+                case let .routeChanged(reason):
+                    timings.mark(event: "audio_route_changed", properties: ["reason": reason])
+                    await audioEngine.reconfigureForRouteChange()
+    
+                case let .failed(message):
+                    timings.mark(event: "audio_engine_failed", properties: ["message": message])
+                    await dispatchBox.dispatch(.speakingRoom(.session(.failed(message))))
+                    return nil
+                }
+            }
+            return nil
+    }
+}
+
 private func transportEventPump(
     container: Container,
     dispatch: @escaping @MainActor (AppAction) -> Void,
@@ -723,117 +879,6 @@ private func interpretSpeechSessionSideEffect(
                     return .speakingRoom(.session(.failed(error.localizedDescription)))
                 }
                 return nil
-            },
-            .task(id: SpeechSessionTaskID.audioEngineEvents) {
-                // B13: Buffer PCM chunks during speech for client ASR transcription
-                var pcmBuffer: [Data] = []
-                var isCapturingSpeech = false
-                
-                for await event in audioEngine.events() {
-                    if Task.isCancelled { return nil }
-
-                    switch event {
-                    case .speechStarted:
-                        do {
-                            // Reset PCM buffer at the start of each turn
-                            pcmBuffer.removeAll()
-                            isCapturingSpeech = true
-                            speechCaptureGate.beginSpeech()
-
-                            // No turnID on start — backend uses the next
-                            // user.speech.end's turnID as the dedupe scope.
-                            try await speechClient.sendSpeechBoundary(
-                                started: true,
-                                turnID: nil,
-                                text: nil
-                            )
-                            timings.mark(event: "vad_speech_start")
-                            await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechStart)))
-                        } catch {
-                            await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
-                            return nil
-                        }
-
-                    case .speechEnded:
-                        do {
-                            isCapturingSpeech = false
-                            // I20: abort already closed the utterance. Do not send
-                            // user.speech.end — that would start collectTurn.
-                            guard speechCaptureGate.isOpen else {
-                                pcmBuffer.removeAll()
-                                continue
-                            }
-                            speechCaptureGate.endSpeech()
-
-                            // B14 change: Server-side ASR (Volcengine Duplex relay) now provides
-                            // the authoritative transcript via WSS `client.asr.transcription` frame.
-                            // We no longer run local Apple Speech ASR here.
-                            // We still signal turn-end so the backend can track the turn boundary.
-                            // The backend will use its own Doubao transcript for badge detection.
-                            let turnID = "turn-\(turnCounter.get() + 1)"
-
-                            try await speechClient.sendSpeechBoundary(
-                                started: false,
-                                turnID: turnID,
-                                text: nil
-                            )
-                            timings.markTurnStarted(turnID)
-                            tracker.track(
-                                event: "speech_turn_ended",
-                                properties: [
-                                    "turn_id": turnID,
-                                    "source": "ios",
-                                    "stage": "turn_boundary",
-                                ]
-                            )
-                            let sessionID = await container.speechSessionClient().activeSessionID()
-                            emitTurnOutcome(
-                                container: container,
-                                sessionID: sessionID,
-                                turnID: turnID,
-                                outcome: .ok
-                            )
-                            await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechEnd(turnID: turnID))))
-                            await dispatchBox.dispatch(.speakingRoom(.userTurnStarted(turnID: turnID)))
-                            
-                            // Clear buffer after use
-                            pcmBuffer.removeAll()
-                        } catch {
-                            await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
-                            return nil
-                        }
-
-                    case let .pcmChunk(data):
-                        do {
-                            // B13: Buffer PCM during speech capture for client ASR
-                            if isCapturingSpeech {
-                                pcmBuffer.append(data)
-                            }
-                            guard speechCaptureGate.shouldForwardPCM else { continue }
-
-                            try await speechClient.sendAudioPCM(data)
-                        } catch {
-                            await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
-                            return nil
-                        }
-
-                    case .interruptedBySystem:
-                        await dispatchBox.dispatch(.speakingRoom(.session(.interruptedBySystem)))
-
-                    case .systemInterruptEnded:
-                        await dispatchBox.dispatch(.speakingRoom(.session(.systemInterruptEnded)))
-
-                    case let .routeChanged(reason):
-                        timings.mark(event: "audio_route_changed", properties: ["reason": reason])
-                        await audioEngine.reconfigureForRouteChange()
-
-                    case let .failed(message):
-                        timings.mark(event: "audio_engine_failed", properties: ["message": message])
-                        await dispatchBox.dispatch(.speakingRoom(.session(.failed(message))))
-                        return nil
-                    }
-                }
-                return nil
             }
         )
 
@@ -897,7 +942,8 @@ private func interpretSpeechSessionSideEffect(
             // connection. Cancelling it here killed the *next* session's
             // consumer when the timing fell wrong, and the room sat on
             // 「连接中」 with nothing in the log. See `transportEventPump`.
-            .cancel(id: SpeechSessionTaskID.audioEngineEvents),
+            // No `.cancel(id: audioEngineEvents)`: that reader belongs to the
+            // engine, not to this session. See `audioEventPump`.
             .cancel(id: SpeechSessionTaskID.recordingAbortTimeout),
             .cancel(id: SpeechSessionTaskID.evaluationTimeout),
             cancelProcessingTimeoutTasks(includeTotalCap: true),
@@ -923,7 +969,8 @@ private func interpretSpeechSessionSideEffect(
             // connection. Cancelling it here killed the *next* session's
             // consumer when the timing fell wrong, and the room sat on
             // 「连接中」 with nothing in the log. See `transportEventPump`.
-            .cancel(id: SpeechSessionTaskID.audioEngineEvents),
+            // No `.cancel(id: audioEngineEvents)`: that reader belongs to the
+            // engine, not to this session. See `audioEventPump`.
             .cancel(id: SpeechSessionTaskID.recordingAbortTimeout),
             .cancel(id: SpeechSessionTaskID.evaluationTimeout),
             cancelProcessingTimeoutTasks(includeTotalCap: true),
