@@ -83,7 +83,23 @@ xcodebuild -project FluentWorkHost.xcodeproj -scheme FluentWorkHost \
 
 既有测试 `evaluationTimedOutReturnsToWaitingUserWithoutFailing` **连同更新** —— 它把旧契约（超时必须停播）钉住了。按 `agents/shared/defect-fix-discipline.md`：旧契约不成立时改测试,并在测试里写明为什么。该断言已改为 `== false` 并附上原因。
 
-## 6. 本票不做
+## 6. 与 badge 的关系（F19 之后的核查）
+
+本票**只动了一个转移的副作用列表**，以下全部未动：`feedback.badge` 帧的处理（`badgeHit` 与 `evaluationReceived` 无条件派发）、徽章渲染（按时间过滤，不看相位）、状态机的 `evaluationReceived` 分支、`EvaluationArrivalBox`。
+
+**但两个时钟确实又碰上了：**
+
+```
+评估窗口  evaluationWait       = 20s   固定
+徽章可见  visibleWindowSeconds = 4s    固定
+播放      ── 由 AI 说了多长决定 ── 无上界
+```
+
+本票之前，20s 超时会把音频剪断，所以"徽章出现时房间是安静的"。现在音频继续，**长回复会盖过徽章 4 秒的整个显示窗口** —— 用户注意力在听，可能根本看不到徽章。这与本票是**同一类错误**：用一个固定时钟去管一件长度由内容决定的事，只是方向相反。
+
+三条待验已记录在 meta `77_` **P1-8**（含验法）。
+
+## 7. 本票不做
 
 - **不改 `evaluationWait` 的 20 秒**：它管的是"徽章来得太晚",与音频无关。改它只是把问题推远。
 - **不做"按音频时长排程停播"**：客户端不知道音频还剩多少。真要感知播放完毕,应该由播放节点回调驱动,那是另一票。
