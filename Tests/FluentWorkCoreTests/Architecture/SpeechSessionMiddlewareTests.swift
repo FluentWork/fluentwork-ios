@@ -559,6 +559,64 @@ struct SpeechSessionMiddlewareB14Tests {
     ///
     /// The budget is injected so the overrun is observable in milliseconds; the
     /// real 15s is why this path had no coverage at all.
+    /// The connection's reader is built once per store, not once per session.
+    ///
+    /// `AsyncStream` is a single-consumer sequence and the transport's stream
+    /// lives as long as the transport, so asking for it again on every session
+    /// start leaves a dying iterator competing with the live one for the same
+    /// events — and the `.cancel(id: transportEvents)` that `.endSession` used
+    /// to dispatch could land on the *next* session's consumer, which then
+    /// exits without a trace.
+    ///
+    /// On device that presented as a room stuck on 「连接中」: the consumer
+    /// started and exited 159ms later while the socket was up and the client
+    /// was writing to it successfully.
+    ///
+    /// Driven start → end → re-enter, the old shape does not merely look wrong,
+    /// it **hangs**: the second session never reaches `.aiSpeaking`, and the
+    /// wait times out. Verified against the pre-change middleware, where the
+    /// failure lands on the second session's `waitForPhase(.aiSpeaking)`.
+    ///
+    /// The test drives it deterministically rather than racing: `.endSession`
+    /// dispatches `.cancel(id: transportEvents)` as an effect, and a re-entry
+    /// that follows within the same instant starts the next session's consumer
+    /// before that cancellation lands — so the cancellation kills the *new*
+    /// reader. On device the same window is a few hundred milliseconds and the
+    /// user re-enters by hand, which is why it only sometimes failed there.
+    @MainActor
+    @Test func transportReaderIsBuiltOncePerStoreNotOncePerSession() async throws {
+        let container = Container()
+        container.reset()
+        container.processingTimeouts.register { ProcessingTimeouts(connectWait: .seconds(5)) }
+        defer { container.processingTimeouts.register { .standard } }
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+
+        // Session 1 — start, connect, then end it.
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        speechClient.emit(.stateChanged(.connected))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.endTap)))
+        try await waitForPhase(store, phase: .ended, timeout: 1_000_000_000)
+
+        // Session 2 — leave and re-enter, exactly the flow that failed.
+        store.dispatch(.speakingRoom(.applySession(.initial)))
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        speechClient.emit(.stateChanged(.connected))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+
+        #expect(
+            speechClient.transportEventsRequestCount == 1,
+            "the reader belongs to the connection; one per session leaves competing iterators over one stream"
+        )
+    }
+
     /// Every session begins in `.connecting`, and nothing bounded it. The ASR /
     /// LLM / review / evaluation / recording / reconnect / turn timers all start
     /// later, so a connect that never delivered `.socketReady` — the transport
@@ -1469,8 +1527,15 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
     func sendAudioPCM(_ data: Data) async throws {}
     func submitTranscript(_ text: String) async {}
 
+    /// Counted so a test can assert the reader is built once per store rather
+    /// than once per session. The stream itself is a single process-lifetime
+    /// sequence (as the real transport's is), so asking for it per session
+    /// means a fresh iterator competing with the previous one for events.
+    private(set) var transportEventsRequestCount = 0
+
     func transportEvents() -> AsyncStream<SocketTransportEvent> {
-        stream
+        transportEventsRequestCount += 1
+        return stream
     }
 
     func pollReview(sessionID: String) async throws -> ReviewPollResponse {

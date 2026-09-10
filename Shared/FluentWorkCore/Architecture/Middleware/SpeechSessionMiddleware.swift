@@ -32,6 +32,19 @@ public enum SpeechSessionTaskID {
     public static let connectTimeout: CancellationID = "speechSession.connectTimeout"
 }
 
+/// A one-shot latch. `take()` returns true exactly once.
+internal final class OnceFlag: @unchecked Sendable {
+    private let storage = OSAllocatedUnfairLock(initialState: false)
+
+    func take() -> Bool {
+        storage.withLock { taken in
+            guard !taken else { return false }
+            taken = true
+            return true
+        }
+    }
+}
+
 /// I20 T-I20-1: max time in `.recording` before `client.turn.abort`.
 /// Not B15's 70s collectTurn fallback (`ProcessingTimeouts.totalCap`).
 private let recordingAbortTimeout: Duration = .seconds(60)
@@ -59,6 +72,10 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
     let evaluationArrival = EvaluationArrivalBox()
     let ttsDispatcher = TTSFrameDispatcher(decoder: resolvedContainer.ttsDecoder())
     let ttsTrace = TTSStreamTrace()
+    // One reader per middleware instance (= per store), for its whole life.
+    // Per instance rather than global so a test that builds its own store gets
+    // its own pump instead of silently sharing one.
+    let transportPumpStarted = OnceFlag()
 
     return { store, action, next in
         if case .speakingRoom(.manualSpeechBegin) = action {
@@ -72,8 +89,29 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
             }
         }
 
+        // The connection's reader starts the first time a session is asked for,
+        // and only then. Deliberately **not** tied to `.lifecycle(.appLaunched)`:
+        // that would make "the transport is readable" depend on an unrelated
+        // event being dispatched, and a path that forgot it would hang on
+        // 「连接中」 with nothing to show for it — the exact failure this whole
+        // change exists to remove. See `transportEventPump`.
+        var pumpEffects: [Effect<AppAction>] = []
+        if case .speakingRoom(.session(.sessionStartTap)) = action, transportPumpStarted.take() {
+            pumpEffects.append(
+                transportEventPump(
+                    container: resolvedContainer,
+                    dispatch: { store.dispatch($0) },
+                    timings: timings,
+                    turnTimeoutTracking: turnTimeoutTracking,
+                    evaluationArrival: evaluationArrival,
+                    ttsDispatcher: ttsDispatcher,
+                    ttsTrace: ttsTrace
+                )
+            )
+        }
+
         guard case let .speakingRoom(.session(event)) = action else {
-            return next(action)
+            return .merge([next(action)] + pumpEffects)
         }
 
         var session = store.state.speakingRoom.session
@@ -126,7 +164,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
             tracker: resolvedContainer.tracker(),
             timeouts: resolvedContainer.processingTimeouts()
         )
-        return .merge([apply] + interpreted + timeoutEffects)
+        return .merge([apply] + interpreted + timeoutEffects + pumpEffects)
     }
 }
 
@@ -260,6 +298,346 @@ internal final class TurnTimeoutTracking: @unchecked Sendable {
     }
 }
 
+/// The transport's event pump. One per process, never cancelled.
+///
+/// `AsyncStream` is a single-consumer sequence and the transport's stream
+/// lives as long as the transport (`socketTransport` is a `.singleton`), so a
+/// per-session iterator leaves a dying consumer competing with the next one
+/// for the same events — and the cancellation that ends a session can land on
+/// the *next* session's consumer instead, which then exits without a trace.
+/// A room stuck on 「连接中」 is exactly that shape: measured on device, the
+/// consumer started and exited 159ms later while the socket was up and the
+/// client was writing to it successfully.
+///
+/// The official guidance for `URLSessionWebSocketTask` is a long-lived receive
+/// loop; the transport already implements that. This is the same shape one
+/// layer up, so the reader outlives the sessions it reads for.
+private func transportEventPump(
+    container: Container,
+    dispatch: @escaping @MainActor (AppAction) -> Void,
+    timings: SpeechSessionTimingsRecorder,
+    turnTimeoutTracking: TurnTimeoutTracking,
+    evaluationArrival: EvaluationArrivalBox,
+    ttsDispatcher: TTSFrameDispatcher,
+    ttsTrace: TTSStreamTrace
+) -> Effect<AppAction> {
+    let audioEngine = container.audioEngine()
+    let speechClient = container.speechSessionClient()
+    let tracker = container.tracker()
+    let dispatchBox = MainActorActionBox(dispatch: dispatch)
+
+    // No id, and never cancelled: the pump is not a session resource.
+    return .task {
+            // A session that never leaves `.connecting` has exactly one
+            // place to look: this loop. The transport emits `.connected`
+            // locally the moment the auth frame is sent, so if the machine
+            // stayed in `.connecting` the event was either never seen here
+            // or dropped by the cancellation check below — and until now
+            // neither left a trace.
+            timings.mark(event: "transport_consumer_start")
+            for await event in speechClient.transportEvents() {
+                // Checked *after* `for await` has already taken the event, so
+                // this branch discards a delivered event. That is the shape
+                // of a lost `.connected`: a stale cancellation lands as the
+                // session is starting, and the first event of the new
+                // session — the only one that can leave `.connecting` — is
+                // thrown away in silence. Record it instead.
+                if Task.isCancelled {
+                    timings.mark(
+                        event: "transport_consumer_cancelled_with_event",
+                        properties: ["dropped": describeTransportEvent(event)]
+                    )
+                    return nil
+                }
+    
+                // The one event that can leave `.connecting`. Marked
+                // separately from everything else because a room stuck on
+                // 「连接中」 has exactly two explanations — the consumer was
+                // not running when this was emitted, or it was running and
+                // the event went somewhere else — and this line is what
+                // tells them apart.
+                if case .stateChanged(.connected) = event {
+                    timings.mark(event: "transport_consumer_saw_connected")
+                }
+    
+                // B14 debug: log all incoming transport control events to diagnose
+                // missing feedback.badge frames. Remove after root cause is confirmed.
+                #if DEBUG
+                if case let .control(frame) = event {
+                    let typeTag: String
+                    switch frame {
+                    case .feedbackBadge:  typeTag = "feedback.badge"
+                    case .userSpeechStart: typeTag = "user.speech.start"
+                    case .userSpeechEnd:   typeTag = "user.speech.end"
+                    case .clientTurnAbort: typeTag = "client.turn.abort"
+                    case let .aiTurnEnd(_, outcome, _):
+                        typeTag = "ai.turn.end" + (outcome.map { "(\($0.rawValue))" } ?? "")
+                    case .ping:            typeTag = "ping"
+                    case .pong:            typeTag = "pong"
+                    case .clientASRTranscription: typeTag = "client.asr.transcription"
+                    case .sessionReady:    typeTag = "session.ready"
+                    case .sessionStart:   typeTag = "session.start"
+                    case .aiTextDelta:    typeTag = "ai.text.delta"
+                    case .aiAudioChunk:   typeTag = "ai.audio.chunk"
+                    case .aiTTSStart:     typeTag = "ai.tts.start"
+                    case .aiTTSEnd:       typeTag = "ai.tts.end"
+                    case .interrupt:       typeTag = "interrupt"
+                    case .sessionEnd:      typeTag = "session.end"
+                    case .error:           typeTag = "error"
+                    case .auth, .handshake: typeTag = "<auth/handshake>"
+                    }
+                    tracker.track(event: "transport_rx", properties: [
+                        "frame_type": typeTag,
+                        "badge_count": {
+                            if case let .feedbackBadge(b, _, t, _) = frame {
+                                return "badge=\(b) tier=\(t?.rawValue ?? "nil")"
+                            }
+                            return "n/a"
+                        }(),
+                    ])
+                }
+                #endif
+    
+                switch event {
+                case let .audio(frame):
+                    await dispatchBox.dispatch(.speakingRoom(.session(.aiFirstAudioChunk)))
+                    timings.mark(
+                        event: "ai_first_chunk",
+                        properties: [
+                            "sequence": String(frame.sequence),
+                            "payload_bytes": String(frame.opusPayload.count),
+                        ]
+                    )
+                    do {
+                        let consumedByTTS = try ttsDispatcher.handle(audio: frame)
+                        if consumedByTTS {
+                            let count = ttsTrace.recordAudio()
+                            if count == 1 {
+                                container.tracker().track(
+                                    event: "tts_first_audio",
+                                    properties: [
+                                        "turn_id": ttsDispatcher.activeTurnID() ?? "nil",
+                                        "sequence": String(frame.sequence),
+                                        "payload_bytes": String(frame.opusPayload.count),
+                                    ]
+                                )
+                            }
+                        } else {
+                            await audioEngine.play(frame: frame)
+                        }
+                    } catch {
+                        container.tracker().track(
+                            event: "tts_decoder_failed",
+                            properties: [
+                                "phase": "feed",
+                                "sequence": String(frame.sequence),
+                                "error": String(describing: error),
+                            ]
+                        )
+                    }
+    
+                case let .control(.aiTTSStart(turnID, voiceID, sampleRate, codec)):
+                    do {
+                        try ttsDispatcher.handle(
+                            control: .aiTTSStart(
+                                turnID: turnID,
+                                voiceID: voiceID,
+                                sampleRate: sampleRate,
+                                codec: codec
+                            )
+                        )
+                        ttsTrace.reset()
+                        container.tracker().track(
+                            event: "tts_start",
+                            properties: [
+                                "turn_id": turnID,
+                                "voice_id": voiceID,
+                                "sample_rate": String(sampleRate),
+                                "codec": codec,
+                            ]
+                        )
+                    } catch {
+                        container.tracker().track(
+                            event: "tts_decoder_failed",
+                            properties: [
+                                "phase": "prepare",
+                                "turn_id": turnID,
+                                "error": String(describing: error),
+                            ]
+                        )
+                    }
+    
+                case let .control(.aiTTSEnd(turnID, completionStatus, durationMs)):
+                    do {
+                        try ttsDispatcher.handle(
+                            control: .aiTTSEnd(
+                                turnID: turnID,
+                                completionStatus: completionStatus,
+                                durationMs: durationMs
+                            )
+                        )
+                        container.tracker().track(
+                            event: "tts_end",
+                            properties: [
+                                "turn_id": turnID,
+                                "completion_status": completionStatus,
+                                "duration_ms": durationMs.map(String.init) ?? "nil",
+                                "audio_frames": String(ttsTrace.audioFrameCount()),
+                            ]
+                        )
+                    } catch {
+                        container.tracker().track(
+                            event: "tts_decoder_failed",
+                            properties: [
+                                "phase": "finish",
+                                "turn_id": turnID,
+                                "error": String(describing: error),
+                            ]
+                        )
+                    }
+    
+                case let .control(.feedbackBadge(badge, phraseBlockID, tier, turnID)):
+                    // WSS has no eval.frame. `feedback.badge` is the turn-level
+                    // signal that can leave `.waitingForEvaluation`. Session
+                    // review stays on REST (I16).
+                    evaluationArrival.mark()
+                    let displayTier = tier.map(BadgeFeedEntry.Tier.from(transport:))
+                    await dispatchBox.dispatch(
+                        .speakingRoom(.badgeHit(
+                            badge: badge,
+                            phraseBlockID: phraseBlockID,
+                            tier: displayTier,
+                            turnID: turnID
+                        ))
+                    )
+                    await dispatchBox.dispatch(
+                        .speakingRoom(.session(.evaluationReceived))
+                    )
+    
+                case let .control(.aiTurnEnd(turnID, outcome, logID)):
+                    // B15-I3: capture the vendor log_id from the first ai.turn.end.
+                    // setLogID is idempotent (only the first call stores the value).
+                    timings.setLogID(logID)
+                    // B15: ai.turn.end arrived — cancel the turn timeout timer so it
+                    // doesn't fire and cause a duplicate session.end. Safe to call
+                    // even if the timer was never started.
+                    turnTimeoutTracking.disarm()
+                    // B15: when backend explicitly reports outcome=timeout, dispatch
+                    // the same .failed("turn_timeout") as the 70s client-side fallback.
+                    // This makes the explicit timeout path consistent with the implicit
+                    // 70s timer path — both end the session identically.
+                    if outcome == .timeout {
+                        await dispatchBox.dispatch(.speakingRoom(.session(.failed("turn_timeout"))))
+                    } else {
+                        await dispatchBox.dispatch(.speakingRoom(.session(.aiTurnEnd)))
+                        await dispatchBox.dispatch(.speakingRoom(.aiTurnFinalized(turnID: turnID)))
+                        if let turnID {
+                            timings.markTurnEnded(turnID, source: "ios", stage: "ai_turn_end")
+                        }
+                        // B15-I3: log_id is now included in all mark() calls automatically.
+                        timings.mark(
+                            event: "ai_turn_end",
+                            properties: [
+                                "turn_id": turnID ?? "nil",
+                                "outcome": outcome?.rawValue ?? "nil", // B15: log outcome
+                                "log_id": logID ?? "nil", // B15-I3: vendor trace log_id
+                            ]
+                        )
+                    }
+    
+                case let .control(.aiTextDelta(text)):
+                    await dispatchBox.dispatch(
+                        .speakingRoom(.aiTurnTextDelta(text: text, turnID: nil))
+                    )
+    
+                case let .control(.clientASRTranscription(text, turnID)):
+                    // Display-layer transcript plus the ASR → LLM hop.
+                    // `.session(.serverASRReceived)` advances processingASR →
+                    // processingLLM; `.serverASRReceived` still updates the
+                    // speaking-room transcript overlay.
+                    await dispatchBox.dispatch(
+                        .speakingRoom(.session(.serverASRReceived(text: text, turnID: turnID)))
+                    )
+                    await dispatchBox.dispatch(
+                        .speakingRoom(.serverASRReceived(text: text, turnID: turnID))
+                    )
+                    tracker.track(
+                        event: "server_asr_received_full",
+                        properties: [
+                            "turn_id": turnID ?? "nil",
+                            "text_bytes": String(text.utf8.count),
+                            "text": text,
+                        ]
+                    )
+                    timings.mark(
+                        event: "server_asr_received",
+                        properties: [
+                            "turn_id": turnID ?? "nil",
+                            "text_bytes": String(text.utf8.count),
+                        ]
+                    )
+                    // NOTE: We intentionally do NOT call `sendSpeechBoundary` here.
+                    // The original iOS VAD already fired `user.speech.end` when the user
+                    // actually stopped speaking, which is what triggered the Volc commit
+                    // that produced this transcript. Re-emitting `user.speech.end` on
+                    // receipt of the relay frame would start a phantom second turn with
+                    // no audio, causing the gateway to wait 60s for nothing and the
+                    // client to surface "sockettransporterror error 3".
+                    // The backend already pulls the authoritative transcript out of
+                    // `ProviderOutbound.ServerASRText` for badge hit detection, so
+                    // nothing is lost by not pushing the text again.
+    
+                case let .diagnostic(.receiveLatency(frameType, sizeBytes, elapsedMs)):
+                    tracker.track(
+                        event: "timing_socket_receive",
+                        properties: [
+                            "frame_type": frameType,
+                            "size_bytes": String(sizeBytes),
+                            "elapsed_ms": String(format: "%.3f", elapsedMs),
+                        ]
+                    )
+    
+                // The barge-in watermark discarding inbound audio. Reported
+                // at the start and end of each run, so `dropped` is the size
+                // of the loss. A `sequence` at or below `watermark` on a
+                // later turn is the signature of the gateway's numbering
+                // going backwards — which is what makes this event worth
+                // more than the silence it replaces.
+                case let .diagnostic(.audioFrameDropped(sequence, watermark, dropped)):
+                    tracker.track(
+                        event: "transport_audio_dropped",
+                        properties: [
+                            "sequence": String(sequence),
+                            "watermark": String(watermark),
+                            "dropped": String(dropped),
+                        ]
+                    )
+    
+                default:
+                    guard let mapped = SocketTransportEventMapper.speakingRoomAction(for: event),
+                          let action = SpeakingRoomAction(mapped)
+                    else {
+                        continue
+                    }
+                    await dispatchBox.dispatch(.speakingRoom(action))
+                }
+            }
+            // The loop exits for two very different reasons and this mark
+            // has to say which. `for await` on a cancelled task returns nil
+            // and ends the loop *normally* — it does not re-enter the body,
+            // so the check inside cannot catch it. Reading `isCancelled`
+            // here is what separates "cancelled" from "the transport's
+            // stream is finished and can never yield again": the first is a
+            // stale cancellation, the second means the transport object is
+            // gone, and they need opposite fixes. Anything else is a guess.
+            timings.mark(
+                event: "transport_consumer_exit",
+                properties: ["cancelled": Task.isCancelled ? "true" : "false"]
+            )
+            return nil
+    }
+}
+
 private func interpretSpeechSessionSideEffect(
     _ effect: SpeechSessionSideEffect,
     container: Container,
@@ -344,315 +722,6 @@ private func interpretSpeechSessionSideEffect(
                 } catch {
                     return .speakingRoom(.session(.failed(error.localizedDescription)))
                 }
-                return nil
-            },
-            .task(id: SpeechSessionTaskID.transportEvents) {
-                // A session that never leaves `.connecting` has exactly one
-                // place to look: this loop. The transport emits `.connected`
-                // locally the moment the auth frame is sent, so if the machine
-                // stayed in `.connecting` the event was either never seen here
-                // or dropped by the cancellation check below — and until now
-                // neither left a trace.
-                timings.mark(event: "transport_consumer_start")
-                for await event in speechClient.transportEvents() {
-                    // Checked *after* `for await` has already taken the event, so
-                    // this branch discards a delivered event. That is the shape
-                    // of a lost `.connected`: a stale cancellation lands as the
-                    // session is starting, and the first event of the new
-                    // session — the only one that can leave `.connecting` — is
-                    // thrown away in silence. Record it instead.
-                    if Task.isCancelled {
-                        timings.mark(
-                            event: "transport_consumer_cancelled_with_event",
-                            properties: ["dropped": describeTransportEvent(event)]
-                        )
-                        return nil
-                    }
-
-                    // The one event that can leave `.connecting`. Marked
-                    // separately from everything else because a room stuck on
-                    // 「连接中」 has exactly two explanations — the consumer was
-                    // not running when this was emitted, or it was running and
-                    // the event went somewhere else — and this line is what
-                    // tells them apart.
-                    if case .stateChanged(.connected) = event {
-                        timings.mark(event: "transport_consumer_saw_connected")
-                    }
-
-                    // B14 debug: log all incoming transport control events to diagnose
-                    // missing feedback.badge frames. Remove after root cause is confirmed.
-                    #if DEBUG
-                    if case let .control(frame) = event {
-                        let typeTag: String
-                        switch frame {
-                        case .feedbackBadge:  typeTag = "feedback.badge"
-                        case .userSpeechStart: typeTag = "user.speech.start"
-                        case .userSpeechEnd:   typeTag = "user.speech.end"
-                        case .clientTurnAbort: typeTag = "client.turn.abort"
-                        case let .aiTurnEnd(_, outcome, _):
-                            typeTag = "ai.turn.end" + (outcome.map { "(\($0.rawValue))" } ?? "")
-                        case .ping:            typeTag = "ping"
-                        case .pong:            typeTag = "pong"
-                        case .clientASRTranscription: typeTag = "client.asr.transcription"
-                        case .sessionReady:    typeTag = "session.ready"
-                        case .sessionStart:   typeTag = "session.start"
-                        case .aiTextDelta:    typeTag = "ai.text.delta"
-                        case .aiAudioChunk:   typeTag = "ai.audio.chunk"
-                        case .aiTTSStart:     typeTag = "ai.tts.start"
-                        case .aiTTSEnd:       typeTag = "ai.tts.end"
-                        case .interrupt:       typeTag = "interrupt"
-                        case .sessionEnd:      typeTag = "session.end"
-                        case .error:           typeTag = "error"
-                        case .auth, .handshake: typeTag = "<auth/handshake>"
-                        }
-                        tracker.track(event: "transport_rx", properties: [
-                            "frame_type": typeTag,
-                            "badge_count": {
-                                if case let .feedbackBadge(b, _, t, _) = frame {
-                                    return "badge=\(b) tier=\(t?.rawValue ?? "nil")"
-                                }
-                                return "n/a"
-                            }(),
-                        ])
-                    }
-                    #endif
-
-                    switch event {
-                    case let .audio(frame):
-                        await dispatchBox.dispatch(.speakingRoom(.session(.aiFirstAudioChunk)))
-                        timings.mark(
-                            event: "ai_first_chunk",
-                            properties: [
-                                "sequence": String(frame.sequence),
-                                "payload_bytes": String(frame.opusPayload.count),
-                            ]
-                        )
-                        do {
-                            let consumedByTTS = try ttsDispatcher.handle(audio: frame)
-                            if consumedByTTS {
-                                let count = ttsTrace.recordAudio()
-                                if count == 1 {
-                                    container.tracker().track(
-                                        event: "tts_first_audio",
-                                        properties: [
-                                            "turn_id": ttsDispatcher.activeTurnID() ?? "nil",
-                                            "sequence": String(frame.sequence),
-                                            "payload_bytes": String(frame.opusPayload.count),
-                                        ]
-                                    )
-                                }
-                            } else {
-                                await audioEngine.play(frame: frame)
-                            }
-                        } catch {
-                            container.tracker().track(
-                                event: "tts_decoder_failed",
-                                properties: [
-                                    "phase": "feed",
-                                    "sequence": String(frame.sequence),
-                                    "error": String(describing: error),
-                                ]
-                            )
-                        }
-
-                    case let .control(.aiTTSStart(turnID, voiceID, sampleRate, codec)):
-                        do {
-                            try ttsDispatcher.handle(
-                                control: .aiTTSStart(
-                                    turnID: turnID,
-                                    voiceID: voiceID,
-                                    sampleRate: sampleRate,
-                                    codec: codec
-                                )
-                            )
-                            ttsTrace.reset()
-                            container.tracker().track(
-                                event: "tts_start",
-                                properties: [
-                                    "turn_id": turnID,
-                                    "voice_id": voiceID,
-                                    "sample_rate": String(sampleRate),
-                                    "codec": codec,
-                                ]
-                            )
-                        } catch {
-                            container.tracker().track(
-                                event: "tts_decoder_failed",
-                                properties: [
-                                    "phase": "prepare",
-                                    "turn_id": turnID,
-                                    "error": String(describing: error),
-                                ]
-                            )
-                        }
-
-                    case let .control(.aiTTSEnd(turnID, completionStatus, durationMs)):
-                        do {
-                            try ttsDispatcher.handle(
-                                control: .aiTTSEnd(
-                                    turnID: turnID,
-                                    completionStatus: completionStatus,
-                                    durationMs: durationMs
-                                )
-                            )
-                            container.tracker().track(
-                                event: "tts_end",
-                                properties: [
-                                    "turn_id": turnID,
-                                    "completion_status": completionStatus,
-                                    "duration_ms": durationMs.map(String.init) ?? "nil",
-                                    "audio_frames": String(ttsTrace.audioFrameCount()),
-                                ]
-                            )
-                        } catch {
-                            container.tracker().track(
-                                event: "tts_decoder_failed",
-                                properties: [
-                                    "phase": "finish",
-                                    "turn_id": turnID,
-                                    "error": String(describing: error),
-                                ]
-                            )
-                        }
-
-                    case let .control(.feedbackBadge(badge, phraseBlockID, tier, turnID)):
-                        // WSS has no eval.frame. `feedback.badge` is the turn-level
-                        // signal that can leave `.waitingForEvaluation`. Session
-                        // review stays on REST (I16).
-                        evaluationArrival.mark()
-                        let displayTier = tier.map(BadgeFeedEntry.Tier.from(transport:))
-                        await dispatchBox.dispatch(
-                            .speakingRoom(.badgeHit(
-                                badge: badge,
-                                phraseBlockID: phraseBlockID,
-                                tier: displayTier,
-                                turnID: turnID
-                            ))
-                        )
-                        await dispatchBox.dispatch(
-                            .speakingRoom(.session(.evaluationReceived))
-                        )
-
-                    case let .control(.aiTurnEnd(turnID, outcome, logID)):
-                        // B15-I3: capture the vendor log_id from the first ai.turn.end.
-                        // setLogID is idempotent (only the first call stores the value).
-                        timings.setLogID(logID)
-                        // B15: ai.turn.end arrived — cancel the turn timeout timer so it
-                        // doesn't fire and cause a duplicate session.end. Safe to call
-                        // even if the timer was never started.
-                        turnTimeoutTracking?.disarm()
-                        // B15: when backend explicitly reports outcome=timeout, dispatch
-                        // the same .failed("turn_timeout") as the 70s client-side fallback.
-                        // This makes the explicit timeout path consistent with the implicit
-                        // 70s timer path — both end the session identically.
-                        if outcome == .timeout {
-                            await dispatchBox.dispatch(.speakingRoom(.session(.failed("turn_timeout"))))
-                        } else {
-                            await dispatchBox.dispatch(.speakingRoom(.session(.aiTurnEnd)))
-                            await dispatchBox.dispatch(.speakingRoom(.aiTurnFinalized(turnID: turnID)))
-                            if let turnID {
-                                timings.markTurnEnded(turnID, source: "ios", stage: "ai_turn_end")
-                            }
-                            // B15-I3: log_id is now included in all mark() calls automatically.
-                            timings.mark(
-                                event: "ai_turn_end",
-                                properties: [
-                                    "turn_id": turnID ?? "nil",
-                                    "outcome": outcome?.rawValue ?? "nil", // B15: log outcome
-                                    "log_id": logID ?? "nil", // B15-I3: vendor trace log_id
-                                ]
-                            )
-                        }
-
-                    case let .control(.aiTextDelta(text)):
-                        await dispatchBox.dispatch(
-                            .speakingRoom(.aiTurnTextDelta(text: text, turnID: nil))
-                        )
-
-                    case let .control(.clientASRTranscription(text, turnID)):
-                        // Display-layer transcript plus the ASR → LLM hop.
-                        // `.session(.serverASRReceived)` advances processingASR →
-                        // processingLLM; `.serverASRReceived` still updates the
-                        // speaking-room transcript overlay.
-                        await dispatchBox.dispatch(
-                            .speakingRoom(.session(.serverASRReceived(text: text, turnID: turnID)))
-                        )
-                        await dispatchBox.dispatch(
-                            .speakingRoom(.serverASRReceived(text: text, turnID: turnID))
-                        )
-                        tracker.track(
-                            event: "server_asr_received_full",
-                            properties: [
-                                "turn_id": turnID ?? "nil",
-                                "text_bytes": String(text.utf8.count),
-                                "text": text,
-                            ]
-                        )
-                        timings.mark(
-                            event: "server_asr_received",
-                            properties: [
-                                "turn_id": turnID ?? "nil",
-                                "text_bytes": String(text.utf8.count),
-                            ]
-                        )
-                        // NOTE: We intentionally do NOT call `sendSpeechBoundary` here.
-                        // The original iOS VAD already fired `user.speech.end` when the user
-                        // actually stopped speaking, which is what triggered the Volc commit
-                        // that produced this transcript. Re-emitting `user.speech.end` on
-                        // receipt of the relay frame would start a phantom second turn with
-                        // no audio, causing the gateway to wait 60s for nothing and the
-                        // client to surface "sockettransporterror error 3".
-                        // The backend already pulls the authoritative transcript out of
-                        // `ProviderOutbound.ServerASRText` for badge hit detection, so
-                        // nothing is lost by not pushing the text again.
-
-                    case let .diagnostic(.receiveLatency(frameType, sizeBytes, elapsedMs)):
-                        tracker.track(
-                            event: "timing_socket_receive",
-                            properties: [
-                                "frame_type": frameType,
-                                "size_bytes": String(sizeBytes),
-                                "elapsed_ms": String(format: "%.3f", elapsedMs),
-                            ]
-                        )
-
-                    // The barge-in watermark discarding inbound audio. Reported
-                    // at the start and end of each run, so `dropped` is the size
-                    // of the loss. A `sequence` at or below `watermark` on a
-                    // later turn is the signature of the gateway's numbering
-                    // going backwards — which is what makes this event worth
-                    // more than the silence it replaces.
-                    case let .diagnostic(.audioFrameDropped(sequence, watermark, dropped)):
-                        tracker.track(
-                            event: "transport_audio_dropped",
-                            properties: [
-                                "sequence": String(sequence),
-                                "watermark": String(watermark),
-                                "dropped": String(dropped),
-                            ]
-                        )
-
-                    default:
-                        guard let mapped = SocketTransportEventMapper.speakingRoomAction(for: event),
-                              let action = SpeakingRoomAction(mapped)
-                        else {
-                            continue
-                        }
-                        await dispatchBox.dispatch(.speakingRoom(action))
-                    }
-                }
-                // The loop exits for two very different reasons and this mark
-                // has to say which. `for await` on a cancelled task returns nil
-                // and ends the loop *normally* — it does not re-enter the body,
-                // so the check inside cannot catch it. Reading `isCancelled`
-                // here is what separates "cancelled" from "the transport's
-                // stream is finished and can never yield again": the first is a
-                // stale cancellation, the second means the transport object is
-                // gone, and they need opposite fixes. Anything else is a guess.
-                timings.mark(
-                    event: "transport_consumer_exit",
-                    properties: ["cancelled": Task.isCancelled ? "true" : "false"]
-                )
                 return nil
             },
             .task(id: SpeechSessionTaskID.audioEngineEvents) {
@@ -824,7 +893,10 @@ private func interpretSpeechSessionSideEffect(
         // swallow the next session's PCM if the host restarts immediately.
         try? ttsDispatcher.reset()
         return .merge(
-            .cancel(id: SpeechSessionTaskID.transportEvents),
+            // No `.cancel(id: transportEvents)`: the reader belongs to the
+            // connection. Cancelling it here killed the *next* session's
+            // consumer when the timing fell wrong, and the room sat on
+            // 「连接中」 with nothing in the log. See `transportEventPump`.
             .cancel(id: SpeechSessionTaskID.audioEngineEvents),
             .cancel(id: SpeechSessionTaskID.recordingAbortTimeout),
             .cancel(id: SpeechSessionTaskID.evaluationTimeout),
@@ -847,7 +919,10 @@ private func interpretSpeechSessionSideEffect(
         try? ttsDispatcher.reset()
         let backgroundTasks = container.backgroundTaskPort()
         return .merge(
-            .cancel(id: SpeechSessionTaskID.transportEvents),
+            // No `.cancel(id: transportEvents)`: the reader belongs to the
+            // connection. Cancelling it here killed the *next* session's
+            // consumer when the timing fell wrong, and the room sat on
+            // 「连接中」 with nothing in the log. See `transportEventPump`.
             .cancel(id: SpeechSessionTaskID.audioEngineEvents),
             .cancel(id: SpeechSessionTaskID.recordingAbortTimeout),
             .cancel(id: SpeechSessionTaskID.evaluationTimeout),
