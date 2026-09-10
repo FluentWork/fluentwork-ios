@@ -44,12 +44,37 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
     ) {
         self.session = session
         self.configuration = configuration
-        let pair = AsyncStream.makeStream(
-            of: SocketTransportEvent.self,
-            bufferingPolicy: .bufferingNewest(64)
-        )
+        let pair = Self.makeEventStream()
         self.events = pair.stream
         self.continuation = pair.continuation
+    }
+
+    /// The event stream every transport is built on.
+    ///
+    /// Extracted so its buffering policy is directly testable: the previous
+    /// policy was inline in `init`, which is why nothing caught it dropping
+    /// frames.
+    static func makeEventStream() -> (
+        stream: AsyncStream<SocketTransportEvent>,
+        continuation: AsyncStream<SocketTransportEvent>.Continuation
+    ) {
+        // Unbounded, and deliberately so.
+        //
+        // The previous policy was `.bufferingNewest(64)`, which discards the
+        // oldest events when the consumer falls behind. This stream carries
+        // frames the state machine cannot miss: a dropped `ai.turn.end` strands
+        // the client in `processing`, and a dropped audio frame leaves a hole in
+        // the assistant's speech. The gateway delivers a whole turn's audio in
+        // one burst at turn end — around 106 frames for a ten second reply —
+        // which is precisely when a 64-event bound starts dropping. Measured:
+        // 200 frames in, 64 delivered.
+        //
+        // Back-pressure belongs to the WebSocket/TCP layer, not to a buffer that
+        // silently discards turns.
+        AsyncStream.makeStream(
+            of: SocketTransportEvent.self,
+            bufferingPolicy: .unbounded
+        )
     }
 
     deinit {

@@ -51,6 +51,23 @@ import Testing
     #expect(captured.map(\.sequence) == [1, 2])
 }
 
+/// `scheduleBuffer` queues audio onto a player node, and a node that was never
+/// started plays nothing. Nothing started it, so the assistant stayed silent
+/// even after the gateway began forwarding its audio — and the decoder test
+/// above passed the whole time, because it only asserts the decoder was
+/// reached, never that anything came out.
+@available(iOS 17, macOS 14, *)
+@Test func liveAudioEngineStartsPlaybackForScheduledAudio() async {
+    let decoder = CapturingFrameDecoder(log: CallLog(), samplesPerFrame: 4)
+    let engine = LiveAudioEngine(decoder: decoder)
+
+    #expect(await engine._testPlaybackStarted() == false)
+
+    await engine.play(frame: WSAudioFrame(sequence: 1, opusPayload: Data(repeating: 0x01, count: 8)))
+
+    #expect(await engine._testPlaybackStarted() == true)
+}
+
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineStartCaptureFailsWhenPermissionDenied() async {
     let engine = LiveAudioEngine(

@@ -337,7 +337,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             return
         }
 
-        attachPlayerIfNeeded()
+        startPlaybackIfNeeded()
         guard let buffer = makePCMBuffer(from: pcm) else {
             continuation.yield(.failed("scheduling dropped: PCM length \(pcm.count) not a multiple of 2"))
             return
@@ -354,6 +354,24 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // path). Queuing with a no-op completion handler returns immediately
         // and the audio graph is irrelevant for the assertions we make.
         playerNode.scheduleBuffer(buffer, at: nil, options: []) {}
+    }
+
+    /// Queues audio onto the player node and makes sure something is actually
+    /// playing it.
+    ///
+    /// `scheduleBuffer` only enqueues — a node that was never started plays
+    /// nothing. Nothing started it, which is why the speaking room stayed
+    /// silent even after the gateway began forwarding the assistant's audio.
+    /// `interruptNow()` stops the node for barge-in, so this also has to bring
+    /// it back on the next frame.
+    private func startPlaybackIfNeeded() {
+        attachPlayerIfNeeded()
+        if !engine.isRunning {
+            try? engine.start()
+        }
+        if !playerNode.isPlaying {
+            playerNode.play()
+        }
     }
 
     public func interruptNow() async {
@@ -492,6 +510,17 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// has to read them through the same path `setSpeechBoundaryMode` writes.
     func _testSpeechTracker() -> AudioSpeechActivityTracker {
         speechTracker
+    }
+
+    /// Test-only hook reporting whether the player node is running.
+    ///
+    /// `scheduleBuffer` queues audio onto a node that plays nothing until it is
+    /// started, and nothing here ever started it — which is why the assistant
+    /// stayed silent even once the gateway began forwarding its audio. Nothing
+    /// asserted on this because the existing playback tests only check that the
+    /// decoder was reached.
+    func _testPlaybackStarted() -> Bool {
+        playerNode.isPlaying
     }
 
     /// Test-only hook exercising `convertToPCM16` for the supplied input

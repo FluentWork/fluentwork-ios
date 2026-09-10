@@ -64,7 +64,8 @@
 39. `40_pcm_egress_outside_speech_window.md` — 录音窗口外的 PCM 不再上行（真机 turn 串轮回溯）
 40. `41_speaking_room_single_gesture_turns.md` — 说房间一轮一次手势（tapToStart + 静音收轮）
 41. `42_sub_stage_timeout_is_diagnostic.md` — 子阶段超时是诊断不是判决（客户端不得自行判死）
-42. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
+42. `43_assistant_audio_never_played.md` — 助手音频从未被播放（playerNode 未启动 + 传输层丢帧）
+43. `IOS_ARCH_REVIEW_DONE.md` — ISSUES 01–07 PR 指针；ISSUE-08 等待 Instruments
 
 ---
 

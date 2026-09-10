@@ -1,5 +1,5 @@
 import Foundation
-import FluentWorkNetworking
+@testable import FluentWorkNetworking
 import Testing
 
 @Test func controlFrameCodecRoundTripsKnownTypes() throws {
@@ -166,4 +166,27 @@ import Testing
         for: .stateChanged(.disconnected)
     )
     #expect(mapped == .networkLost)
+}
+
+/// The transport must not trade events for a bound.
+///
+/// A dropped `ai.turn.end` strands the state machine in `processing`; a dropped
+/// audio frame leaves a hole in the assistant's speech. The gateway delivers a
+/// whole turn's audio in one burst at turn end — around 106 frames for a ten
+/// second reply — which is exactly when a 64-event bound starts discarding.
+@Test func transportEventStreamDoesNotDropABurst() async {
+    let (stream, continuation) = URLSessionSocketTransport.makeEventStream()
+
+    let burst = 200
+    for sequence in 0..<burst {
+        continuation.yield(
+            .audio(WSAudioFrame(sequence: UInt32(sequence), opusPayload: Data([0x01])))
+        )
+    }
+    continuation.finish()
+
+    var received = 0
+    for await _ in stream { received += 1 }
+
+    #expect(received == burst)
 }
