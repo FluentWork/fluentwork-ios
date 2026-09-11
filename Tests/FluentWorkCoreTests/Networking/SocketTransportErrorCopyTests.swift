@@ -18,16 +18,22 @@ struct SocketTransportEventMapperErrorCopyTests {
 
     /// Every `code` the voice gateway emits in an `error` frame.
     ///
-    /// Sourced from `internal/voicegateway/handler.go` — the `ErrorFrame{...}`
-    /// call sites. **Adding a code there means adding it here**, which is the
-    /// point: the copy table and the code table have to move together, and this
-    /// list is where that shows up.
+    /// Sourced from the `ErrorFrame{...}` call sites in
+    /// `internal/voicegateway/handler.go`. **Adding a code there means adding
+    /// it here**, which is the point: the copy table and the code table have to
+    /// move together, and this list is where that shows up.
+    ///
+    /// Exactly **eleven**. `77_` P1-19 recorded twelve, and this list carried
+    /// that twelfth entry for a while — `idle_timeout`. It is not an error
+    /// code: it is the *persist reason* the gateway records when a session's
+    /// read deadline expires (`handler.go` `persistOnExit`), and no error frame
+    /// ever carries it. A "code table" with a non-code in it stops being the
+    /// thing the copy table is supposed to be checked against.
     static let gatewayErrorCodes = [
         "activate_failed",
         "already_authenticated",
         "client_asr_required",
         "end_failed",
-        "idle_timeout",
         "invalid_frame",
         "provider_audio_failed",
         "provider_control_failed",

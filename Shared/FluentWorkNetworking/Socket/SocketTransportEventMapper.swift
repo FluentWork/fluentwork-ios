@@ -90,8 +90,6 @@ func userFacingErrorText(code: String, rawMessage: String?) -> String {
         return "当前无法识别语音，请重试"
     case "end_failed":
         return "结束练习时出了点问题，请返回工作台重试"
-    case "idle_timeout":
-        return "长时间没有操作，这次练习已经结束"
     // Client-side protocol violations: a bug on our side, not something the
     // learner did — so the copy asks them to retry rather than blaming input.
     case "invalid_frame", "session_not_started", "already_authenticated":
