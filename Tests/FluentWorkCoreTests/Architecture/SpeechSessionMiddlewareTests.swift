@@ -420,7 +420,7 @@ struct SpeechSessionMiddlewareB14Tests {
 
         store.dispatch(.speakingRoom(.session(.recordingTimedOut)))
         try await waitForProcessingStage(store, stage: .aiAnswer)
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             await speechClient.getTurnAbortCalls().count == 1
         }
 
@@ -508,7 +508,7 @@ struct SpeechSessionMiddlewareB14Tests {
             tier: .highlight,
             turnID: "turn-1"
         )))
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             store.state.speakingRoom.lastBadge == "ship it"
         }
         #expect(store.state.speakingRoom.phase == .processing)
@@ -546,7 +546,7 @@ struct SpeechSessionMiddlewareB14Tests {
 
         store.dispatch(.speakingRoom(.session(.evaluationTimedOut)))
         try await waitForPhase(store, phase: .waitingUser)
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             await audioEngine.interruptCalls >= 1
         }
 
@@ -829,7 +829,7 @@ struct SpeechSessionMiddlewareB14Tests {
         try await waitForPhase(store, phase: .aiSpeaking)
 
         audioEngine.emit(.routeChanged("oldDeviceUnavailable"))
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             await audioEngine.reconfigureCalls == 1
         }
 
@@ -858,7 +858,7 @@ struct SpeechSessionMiddlewareB14Tests {
         try await waitForProcessingStage(store, stage: .asr)
 
         store.dispatch(.speakingRoom(.session(.networkLost)))
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             store.state.speakingRoom.session.isReconnecting
         }
         #expect(store.state.speakingRoom.phase == .processing)
@@ -979,7 +979,7 @@ struct SpeechSessionMiddlewareB14Tests {
         // Send text message
         speechClient.setSendDegradedTextMessageResult(.success(PostMessageResponse(sessionID: "s-1", reply: "AI回复", channel: "text", generator: "stub")))
         store.dispatch(.speakingRoom(.session(.textMessageSent)))
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             await speechClient.degradedTextMessageSent
         }
 
@@ -1140,7 +1140,7 @@ struct SpeechSessionMiddlewareReconnectTests {
 
         // Network lost starts reconnect
         store.dispatch(.speakingRoom(.session(.networkLost)))
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             store.state.speakingRoom.session.isReconnecting
         }
         #expect(store.state.speakingRoom.session.isReconnecting == true)
@@ -1175,13 +1175,13 @@ struct SpeechSessionMiddlewareReconnectTests {
 
         // Network lost starts reconnect
         store.dispatch(.speakingRoom(.session(.networkLost)))
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             store.state.speakingRoom.session.isReconnecting
         }
 
         // Reconnect succeeds before timeout
         speechClient.emit(.stateChanged(.connected))
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             !store.state.speakingRoom.session.isReconnecting
         }
 
@@ -1212,7 +1212,7 @@ struct SpeechSessionMiddlewareSystemInterruptTests {
         try await waitForPhase(store, phase: .aiSpeaking)
 
         audioEngine.emit(.interruptedBySystem)
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             store.state.speakingRoom.session.suspendedPhase == .aiSpeaking
         }
         #expect(store.state.speakingRoom.session.suspendedPhase == .aiSpeaking)
@@ -1248,7 +1248,7 @@ struct SpeechSessionMiddlewareEndSessionTests {
 
         // `.endSession` cleanup is fire-and-forget; poll instead of a fixed
         // sleep so parallel CI load cannot miss `speechClient.endSession()`.
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             await speechClient.endSessionCalled
         }
 
@@ -1270,7 +1270,7 @@ struct SpeechSessionMiddlewareEndSessionTests {
 
         // The .endSession effect is dispatched by the machine after entering .failed phase.
         // Wait for it to complete (stopCapture + endSession calls).
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             await speechClient.endSessionCalled
         }
 
@@ -1356,7 +1356,7 @@ struct I20TurnTelemetryTests {
 
         store.dispatch(.speakingRoom(.session(.recordingTimedOut)))
         try await waitForProcessingStage(store, stage: .aiAnswer)
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             await speechClient.getTurnAbortCalls().count == 1
         }
 
@@ -1367,7 +1367,7 @@ struct I20TurnTelemetryTests {
         #expect(outcomeEvent?.properties["outcome"] == "timeout")
         #expect(tracker.events.filter { $0.name == "turn_timeout_fired" }.isEmpty)
         #expect(await speechClient.getTurnAbortCalls().first?.outcome == .timeout)
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             tracker.events.contains {
                 $0.name == "speech_session_transition"
                     && $0.properties["to_label"] == "waiting_for_ai_answer"
@@ -1397,7 +1397,7 @@ struct I20TurnTelemetryTests {
         try await waitForPhase(store, phase: .recording)
         audioEngine.emit(.speechEnded)
         try await waitForProcessingStage(store, stage: .asr)
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             tracker.events.contains { $0.name == "turn.outcome" }
         }
 
@@ -1424,7 +1424,7 @@ struct I20TurnTelemetryTests {
         speechClient.emit(
             .control(.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: "volc-abc123"))
         )
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             tracker.events.contains { $0.name == "timing_ai_turn_end" }
         }
 
@@ -1454,7 +1454,7 @@ struct I20TurnTelemetryTests {
 
         store.dispatch(.speakingRoom(.session(.endTap)))
         try await waitForPhase(store, phase: .ended)
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             await speechClient.getTurnAbortCalls().count == 1
         }
 
@@ -1483,7 +1483,7 @@ struct I20TurnTelemetryTests {
 
         store.dispatch(.speakingRoom(.session(.failed("network"))))
         try await waitForPhase(store, phase: .failed)
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             await speechClient.getTurnAbortCalls().count == 1
         }
 
@@ -1522,7 +1522,7 @@ struct I20TurnTelemetryTests {
                 )
             )
         )
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             decoder.snapshotPrepares().count == 1
         }
         speechClient.emit(.audio(WSAudioFrame(sequence: 0, opusPayload: Data([0x0A, 0x0B]))))
@@ -1530,7 +1530,7 @@ struct I20TurnTelemetryTests {
         speechClient.emit(
             .control(.aiTTSEnd(turnID: "turn-9", completionStatus: "ok", durationMs: 40))
         )
-        try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        try await waitUntil() {
             tracker.events.contains { $0.name == "tts_end" }
         }
 
@@ -1659,17 +1659,19 @@ struct SpeechSessionMiddlewareVoiceProcessingTests {
     @MainActor
     private func expectTheEngineWasTold(_ audioEngine: StubAudioEngineForMiddleware) async {
         do {
-            try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+            try await waitUntil() {
                 await !audioEngine.voiceProcessingValues.isEmpty
             }
         } catch {
             Issue.record(
                 """
-                The engine was never told about voice processing. Check that \
-                `setVoiceProcessingEnabled` is a requirement of \
-                `AudioEngineProtocol`, not only a defaulted extension method — \
-                extension-only methods are dispatched statically through the \
-                existential and never reach the real engine.
+                The engine was never told about voice processing within 10s \
+                — long enough that a stalled runner is unlikely to be the \
+                explanation. Check that `setVoiceProcessingEnabled` is a \
+                requirement of `AudioEngineProtocol`, not only a defaulted \
+                extension method — extension-only methods are dispatched \
+                statically through the existential and never reach the real \
+                engine.
                 """
             )
         }
@@ -1944,8 +1946,23 @@ private func waitForProcessingStage(
 }
 
 @MainActor
+/// How long a test waits for the store to react before calling it hung.
+///
+/// **Not a latency assertion.** Everything these tests drive is in-memory; the
+/// only reason a reaction is ever late is that its effect is a `Task` and the
+/// machine is busy. A broken implementation does not react *slowly*, it never
+/// reacts — so a generous budget catches the same regressions and only makes
+/// the failure take longer to report.
+///
+/// It was one second, restated at twenty-one call sites, and that read like a
+/// claim about how fast the middleware should be. It was not; it was how long a
+/// loaded parallel CI runner was assumed to take. On 2026-09-12 two of them
+/// proved the assumption wrong (`sessionStartPassesTheVoiceProcessingFlagToTheEngine`
+/// and `sessionStartTellsTheEngineVoiceProcessingIsOffByDefault` timed out on
+/// `4fa3cd3` while passing 0.02s locally). The three callers that pass a
+/// different number still do — those were chosen deliberately.
 private func waitUntil(
-    timeoutNanoseconds: UInt64,
+    timeoutNanoseconds: UInt64 = 10_000_000_000,
     pollIntervalNanoseconds: UInt64 = 10_000_000,
     condition: @escaping @MainActor () async -> Bool
 ) async throws {
