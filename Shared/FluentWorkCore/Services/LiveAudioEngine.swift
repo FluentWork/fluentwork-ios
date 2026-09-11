@@ -145,15 +145,33 @@ struct AudioSpeechActivityTracker: Sendable {
 }
 
 struct AudioPlaybackGate: Sendable {
+    /// Why a frame was or was not taken.
+    ///
+    /// It used to be a `Bool`, and the `false` branch was a bare `return` in
+    /// `play(frame:)` — **no event, no log, no counter**. So "the assistant went
+    /// quiet" and "the assistant spoke and the client threw it away" were the
+    /// same thing from outside the process, and the second one is a bug in this
+    /// file. A drop that cannot be observed cannot be diagnosed; this carries
+    /// the number that made the decision.
+    enum Verdict: Equatable, Sendable {
+        case accept
+        case droppedAtOrBelowInterruptWatermark(UInt32)
+
+        var isAccepted: Bool {
+            if case .accept = self { return true }
+            return false
+        }
+    }
+
     private(set) var lastAcceptedSequence: UInt32?
     private(set) var interruptWatermark: UInt32?
 
-    mutating func shouldAccept(_ frame: WSAudioFrame) -> Bool {
+    mutating func shouldAccept(_ frame: WSAudioFrame) -> Verdict {
         if let interruptWatermark, frame.sequence <= interruptWatermark {
-            return false
+            return .droppedAtOrBelowInterruptWatermark(interruptWatermark)
         }
         lastAcceptedSequence = frame.sequence
-        return true
+        return .accept
     }
 
     mutating func markInterrupted() -> UInt32? {
@@ -612,7 +630,16 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             continuation.yield(.failed("playback retired; dropped audio frame"))
             return
         }
-        guard playbackGate.shouldAccept(frame) else { return }
+        if case let .droppedAtOrBelowInterruptWatermark(watermark) = playbackGate.shouldAccept(frame) {
+            // Reported, not swallowed. Until this existed the only trace of a
+            // barge-in watermark eating a live turn's audio was the user
+            // noticing the assistant had gone quiet.
+            continuation.yield(.audioFrameDropped(
+                sequence: frame.sequence,
+                watermark: watermark
+            ))
+            return
+        }
 
         let pcm: Data
         do {

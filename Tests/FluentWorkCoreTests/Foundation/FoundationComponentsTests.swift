@@ -181,10 +181,14 @@ import TGReduxKitTesting
     let acceptedStale = gate.shouldAccept(stale)
     let acceptedFresh = gate.shouldAccept(fresh)
 
-    #expect(acceptedFirst)
-    #expect(acceptedSecond)
-    #expect(acceptedStale == false)
-    #expect(acceptedFresh)
+    #expect(acceptedFirst == .accept)
+    #expect(acceptedSecond == .accept)
+    // The verdict carries the watermark, not just "no". That number is the only
+    // way the drop can be attributed to the interrupt that caused it once it
+    // reaches a log — a bare `false` says a frame was lost and nothing about
+    // which of the session's interrupts took it.
+    #expect(acceptedStale == .droppedAtOrBelowInterruptWatermark(11))
+    #expect(acceptedFresh == .accept)
 }
 
 @Test func audioPlaybackGateResetClearsInterruptWatermark() {
@@ -198,9 +202,9 @@ import TGReduxKitTesting
         WSAudioFrame(sequence: 1, opusPayload: Data([0x02]))
     )
 
-    #expect(acceptedBeforeInterrupt)
+    #expect(acceptedBeforeInterrupt == .accept)
     #expect(gate.interruptWatermark == nil)
-    #expect(acceptedAfterReset)
+    #expect(acceptedAfterReset == .accept)
 }
 
 @Test func capturingLoggerRecordsEntriesByDomain() {

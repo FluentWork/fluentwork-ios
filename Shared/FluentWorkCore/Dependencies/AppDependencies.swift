@@ -44,6 +44,14 @@ public enum AudioEngineEvent: Equatable, Sendable {
     /// report, and reporting `0` would read as "stopped and finished instantly",
     /// which is a real and different case.
     case speechEndpointed(reason: String, windowMs: Int?, trailingSilenceMs: Int?)
+    /// A binary audio frame was thrown away before it reached the player.
+    ///
+    /// Informational — a drop is what a barge-in watermark is *for*. It is
+    /// reported because the gate also drops frames it has no business dropping,
+    /// and when it does, the only other symptom is silence. `watermark` is the
+    /// number that made the decision, so the log says *which* interrupt ate the
+    /// frame rather than just that something did.
+    case audioFrameDropped(sequence: UInt32, watermark: UInt32)
     case failed(String)
 }
 

@@ -496,6 +496,22 @@ private func audioEventPump(
                     // without knowing whether the switch was even on.
                     timings.mark(event: "audio_voice_processing", properties: ["detail": detail])
     
+                case let .audioFrameDropped(sequence, watermark):
+                    // Informational, same shape as `.voiceProcessing`: a drop is
+                    // what a barge-in watermark is for, so it is not a failure
+                    // and must not degrade the session. It is recorded because
+                    // the same gate also drops frames it has no business
+                    // dropping, and when that happens the user's only symptom is
+                    // "the assistant went quiet" — indistinguishable from the
+                    // provider having sent nothing.
+                    timings.mark(
+                        event: "audio_frame_dropped",
+                        properties: [
+                            "sequence": String(sequence),
+                            "watermark": String(watermark),
+                        ]
+                    )
+
                 case let .failed(message):
                     timings.mark(event: "audio_engine_failed", properties: ["message": message])
                     await dispatchBox.dispatch(.speakingRoom(.session(.failed(message))))
