@@ -7,6 +7,14 @@ public enum AppTab: String, CaseIterable, Codable, Hashable, Sendable {
     case workbench
     case flashTest
     case corpus
+    /// Settings.
+    ///
+    /// Deliberately **not** a `FeaturePluginDescriptor`, unlike every other
+    /// surface: plugins are filtered by their own feature flag
+    /// (`FeaturePluginRegistry.enabledPlugins(for:)`), so a flag-gated settings
+    /// page could only be reached by someone who had already turned its flag
+    /// on — and turning flags on is the one thing it exists to do.
+    case settings
 }
 
 public enum AppRoute: TGRoute, Codable {
@@ -67,17 +75,20 @@ public struct AppNavigationState: Equatable, Sendable, State {
     public var workbench: NavigationState<AppRoute>
     public var flashTest: NavigationState<AppRoute>
     public var corpus: NavigationState<AppRoute>
+    public var settings: NavigationState<AppRoute>
 
     public init(
         selectedTab: AppTab = .workbench,
         workbench: NavigationState<AppRoute> = NavigationState(),
         flashTest: NavigationState<AppRoute> = NavigationState(),
-        corpus: NavigationState<AppRoute> = NavigationState()
+        corpus: NavigationState<AppRoute> = NavigationState(),
+        settings: NavigationState<AppRoute> = NavigationState()
     ) {
         self.selectedTab = selectedTab
         self.workbench = workbench
         self.flashTest = flashTest
         self.corpus = corpus
+        self.settings = settings
     }
 
     public func stack(for tab: AppTab) -> NavigationState<AppRoute> {
@@ -85,6 +96,7 @@ public struct AppNavigationState: Equatable, Sendable, State {
         case .workbench: return workbench
         case .flashTest: return flashTest
         case .corpus: return corpus
+        case .settings: return settings
         }
     }
 }
@@ -94,6 +106,7 @@ public enum AppNavigationAction: Equatable, Sendable, Action {
     case workbench(NavigationAction<AppRoute>)
     case flashTest(NavigationAction<AppRoute>)
     case corpus(NavigationAction<AppRoute>)
+    case settings(NavigationAction<AppRoute>)
 }
 
 public let appNavigationReducer: Reducer<AppNavigationState, AppNavigationAction> = { state, action in
@@ -109,5 +122,8 @@ public let appNavigationReducer: Reducer<AppNavigationState, AppNavigationAction
 
     case let .corpus(navAction):
         navigationReducer(state: &state.corpus, action: navAction)
+
+    case let .settings(navAction):
+        navigationReducer(state: &state.settings, action: navAction)
     }
 }

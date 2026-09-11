@@ -1,4 +1,5 @@
 import FluentWorkCore
+import FluentWorkFeatureFlags
 import FluentWorkUI
 import SwiftUI
 
@@ -40,6 +41,18 @@ struct HostRootView: View {
                     },
                     onFavoriteOnlyChanged: { favoriteOnly in
                         store.dispatch(.corpus(.favoriteOnlyChanged(favoriteOnly)))
+                    }
+                )
+            },
+            settingsRoot: {
+                SettingsRootView(
+                    model: makeSettingsViewModel(from: store.state.featureFlags),
+                    onToggleFlag: { rawValue, isEnabled in
+                        guard let flag = AppFeatureFlag(rawValue: rawValue) else { return }
+                        store.dispatch(.featureFlags(.setLocalOverride(flag: flag, isEnabled: isEnabled)))
+                    },
+                    onClearOverrides: {
+                        store.dispatch(.featureFlags(.clearLocalOverrides))
                     }
                 )
             },
@@ -335,6 +348,29 @@ struct HostRootView: View {
                 )
             },
             usesAutoVAD: store.state.usesVoiceVadAuto
+        )
+    }
+
+    /// State → the settings screen's plain model.
+    ///
+    /// Shows the **effective** value next to whether it came from an override,
+    /// because those are the two things a device run needs to tell apart: a
+    /// flag turned on by a local override behaves exactly like one that is on
+    /// by default, and only one of them survives a reinstall.
+    private func makeSettingsViewModel(from state: FeatureFlagsState) -> SettingsViewModel {
+        let flags = AppFeatureFlag.allCases.map { flag in
+            SettingsViewModel.FlagRow(
+                id: flag.rawValue,
+                title: flag.rawValue,
+                isEnabled: state.isEnabled(flag),
+                isOverridden: state.localOverrides[flag] != nil
+            )
+        }
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        return SettingsViewModel(
+            flags: flags,
+            appVersion: version ?? "—",
+            hasOverrides: !state.localOverrides.isEmpty
         )
     }
 

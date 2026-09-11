@@ -3,12 +3,18 @@ import TGNavigationStack
 
 /// Host-facing tab shell: 3 tabs each backed by `TGNavigationStack` + Store dispatch.
 @MainActor
-public struct AppRootTabView<WorkbenchRoot: View, FlashRoot: View, CorpusRoot: View>: View {
+public struct AppRootTabView<
+    WorkbenchRoot: View,
+    FlashRoot: View,
+    CorpusRoot: View,
+    SettingsRoot: View
+>: View {
     private let navigation: AppNavigationState
     private let dispatch: (AppAction) -> Void
     private let workbenchRoot: () -> WorkbenchRoot
     private let flashRoot: () -> FlashRoot
     private let corpusRoot: () -> CorpusRoot
+    private let settingsRoot: () -> SettingsRoot
     private let destination: (AppRoute) -> AnyView
 
     public init(
@@ -17,6 +23,7 @@ public struct AppRootTabView<WorkbenchRoot: View, FlashRoot: View, CorpusRoot: V
         @ViewBuilder workbenchRoot: @escaping () -> WorkbenchRoot,
         @ViewBuilder flashRoot: @escaping () -> FlashRoot,
         @ViewBuilder corpusRoot: @escaping () -> CorpusRoot,
+        @ViewBuilder settingsRoot: @escaping () -> SettingsRoot,
         destination: @escaping (AppRoute) -> AnyView
     ) {
         self.navigation = navigation
@@ -24,6 +31,7 @@ public struct AppRootTabView<WorkbenchRoot: View, FlashRoot: View, CorpusRoot: V
         self.workbenchRoot = workbenchRoot
         self.flashRoot = flashRoot
         self.corpusRoot = corpusRoot
+        self.settingsRoot = settingsRoot
         self.destination = destination
     }
 
@@ -46,6 +54,12 @@ public struct AppRootTabView<WorkbenchRoot: View, FlashRoot: View, CorpusRoot: V
                 title: "语料库",
                 systemImage: "books.vertical",
                 root: corpusRoot
+            )
+            tabStack(
+                for: .settings,
+                title: "设置",
+                systemImage: "gearshape",
+                root: settingsRoot
             )
         }
     }
@@ -74,6 +88,8 @@ public struct AppRootTabView<WorkbenchRoot: View, FlashRoot: View, CorpusRoot: V
                     dispatch(.navigation(.flashTest(action)))
                 case .corpus:
                     dispatch(.navigation(.corpus(action)))
+                case .settings:
+                    dispatch(.navigation(.settings(action)))
                 }
             }
         ) {
