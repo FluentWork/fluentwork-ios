@@ -8,6 +8,14 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
     public struct Configuration: Sendable {
         public var pingInterval: Duration
         public var pingFailureThreshold: Int
+        /// **Declared but never read** — there is no reconnect to bound.
+        ///
+        /// The window that is actually in effect is the middleware's own
+        /// hard-coded 3s before `.reconnectTimedOut`. The two literals agree by
+        /// coincidence and are not connected: changing this one changes nothing.
+        /// Kept rather than deleted only because deleting it would not make a
+        /// reconnect appear — see `SpeechSessionEvent.reconnectSucceeded` and
+        /// `docs/55` for why one cannot be built on this side.
         public var reconnectWindow: Duration
 
         public init(

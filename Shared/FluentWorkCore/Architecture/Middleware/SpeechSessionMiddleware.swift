@@ -958,6 +958,19 @@ private func interpretSpeechSessionSideEffect(
             await audioEngine.interruptNow()
         }
 
+    // **A degrade timer, not a reconnect wait.**
+    //
+    // It sleeps and dispatches `.reconnectTimedOut`; it never re-opens the
+    // socket. The name and the state machine around it (`reconnecting`,
+    // `.reconnectSucceeded`, the `socketReady`-while-reconnecting branch) all
+    // read as though a reconnect were in flight — it is not. Every network loss
+    // reaches `degradedText`.
+    //
+    // The window is deliberately kept: it is the honest amount of time to give
+    // a future reconnect attempt, and `networkLossDegradesAndNeverAttemptsAReconnect`
+    // pins the current behaviour so implementing one is a deliberate act rather
+    // than a silent drift. Why it cannot be implemented client-side alone:
+    // `docs/55`.
     case .startReconnectWindow:
         return .task(id: SpeechSessionTaskID.reconnectWindow) {
             try? await Task.sleep(for: .seconds(3))

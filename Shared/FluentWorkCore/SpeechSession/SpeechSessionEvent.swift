@@ -39,6 +39,28 @@ public enum SpeechSessionEvent: Equatable, Sendable {
     /// Hard disconnect → 3s reconnect window; timeout → `degradedText` (§2.2).
     case networkLost
     case reconnectTimedOut
+    /// **No producer, and none is possible from this side.**
+    ///
+    /// Who dispatches this? Nobody. Production maps the transport's
+    /// `.stateChanged(.connected)` to `.socketReady`, and `.socketReady` is what
+    /// the machine's reconnect branch actually handles — so the working path
+    /// exists, it just has no way to be entered: **nothing re-opens the socket.**
+    ///
+    /// The three-second window does not try. It sleeps, then dispatches
+    /// `.reconnectTimedOut`. Every network loss lands in `degradedText`, with no
+    /// exception.
+    ///
+    /// Wiring this is not a client-side change. The gateway cannot resume a
+    /// session: `auth` carries a one-time ticket and no session id, the gateway
+    /// mints its own `session_id`, per-session state lives in a struct discarded
+    /// on disconnect, and there is no session registry. It would need a new
+    /// frame carrying a session id (or a reusable ticket), a lookup that
+    /// survives gateway restarts, and persisted live context. See `docs/55`.
+    ///
+    /// Kept rather than deleted so the shape stays visible — `88_` §⑧ names this
+    /// and `processingReview` as the two instances of "定义在、消费分支在、测试在,
+    /// 唯独触发者不在", and `networkLossDegradesAndNeverAttemptsAReconnect` pins
+    /// it so it cannot go back to looking alive.
     case reconnectSucceeded
     case interruptedBySystem
     case systemInterruptEnded

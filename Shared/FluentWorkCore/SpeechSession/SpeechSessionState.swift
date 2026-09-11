@@ -82,6 +82,25 @@ public enum ProcessingStage: String, Equatable, Sendable, Codable, CaseIterable 
     /// Transcript is with the model.
     case llm
     /// Review / scoring pass.
+    ///
+    /// **No producer today, and the producer cannot be this side of the wire.**
+    ///
+    /// Who dispatches the event that enters this stage? Only
+    /// `.processingStageReached(.review)`, which production never dispatches —
+    /// the sole call sites are tests. The signal would have to come from the
+    /// gateway, and the gateway emits no `review` stage: its whole vocabulary is
+    /// `orchestration` / `asr` / `tts` / `scheduler` / `transport` (`77_` P1-20
+    /// counts the same gap as "3/13").
+    ///
+    /// So this is not a step that runs and is unobserved; it is a step that does
+    /// not run. `88_` §⑧ names it as one of the two instances of "定义在、消费分支
+    /// 在、测试在，唯独触发者不在" — the shape that costs a reader *knowing one
+    /// more thing that is not true*: "AI 的处理会经过三个阶段".
+    ///
+    /// Kept rather than deleted because the stage is the right shape for the
+    /// day the gateway starts emitting the signal, and `P1-15` chose to make the
+    /// state readable over removing the seam. Unreachable in production until
+    /// then.
     case review
     /// The turn is finished; the backend's scorer has not answered yet.
     ///

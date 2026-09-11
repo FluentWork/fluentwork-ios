@@ -1092,8 +1092,26 @@ struct SpeechSessionMiddlewareB14Tests {
 @Suite("SpeechSessionMiddleware Reconnect Window")
 struct SpeechSessionMiddlewareReconnectTests {
 
+    /// Pins the truth about the "reconnect window": **it does not reconnect.**
+    ///
+    /// There is a three-second window, a `reconnectSucceeded` event, a
+    /// "back into the session after connecting" transition and a
+    /// `socketReady`-while-reconnecting handler — everything except something
+    /// that dispatches the event or re-opens the socket. Every network loss
+    /// therefore lands in text degrade, with no exception.
+    ///
+    /// That is not an oversight to be quietly patched: the gateway cannot
+    /// resume a session at all. `auth` carries a one-time ticket and no session
+    /// id, the gateway mints its own `session_id`, keeps per-session state in a
+    /// struct discarded on disconnect, and has no session registry — so a
+    /// reconnect would need a new frame, a lookup surviving restarts, and
+    /// persisted live context. Backend evidence in `docs/55`.
+    ///
+    /// This test exists so the window cannot go back to looking alive. If
+    /// someone implements reconnect, this fails and makes them update the
+    /// comment rather than leaving a second lie in place.
     @MainActor
-    @Test func reconnectWindowTriggersAfterTimeout() async throws {
+    @Test func networkLossDegradesAndNeverAttemptsAReconnect() async throws {
         let container = Container()
         container.reset()
         let audioEngine = StubAudioEngineForMiddleware()
@@ -1115,12 +1133,16 @@ struct SpeechSessionMiddlewareReconnectTests {
         }
         #expect(store.state.speakingRoom.session.isReconnecting == true)
 
-        // Wait for reconnect timeout (3 seconds)
+        // Wait out the window (3 seconds) plus slack.
         try await Task.sleep(for: .seconds(4))
 
-        // After timeout, should enter degradedText
+        // After the window, the only outcome there is.
         #expect(store.state.speakingRoom.phase == .degradedText)
         #expect(store.state.speakingRoom.session.isReconnecting == false)
+
+        // The pin: one connection attempt for the whole run — the one the user
+        // started with. The window waited; it did not try.
+        #expect(await speechClient.startSessionCallCount == 1)
     }
 
     @MainActor
@@ -1614,7 +1636,14 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
         sendDegradedResult = result
     }
 
+    /// How many times a session was established. `startSession()` is the only
+    /// thing that opens a connection, so this counts connection attempts —
+    /// which is how a test proves a reconnect was *not* attempted.
+    private let _startSessionCallCount = AsyncValue(0)
+    var startSessionCallCount: Int { get async { await _startSessionCallCount.get() } }
+
     func startSession() async throws {
+        await _startSessionCallCount.update { $0 + 1 }
         if let error = startSessionError {
             throw error
         }
