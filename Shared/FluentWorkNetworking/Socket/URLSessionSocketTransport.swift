@@ -32,6 +32,13 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var dropGate = AudioFrameDropGate()
+    /// Gateway↔phone clock estimate, fed by the app-level ping/pong round trip.
+    /// See ``ClockOffsetEstimator`` for why it is not simply "server time minus
+    /// local time".
+    private var clockOffsetEstimator = ClockOffsetEstimator()
+    /// Phone clock (epoch ms) when the in-flight app-level ping left. One at a
+    /// time by construction: the heartbeat sleeps a full interval between sends.
+    private var pendingPingSentMs: Int64?
     private var connectionState: SocketConnectionState = .idle
     /// Barge-in drop bookkeeping. See ``AudioDropReport``.
     private var dropReport = AudioDropReport()
@@ -126,7 +133,23 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
 
     public func send(control frame: WSControlFrame) async throws {
         let task = try currentTask()
-        try await send(control: frame, using: task)
+        try await send(control: clockProbe(frame), using: task)
+    }
+
+    /// Arms the clock probe on an outgoing ping.
+    ///
+    /// The rewrite itself is ``ClockProbe/outgoing(_:)`` — a separate, testable
+    /// rule, because "the ping must carry a zero `ts`" is the whole reason the
+    /// gateway ever discloses its clock. What belongs here is the phone-side
+    /// instants the pong will be paired with.
+    private func clockProbe(_ frame: WSControlFrame) -> WSControlFrame {
+        guard case .ping = frame else { return frame }
+        pendingPingSentMs = Self.epochMs()
+        return ClockProbe.outgoing(frame)
+    }
+
+    private static func epochMs(_ date: Date = Date()) -> Int64 {
+        Int64((date.timeIntervalSince1970 * 1000).rounded())
     }
 
     public func send(audio data: Data) async throws {
@@ -156,6 +179,14 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         let task = webSocketTask
         webSocketTask = nil
         connectionState = .disconnected
+
+        // A reconnect lands on a different gateway process, so an offset
+        // measured against the old one is worse than no offset — it would keep
+        // stamping latencies with a stale skew and never look wrong. Dropping
+        // it makes the next first-response sample read "unmeasurable" until a
+        // fresh round trip lands, which is the honest answer.
+        clockOffsetEstimator.reset()
+        pendingPingSentMs = nil
 
         task?.cancel(with: .goingAway, reason: nil)
         if emitDisconnected {
@@ -270,6 +301,7 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
             }
             do {
                 let frame = try WSControlFrameCodec.decode(data)
+                recordClockOffsetIfPong(frame)
                 emit(.control(frame))
             } catch let error as WSControlFrameCodingError {
                 throw SocketTransportError.decodingFailed(
@@ -300,6 +332,37 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         @unknown default:
             throw SocketTransportError.decodingFailed("unsupported websocket message")
         }
+    }
+
+    /// Completes a clock-probe round trip when a pong lands.
+    ///
+    /// The pong is still emitted on the control channel exactly as before; the
+    /// estimate travels beside it on the diagnostic channel, so a consumer that
+    /// does not care about timing sees no change at all.
+    ///
+    /// A pong with no ping outstanding is dropped rather than guessed at: after
+    /// a reconnect the reply to the previous socket's ping can still arrive, and
+    /// pairing it with the new socket's send instant would produce an offset
+    /// that is wrong by the reconnect gap.
+    private func recordClockOffsetIfPong(_ frame: WSControlFrame) {
+        guard case let .pong(ts) = frame,
+              let rawTs = ts,
+              // Out of `Int64` range cannot be an epoch stamp. Rejected here
+              // rather than clamped: clamping would turn a nonsense value into
+              // a plausible-looking offset.
+              rawTs <= UInt64(Int64.max),
+              let sentMs = pendingPingSentMs
+        else { return }
+        pendingPingSentMs = nil
+
+        let previous = clockOffsetEstimator.best
+        clockOffsetEstimator.record(
+            localSendMs: sentMs,
+            localReceiveMs: Self.epochMs(),
+            serverMs: Int64(rawTs)
+        )
+        guard let best = clockOffsetEstimator.best, best != previous else { return }
+        emit(.diagnostic(.clockOffsetEstimated(best)))
     }
 
     /// Pretty-prints a `WSControlFrameCodingError` so the iOS log doesn't

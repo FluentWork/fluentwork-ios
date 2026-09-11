@@ -41,7 +41,14 @@ public enum WSControlFrame: Equatable, Sendable {
     /// (e.g., Volcengine Duplex). This is the authoritative transcript for the
     /// current user turn, consistent with what the AI model heard.
     case clientASRTranscription(text: String, turnID: String?)
-    case aiTextDelta(text: String)
+    /// Gateway → client incremental assistant text (v2).
+    ///
+    /// `serverTsMs` is the gateway's epoch-millisecond stamp at serialize time
+    /// (P1-5). Optional on the wire — a v1 gateway omits it — and `nil` means
+    /// *not measurable*, never *zero*: subtracting it from `Date()` without a
+    /// clock offset measures the skew between the two machines, not the
+    /// latency. See `ClockOffset`.
+    case aiTextDelta(text: String, turnID: String?, serverTsMs: Int64?)
     case aiAudioChunk(sequence: UInt32)
     /// Gateway → client: warm the TTS decoder before binary audio messages.
     case aiTTSStart(turnID: String, voiceID: String, sampleRate: Int, codec: String)
@@ -130,6 +137,7 @@ extension WSControlFrame: Codable {
         case voiceID = "voice_id"
         case code
         case message
+        case serverTsMs = "server_ts_ms"
         case sampleRate = "sample_rate"
         case codec
         case completionStatus = "completion_status"
@@ -187,7 +195,11 @@ extension WSControlFrame: Codable {
             )
 
         case "ai.text.delta":
-            self = .aiTextDelta(text: try container.decode(String.self, forKey: .text))
+            self = .aiTextDelta(
+                text: try container.decode(String.self, forKey: .text),
+                turnID: try container.decodeIfPresent(String.self, forKey: .turnID),
+                serverTsMs: try container.decodeIfPresent(Int64.self, forKey: .serverTsMs)
+            )
 
         case "ai.tts.start":
             self = .aiTTSStart(
@@ -291,9 +303,11 @@ extension WSControlFrame: Codable {
             try container.encode(text, forKey: .text)
             try container.encodeIfPresent(turnID, forKey: .turnID)
 
-        case let .aiTextDelta(text):
+        case let .aiTextDelta(text, turnID, serverTsMs):
             try container.encode("ai.text.delta", forKey: .type)
             try container.encode(text, forKey: .text)
+            try container.encodeIfPresent(turnID, forKey: .turnID)
+            try container.encodeIfPresent(serverTsMs, forKey: .serverTsMs)
 
         case let .aiTTSStart(turnID, voiceID, sampleRate, codec):
             try container.encode("ai.tts.start", forKey: .type)

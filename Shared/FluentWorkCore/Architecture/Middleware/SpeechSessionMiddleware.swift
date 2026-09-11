@@ -564,6 +564,15 @@ private func transportEventPump(
                             "payload_bytes": String(frame.opusPayload.count),
                         ]
                     )
+                    // P1-5: audio is the other way a turn can answer first, and
+                    // for "did the AI start speaking sooner" it is the one that
+                    // matters — text streams earlier but is silent. The recorder
+                    // keeps whichever channel arrives first, so a reply that
+                    // leads with audio is not overwritten by the text delta
+                    // chasing it. No turn id on the wire here: binary frames
+                    // carry a sequence and nothing else, so this resolves to the
+                    // turn most recently started.
+                    timings.markFirstResponse(nil, source: "audio")
                     do {
                         let consumedByTTS = try ttsDispatcher.handle(audio: frame)
                         if consumedByTTS {
@@ -701,10 +710,16 @@ private func transportEventPump(
                         )
                     }
     
-                case let .control(.aiTextDelta(text)):
+                case let .control(.aiTextDelta(text, turnID, serverTsMs)):
                     await dispatchBox.dispatch(
-                        .speakingRoom(.aiTurnTextDelta(text: text, turnID: nil))
+                        .speakingRoom(.aiTurnTextDelta(text: text, turnID: turnID))
                     )
+                    // P1-5: the first delta of a turn *is* the assistant starting
+                    // to answer, so it is where the wait ends. The recorder
+                    // reports once per turn — later deltas are the same answer
+                    // continuing, and counting them would turn "how long until
+                    // the AI spoke" into "how long until it finished".
+                    timings.markFirstResponse(turnID, source: "text", serverTsMs: serverTsMs)
     
                 case let .control(.clientASRTranscription(text, turnID)):
                     // Display-layer transcript plus the ASR → LLM hop.
@@ -759,6 +774,15 @@ private func transportEventPump(
                 // later turn is the signature of the gateway's numbering
                 // going backwards — which is what makes this event worth
                 // more than the silence it replaces.
+                // P1-5: a tighter gateway↔phone clock estimate. Handed to the
+                // recorder rather than logged here — its only consumer is the
+                // first-response mark, which needs it to split server time from
+                // network time. Not tracked as its own event on purpose: it
+                // repeats on every improvement, and the number worth reading is
+                // the one attached to a turn, not the estimate on its own.
+                case let .diagnostic(.clockOffsetEstimated(offset)):
+                    timings.setClockOffset(offset)
+
                 case let .diagnostic(.audioFrameDropped(sequence, watermark, dropped)):
                     tracker.track(
                         event: "transport_audio_dropped",

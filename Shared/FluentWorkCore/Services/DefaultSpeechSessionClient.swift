@@ -103,16 +103,30 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         await startHeartbeat()
     }
 
+    /// Keeps the gateway's read-idle timer fed. Doubles as the clock probe.
+    ///
+    /// Why `ts` is 0 rather than the phone's clock: the gateway answers a ping
+    /// with a pong carrying our own `ts` back, and substitutes **its own** clock
+    /// only when that `ts` is 0 (`voicegateway/handler.go`). A stamped ping
+    /// therefore buys an echo, never an offset — and an echo is the dangerous
+    /// kind of wrong, because it yields a plausible few-millisecond skew instead
+    /// of an obvious failure. ``URLSessionSocketTransport`` normalises the same
+    /// way on the way out; sending 0 here keeps the intent readable at the call
+    /// site instead of leaving it as a property of the transport.
+    ///
+    /// The opening ping goes out immediately rather than after one interval.
+    /// Sleeping first would leave the **first** turn — the one whose
+    /// first-response latency anyone actually looks at — with no offset to
+    /// measure against, so its latency would read as unmeasurable for the
+    /// 30 s it takes the heartbeat to come round.
     private func startHeartbeat() async {
         await heartbeatTask.cancel()
         let transport = self.transport
         let interval = self.heartbeatInterval
         let task = Task { [transport] in
             while !Task.isCancelled {
+                try? await transport.send(control: .ping(ts: 0))
                 try? await Task.sleep(for: interval)
-                guard !Task.isCancelled else { return }
-                let ts = UInt64(Date().timeIntervalSince1970 * 1000)
-                try? await transport.send(control: .ping(ts: ts))
             }
         }
         await heartbeatTask.set(task)

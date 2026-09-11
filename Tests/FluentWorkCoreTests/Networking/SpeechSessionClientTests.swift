@@ -178,7 +178,13 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
     #expect(calls[0].sessionID == "s-9")
     #expect(calls[0].ticket == "tik")
     let sentControls = await transport.sentControlFrames
-    #expect(sentControls == [.sessionStart(.init(scene: "standup"))])
+    // `session.start` goes first, before the heartbeat exists.
+    #expect(sentControls.first == .sessionStart(.init(scene: "standup")))
+    // Anything behind it is the heartbeat's clock probe — and only ever that.
+    // The shape is asserted rather than the exact array because the probe is
+    // sent from a detached task: whether it has landed by the time we look is a
+    // race, but what it can be is not.
+    #expect(sentControls.dropFirst().allSatisfy { $0 == .ping(ts: 0) })
 }
 
 @MainActor

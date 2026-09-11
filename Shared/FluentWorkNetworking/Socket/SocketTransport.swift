@@ -49,6 +49,17 @@ public enum SocketTransportDiagnostic: Equatable, Sendable {
     /// watermark value is the datum — an audio sequence at or below it, arriving
     /// after the turn that set it, is what says the numbering went backwards.
     case audioFrameDropped(sequence: UInt32, watermark: UInt32, dropped: Int)
+
+    /// A ping/pong round trip produced a tighter gateway↔phone clock estimate
+    /// than any before it.
+    ///
+    /// Emitted only when the estimate actually improves, so a steady session
+    /// logs one line instead of one per heartbeat. Consumers that never see it
+    /// (a transport that does not probe, or a session shorter than one ping)
+    /// must read `server_ts_ms` as unmeasurable rather than as zero skew —
+    /// treating a missing offset as zero silently bills the clock difference to
+    /// the latency the field exists to measure.
+    case clockOffsetEstimated(ClockOffset)
 }
 
 public protocol SocketTransportProtocol: Sendable {
