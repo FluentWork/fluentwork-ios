@@ -417,6 +417,250 @@ private func consumeFirstEvent<T: Sendable>(
     #expect(abs(mean) > 1, "tap chain output should preserve non-zero energy after downmix")
 }
 
+// MARK: - Engine-level voice processing (AEC)
+
+/// A multi-channel format of the shape voice processing hands back.
+///
+/// Not `AVAudioFormat(commonFormat:sampleRate:channels:interleaved:)` — that
+/// initializer only builds a layout for one and two channels and returns `nil`
+/// above that, while voice processing returns more (reports of 3, 7 and 9). A
+/// *discrete* layout is how you say "N channels, no implied speaker positions",
+/// which is exactly what the echo-reference channels are.
+private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat? {
+    guard let layout = AVAudioChannelLayout(
+        layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | channels
+    ) else {
+        return nil
+    }
+    return AVAudioFormat(
+        commonFormat: .pcmFormatFloat32,
+        sampleRate: 48_000,
+        interleaved: false,
+        channelLayout: layout
+    )
+}
+
+/// Enabling voice processing is what changes the input node's shape, so the
+/// tap has to be installed with the node's *output* format rather than the raw
+/// input format the chain used before.
+///
+/// Getting the choice wrong does not throw. The stale format is still valid,
+/// the converter still builds, the tap still installs — and then every buffer
+/// is dropped at `processInput`'s guard. Capture that looks alive and carries
+/// nothing is the failure this pin exists for.
+@available(iOS 17, macOS 14, *)
+@Test func captureFormatUsesTheProcessedStreamOnlyWhenVoiceProcessingIsOn() throws {
+    let raw = try #require(AVAudioFormat(
+        commonFormat: .pcmFormatFloat32,
+        sampleRate: 48_000,
+        channels: 1,
+        interleaved: false
+    ))
+    let processed = try #require(makeDiscreteFormat(channels: 3))
+
+    // Off: exactly the format the chain used before — the fallback path has to
+    // stay byte for byte what it was.
+    #expect(
+        LiveAudioEngine.captureFormat(
+            input: raw,
+            processedOutput: processed,
+            voiceProcessingActive: false
+        )?.channelCount == 1
+    )
+    // On: the unit sits between the node's input and output, so the processed
+    // stream is what the tap receives.
+    #expect(
+        LiveAudioEngine.captureFormat(
+            input: raw,
+            processedOutput: processed,
+            voiceProcessingActive: true
+        )?.channelCount == 3
+    )
+}
+
+/// A unit that refuses, or an OS that hands back nothing usable, must leave the
+/// old chain standing rather than throwing the session away.
+@available(iOS 17, macOS 14, *)
+@Test func captureFormatFallsBackToTheRawInputWhenTheProcessedStreamIsUnusable() throws {
+    let raw = try #require(AVAudioFormat(
+        commonFormat: .pcmFormatFloat32,
+        sampleRate: 44_100,
+        channels: 1,
+        interleaved: false
+    ))
+
+    #expect(
+        LiveAudioEngine.captureFormat(
+            input: raw,
+            processedOutput: nil,
+            voiceProcessingActive: true
+        )?.sampleRate == 44_100
+    )
+    // Nothing usable on either side is still `nil` — the caller turns that into
+    // the recoverable `invalidFormat`, as it always did.
+    #expect(LiveAudioEngine.captureFormat(input: nil, processedOutput: nil, voiceProcessingActive: true) == nil)
+    #expect(LiveAudioEngine.captureFormat(input: nil, processedOutput: nil, voiceProcessingActive: false) == nil)
+}
+
+/// Voice processing does not hand back a cleaned copy of the microphone — it
+/// hands back the microphone channel *plus* the channels the echo canceller
+/// needs. Left alone, the converter downmixes all of them, so the uplink
+/// carries the echo-reference channels mixed into the voice: AEC working, and
+/// the transcript still worse, which reads as AEC not working.
+@available(iOS 17, macOS 14, *)
+@Test func captureChannelMapTakesOnlyTheMicrophoneChannel() throws {
+    let target = try #require(AVAudioFormat(
+        commonFormat: .pcmFormatInt16,
+        sampleRate: 16_000,
+        channels: 1,
+        interleaved: true
+    ))
+
+    let multi = try #require(makeDiscreteFormat(channels: 3))
+    let multiConverter = try #require(AVAudioConverter(from: multi, to: target))
+
+    // The thing worth pinning is what the default *is*, because it is not the
+    // downmix you would assume. A discrete multi-channel layout implies no
+    // mapping onto a single channel, so the converter reports `-1` — which the
+    // API defines as "this output channel gets no input at all". The uplink
+    // would not be noisy; it would be empty, from a chain that looks perfectly
+    // healthy. Measured, not assumed.
+    #expect(
+        multiConverter.channelMap.map(\.intValue) == [-1],
+        "a discrete multi-channel input maps to silence by default — that is the failure this fixes"
+    )
+
+    LiveAudioEngine.applyCaptureChannelMap(multiConverter, from: multi)
+    #expect(multiConverter.channelMap.map(\.intValue) == [0], "channel 0 is the microphone")
+
+    // Single channel is the pre-voice-processing shape, and its default is
+    // already correct. Mapping it would be a change to the fallback chain that
+    // nothing asked for.
+    let mono = try #require(AVAudioFormat(
+        commonFormat: .pcmFormatFloat32,
+        sampleRate: 44_100,
+        channels: 1,
+        interleaved: false
+    ))
+    let monoConverter = try #require(AVAudioConverter(from: mono, to: target))
+    LiveAudioEngine.applyCaptureChannelMap(monoConverter, from: mono)
+    #expect(monoConverter.channelMap.map(\.intValue) == [0], "the single-channel chain keeps its mapping")
+}
+
+/// The enable has to run before the input format is read. Enabling is what
+/// changes the node's shape, so a caller that reads first and enables second
+/// builds its converter and its tap against a stream that no longer exists.
+///
+/// It runs *before* the format guard, and that is what makes it observable:
+/// CI has no audio input device, so `startCapture()` stops at the guard on
+/// every run and nothing after it executes. Asserting on what happened before
+/// the throw is the same shape as asserting `didConfigureFullDuplex` while the
+/// session manager is throwing — and it is honest about its limit, which is
+/// that the guard is where this test's reach ends.
+@available(iOS 17, macOS 14, *)
+@Test func startCaptureEnablesVoiceProcessingBeforeReadingTheInputFormat() async {
+    let recorder = VoiceProcessingRecorder()
+    let engine = LiveAudioEngine(
+        sessionManager: PermissiveAudioSessionManager(),
+        decoder: RawPCM16FrameDecoder(),
+        requestMicrophonePermission: { true },
+        applyVoiceProcessing: { try recorder.record($0) }
+    )
+
+    await engine.setVoiceProcessingEnabled(true)
+    _ = try? await engine.startCapture()
+
+    #expect(
+        recorder.calls == 1,
+        "the enable runs before the format guard, so it is reached on a machine with no audio input"
+    )
+}
+
+/// The report is the only thing a device run has to go on, so what it says has
+/// to be the node's actual state rather than the session's intent.
+///
+/// "The call returned without throwing" is not the same fact as "the unit is
+/// engaged" — enabling is automatic across both I/O nodes and can already be
+/// on, so a build that asked and got nothing back would otherwise log a clean
+/// `on` while running without echo cancellation at all.
+@available(iOS 17, macOS 14, *)
+@Test func voiceProcessingReportStatesTheNodeNotTheRequest() throws {
+    let format = try #require(makeDiscreteFormat(channels: 1))
+
+    // Turned on by this call.
+    #expect(
+        LiveAudioEngine.voiceProcessingReport(isOn: true, wasAlreadyOn: false, format: format, failure: nil)
+            == "on, tap=48000Hz/1ch"
+    )
+    // Already on before the session asked — a different story, and one a
+    // device log needs to be able to tell apart from the line above.
+    #expect(
+        LiveAudioEngine.voiceProcessingReport(isOn: true, wasAlreadyOn: true, format: format, failure: nil)
+            == "on, alreadyOn, tap=48000Hz/1ch"
+    )
+    // The silent no-op: the call was clean and the unit is off anyway.
+    #expect(
+        LiveAudioEngine.voiceProcessingReport(isOn: false, wasAlreadyOn: false, format: format, failure: nil)
+            == "off, tap=48000Hz/1ch"
+    )
+    // A refusal says so instead of reporting a state it does not have.
+    #expect(
+        LiveAudioEngine.voiceProcessingReport(isOn: false, wasAlreadyOn: false, format: format, failure: "boom")
+            == "unavailable: boom"
+    )
+}
+
+/// Opt-in, and the default build must not touch the node. Voice processing
+/// changes the input format and pulls the output node into voice-processing
+/// mode; a session that never asked for it should not get either.
+@available(iOS 17, macOS 14, *)
+@Test func startCaptureLeavesVoiceProcessingAloneUnlessTheSessionAskedForIt() async {
+    let recorder = VoiceProcessingRecorder()
+    let engine = LiveAudioEngine(
+        sessionManager: PermissiveAudioSessionManager(),
+        decoder: RawPCM16FrameDecoder(),
+        requestMicrophonePermission: { true },
+        applyVoiceProcessing: { try recorder.record($0) }
+    )
+
+    _ = try? await engine.startCapture()
+
+    #expect(recorder.calls == 0, "voice processing is opt-in; the default session must not enable it")
+}
+
+/// Losing echo cancellation is bad; losing the microphone is worse. A device
+/// that refuses the unit still captures, and the refusal is reported rather
+/// than thrown.
+///
+/// What this can and cannot prove: it pins that the seam's own error is never
+/// what `startCapture()` fails with. It cannot pin the *report*, because on a
+/// machine with no audio input the format guard throws first — the same guard
+/// that limits the ordering test above.
+@available(iOS 17, macOS 14, *)
+@Test func aRefusedVoiceProcessingUnitDoesNotFailTheSession() async {
+    let recorder = VoiceProcessingRecorder()
+    recorder.refuseNextCall()
+    let engine = LiveAudioEngine(
+        sessionManager: PermissiveAudioSessionManager(),
+        decoder: RawPCM16FrameDecoder(),
+        requestMicrophonePermission: { true },
+        applyVoiceProcessing: { try recorder.record($0) }
+    )
+
+    await engine.setVoiceProcessingEnabled(true)
+    var thrown: Error?
+    do {
+        try await engine.startCapture()
+    } catch {
+        thrown = error
+    }
+
+    #expect(
+        !(thrown is VoiceProcessingRecorder.Refused),
+        "a refused unit is a degraded session, not a failed one"
+    )
+}
+
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEnginePlaySkipsFramesAtOrBelowInterruptWatermark() async {
     let log = CallLog()
@@ -662,5 +906,46 @@ final class RecordingAudioInterruptionObserver: AudioInterruptionObserving, @unc
 
     var stopCount: Int {
         queue.sync { stops }
+    }
+}
+
+/// Records the injectable engine-level voice-processing seam.
+///
+/// Synchronous on purpose: the call it stands in for happens while the audio
+/// graph is being built, so a recorder that needed an `await` could not model
+/// it — the real one has to return before the input format is read. Queue
+/// serialized in the same style as `ThrowingAudioSessionManager`.
+final class VoiceProcessingRecorder: @unchecked Sendable {
+    /// Stands in for a device that will not hand its audio route to the
+    /// voice-processing unit.
+    enum Refused: Error, Equatable { case refused }
+
+    private let queue = DispatchQueue(label: "com.fluentwork.tests.voice-processing")
+    private var recordedCalls = 0
+    private var refuses = false
+    /// What the node reports back after a call that did *not* throw. Separate
+    /// from "the call succeeded" so a test can model the case the read-back
+    /// exists for: the call returns cleanly and the unit is still not on.
+    private var reportsEnabled = true
+
+    func refuseNextCall() {
+        queue.sync { refuses = true }
+    }
+
+    func reportNotEnabled() {
+        queue.sync { reportsEnabled = false }
+    }
+
+    func record(_ inputNode: AVAudioInputNode) throws -> Bool {
+        let outcome = queue.sync { () -> (refuse: Bool, enabled: Bool) in
+            recordedCalls += 1
+            return (refuses, reportsEnabled)
+        }
+        if outcome.refuse { throw Refused.refused }
+        return outcome.enabled
+    }
+
+    var calls: Int {
+        queue.sync { recordedCalls }
     }
 }

@@ -170,7 +170,8 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
                 evaluationArrival: evaluationArrival,
                 ttsDispatcher: ttsDispatcher,
                 ttsTrace: ttsTrace,
-                usesAutoVAD: store.state.featureFlags.isEnabled(.voiceVadAuto)
+                usesAutoVAD: store.state.featureFlags.isEnabled(.voiceVadAuto),
+                voiceProcessingEnabled: store.state.featureFlags.isEnabled(.voiceProcessing)
             )
         }
         let timeoutEffects = processingTimeoutEffects(
@@ -463,6 +464,13 @@ private func audioEventPump(
                 case let .routeChanged(reason):
                     timings.mark(event: "audio_route_changed", properties: ["reason": reason])
                     await audioEngine.reconfigureForRouteChange()
+
+                case let .voiceProcessing(detail):
+                    // Not a dispatch and not a failure: the session runs either
+                    // way. It is recorded because echo cancellation can only be
+                    // judged on a device, and a device run cannot be read
+                    // without knowing whether the switch was even on.
+                    timings.mark(event: "audio_voice_processing", properties: ["detail": detail])
     
                 case let .failed(message):
                     timings.mark(event: "audio_engine_failed", properties: ["message": message])
@@ -850,7 +858,8 @@ private func interpretSpeechSessionSideEffect(
     evaluationArrival: EvaluationArrivalBox,
     ttsDispatcher: TTSFrameDispatcher,
     ttsTrace: TTSStreamTrace,
-    usesAutoVAD: Bool = false
+    usesAutoVAD: Bool = false,
+    voiceProcessingEnabled: Bool = false
 ) -> Effect<AppAction> {
     let audioEngine = container.audioEngine()
     let speechClient = container.speechSessionClient()
@@ -914,6 +923,11 @@ private func interpretSpeechSessionSideEffect(
                 do {
                     try await speechClient.startSession()
                     await audioEngine.setSpeechBoundaryMode(usesAutoVAD ? .autoVAD : .tapToStart)
+                    // Declared before `startCapture()`, not after: voice
+                    // processing may only be toggled while the engine is
+                    // stopped, and `startCapture()` is what starts it. The
+                    // engine applies it while building the graph.
+                    await audioEngine.setVoiceProcessingEnabled(voiceProcessingEnabled)
                     try await audioEngine.startCapture()
                 } catch let error as AudioEnginePermissionError {
                     let message: String

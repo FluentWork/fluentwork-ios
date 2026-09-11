@@ -156,6 +156,20 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     private var speechTracker = AudioSpeechActivityTracker.forMode(.manual)
     private var playbackGate = AudioPlaybackGate()
     private var speechBoundaryMode: SpeechBoundaryMode = .manual
+    /// Whether the session asked for engine-level voice processing (AEC).
+    ///
+    /// An intent, not a state: it is applied when the capture graph is built,
+    /// because voice processing may only be toggled while the engine is
+    /// stopped — and `startCapture()` is what starts it. Same shape as
+    /// `speechBoundaryMode`.
+    private var voiceProcessingRequested = false
+    /// Whether voice processing actually took effect on the current graph.
+    ///
+    /// Deliberately separate from the request. A device that refuses voice
+    /// processing still captures, just without AEC, and the difference has to
+    /// be visible somewhere or a bad echo-cancellation result cannot be told
+    /// apart from a switch that never came on.
+    private var voiceProcessingActive = false
     private let clock = ContinuousClock()
 
     // Playback graph (lazy-attached on first frame).
@@ -199,6 +213,20 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// and reaching it with the real implementation is not a recoverable error
     /// — see `startPlaybackIfNeeded()`.
     private let startEngineForPlayback: @Sendable (AVAudioEngine) throws -> Void
+    /// Turns on engine-level voice processing and reports whether it is now on.
+    ///
+    /// Returns the read-back rather than `Void` because "we asked and nothing
+    /// threw" is not the same fact as "the unit is engaged" — the call can
+    /// succeed and take no effect, which is precisely the case a device log has
+    /// to be able to show. Callers use the return value, never the intent.
+    ///
+    /// Injectable for the same reason as `startEngineForPlayback`: the branch
+    /// that matters is the one a healthy device will not take, and here the
+    /// branch is "the device refuses voice processing". It also keeps `swift
+    /// test` off the real API entirely — the capture path is already entered on
+    /// CI as far as the input node, and `docs/19` §4.2 forbids a test from
+    /// depending on whether the machine has an audio device.
+    private let applyVoiceProcessing: @Sendable (AVAudioInputNode) throws -> Bool
 
     public init(
         sessionManager: any AudioSessionManaging = DefaultAudioSessionManager(),
@@ -207,9 +235,27 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         requestMicrophonePermission: @escaping @Sendable () async -> Bool = {
             await MicrophonePermission.request()
         },
-        startEngineForPlayback: @escaping @Sendable (AVAudioEngine) throws -> Void = { try $0.start() }
+        startEngineForPlayback: @escaping @Sendable (AVAudioEngine) throws -> Void = { try $0.start() },
+        applyVoiceProcessing: @escaping @Sendable (AVAudioInputNode) throws -> Bool = { node in
+            // Two failure shapes, two mechanisms, and both are needed here.
+            // `setVoiceProcessingEnabled` is a throwing Swift call, so a refusal
+            // arrives as a Swift error; but asking while the engine is running
+            // is documented to fail the other way — an `AVAEInternal` "required
+            // condition is false" raise — and that is an `NSException`, which
+            // `do/catch` cannot see. That second shape is the F12–F16 class and
+            // the reason `FWTryCatch` exists at all (`docs/44` §3).
+            var raised: NSError?
+            var thrown: Error?
+            _ = FWTryCatch({
+                do { try node.setVoiceProcessingEnabled(true) } catch { thrown = error }
+            }, &raised)
+            if let raised { throw raised }
+            if let thrown { throw thrown }
+            return node.isVoiceProcessingEnabled
+        }
     ) {
         self.startEngineForPlayback = startEngineForPlayback
+        self.applyVoiceProcessing = applyVoiceProcessing
         let pair = AsyncStream.makeStream(
             of: AudioEngineEvent.self,
             bufferingPolicy: .bufferingNewest(64)
@@ -247,16 +293,28 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // and crashes the app. Querying the input format forces lazy node
         // creation; only then do we attempt to start.
         let inputNode = engine.inputNode
-        let inputFormat = inputNode.inputFormat(forBus: 0)
 
-        // Validate format before starting — empty formats mean no usable
-        // input device, which we surface as a recoverable error instead of
-        // letting AVAudioEngine's internal precondition fire.
-        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
-            throw AudioEngineError.invalidFormat(
-                "No usable audio input (sampleRate=\(inputFormat.sampleRate), channels=\(inputFormat.channelCount)). Check microphone permission or device audio input."
-            )
-        }
+        // Voice processing is enabled *before* any format is read, because
+        // enabling is what changes the input node's shape. `prepareCaptureNode`
+        // owns both halves as one operation — read before enable is the silent
+        // failure this change exists to prevent, and it is documented there.
+        //
+        // It also validates the format: empty formats mean no usable input
+        // device, which we surface as a recoverable error instead of letting
+        // AVAudioEngine's internal precondition fire.
+        // Gated on the engine being stopped, even here. `startCapture()` is not
+        // only ever the first thing to touch the engine: a playback frame that
+        // outlived its session brings the engine up through
+        // `startPlaybackIfNeeded()`, and a retry of `startCapture()` then finds
+        // it already running. Toggling voice processing there raises rather
+        // than returning an error — the F12–F16 class — so it is not attempted.
+        let preparation = try prepareCaptureNode(inputNode, attemptEnable: !engine.isRunning)
+        let inputFormat = preparation.format
+        voiceProcessingActive = preparation.voiceProcessingActive
+        // Reported before the engine starts, so a session that dies during
+        // `engine.start()` still leaves behind the one fact a device log needs:
+        // whether AEC was even on. See `AudioEngineEvent.voiceProcessing`.
+        continuation.yield(.voiceProcessing(preparation.report))
 
         // Install tap BEFORE startCapture calls engine.start(). The tap must
         // be in place when the engine comes online, otherwise the first audio
@@ -266,7 +324,20 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             inputNode.removeTap(onBus: 0)
         }
 
-        let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat)
+        // Guarded rather than assigned blind. `AVAudioConverter(from:to:)`
+        // returns an Optional and the old line stored it unchecked: a converter
+        // that failed to build became `nil`, `convertToPCM16` then returned
+        // `nil` for every buffer, and `processInput` dropped them all in
+        // silence — capture that looks alive and carries nothing. A format the
+        // voice-processing unit changed underneath us would have landed exactly
+        // there, which is why the format chain and the engine-level switch were
+        // never separable.
+        guard let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat) else {
+            throw AudioEngineError.invalidFormat(
+                "Could not convert \(Self.describe(inputFormat)) to \(Self.describe(Self.targetFormat)). Check microphone permission or device audio input."
+            )
+        }
+        Self.applyCaptureChannelMap(converter, from: inputFormat)
         self.sourceFormat = inputFormat
         self.converter = converter
         // Rebuild from the configured mode, not from the initializer defaults.
@@ -276,12 +347,28 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         self.playbackGate.reset()
         self.hasInstalledTap = false
 
-        inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-            // # weak-required: actor value after guard; Task retains this engine for one buffer hop.
-            Task {
-                await self.processInput(buffer)
+        // Wrapped, and this one is not speculative. `installTap` is the
+        // documented abort site for engine-level voice processing: the reported
+        // failure is `AVAEGraphNode.mm … CreateRecordingTap:
+        // (IsFormatSampleRateAndChannelCountValid(format))`, raised as an
+        // `NSException` when the format handed to the tap does not match what
+        // the node produces — which is exactly what voice processing changes.
+        // `prepareCaptureNode` is what makes them match; this is what keeps a
+        // mismatch from taking the process down if it ever does not.
+        var installRaised: NSError?
+        let installed = FWTryCatch({
+            inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak self] buffer, _ in
+                guard let self else { return }
+                // # weak-required: actor value after guard; Task retains this engine for one buffer hop.
+                Task {
+                    await self.processInput(buffer)
+                }
             }
+        }, &installRaised)
+        guard installed else {
+            throw AudioEngineError.invalidFormat(
+                "Could not tap \(Self.describe(inputFormat)) (voiceProcessing=\(preparation.voiceProcessingActive)): \(installRaised?.localizedDescription ?? "unknown"). Check microphone permission or device audio input."
+            )
         }
         hasInstalledTap = true
 
@@ -311,8 +398,17 @@ public actor LiveAudioEngine: AudioEngineProtocol {
                     inputNode.removeTap(onBus: 0)
                     hasInstalledTap = false
                 }
+                // Voice processing gets a mention because it adds a failure
+                // this message would otherwise mis-describe. With it on, the
+                // input node's output format and the output node's input
+                // format have to agree, so a start failure can be a format
+                // mismatch rather than another app holding the session —
+                // "close your music app" would be the wrong advice.
+                let voiceProcessingNote = preparation.voiceProcessingActive
+                    ? " Voice processing is on (\(Self.describe(inputFormat))); its input and output formats must match."
+                    : ""
                 throw AudioEngineError.audioSessionConflict(
-                    "Audio engine failed to start: \(error.localizedDescription)"
+                    "Audio engine failed to start: \(error.localizedDescription).\(voiceProcessingNote)"
                 )
             }
         }
@@ -335,13 +431,44 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         guard hasInstalledTap else { return }
 
         let inputNode = engine.inputNode
-        let inputFormat = inputNode.inputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else { return }
+
+        // A route change can drop voice processing — the unit follows the
+        // device pair, and this is the event that announces the pair changed.
+        // Re-applying it is only legal while the engine is stopped, and this
+        // path routinely runs with it still running, so the toggle is gated.
+        //
+        // The formats are resolved either way, and they have to be: a tap
+        // rebuilt against a format that no longer matches the node is the same
+        // silent-death shape `prepareCaptureNode` documents, and a route change
+        // is the other moment the format genuinely moves.
+        guard let preparation = try? prepareCaptureNode(
+            inputNode,
+            attemptEnable: !engine.isRunning
+        ) else {
+            // No usable format after the route change. Keep the existing graph
+            // and let the interruption observer surface the failure — killing
+            // the session on a headset unplug is worse than a stale chain.
+            return
+        }
+        let inputFormat = preparation.format
+
+        // Built before anything is torn down, so a converter that will not
+        // build leaves the working chain in place instead of swapping in a
+        // dead one. This path cannot throw — it is a reaction to a route
+        // change, not a session start — so the alternative to refusing here is
+        // installing a tap whose converter is `nil`, which is silent.
+        guard let replacement = AVAudioConverter(from: inputFormat, to: Self.targetFormat) else {
+            return
+        }
+        Self.applyCaptureChannelMap(replacement, from: inputFormat)
+
+        voiceProcessingActive = preparation.voiceProcessingActive
+        continuation.yield(.voiceProcessing(preparation.report))
 
         inputNode.removeTap(onBus: 0)
         hasInstalledTap = false
         sourceFormat = inputFormat
-        converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat)
+        converter = replacement
 
         inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak self] buffer, _ in
             guard let self else { return }
@@ -535,6 +662,19 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         speechTracker = .forMode(mode)
     }
 
+    /// Declares whether the next capture graph should run engine-level voice
+    /// processing — the echo canceller, noise suppression and AGC that keep the
+    /// assistant from hearing its own voice through the speaker.
+    ///
+    /// Recorded, not applied. Voice processing may only be toggled while the
+    /// engine is stopped, so the value takes effect when `startCapture()` builds
+    /// the graph. Setting it mid-session is therefore not an error and not a
+    /// no-op either: it changes the *next* session, which is what makes the
+    /// feature flag usable as a comparison harness on a device.
+    public func setVoiceProcessingEnabled(_ enabled: Bool) async {
+        voiceProcessingRequested = enabled
+    }
+
     public func beginManualSpeech() async {
         if let emitted = speechTracker.forceStart() {
             continuation.yield(emitted)
@@ -626,6 +766,176 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         }
     }
 
+    /// What the capture chain resolved to for one graph build.
+    struct CapturePreparation {
+        /// The format the tap is installed with *and* the format the converter
+        /// is built from. One value on purpose: the two have to agree, and when
+        /// they do not nothing throws.
+        let format: AVAudioFormat
+        /// Whether the engine-level voice-processing unit is driving the input.
+        let voiceProcessingActive: Bool
+        /// One line for the telemetry event. Device logs are read on a phone;
+        /// this is what says whether the switch was on before anyone tries to
+        /// judge how well it worked.
+        let report: String
+    }
+
+    /// Turns on engine-level voice processing when the session asked for it,
+    /// then reads back the format the tap will actually receive.
+    ///
+    /// The two are one operation, not two steps, because enabling is what
+    /// changes the input node's shape. A caller that reads the format first and
+    /// enables second gets the *pre-processing* format while the tap goes on to
+    /// receive the processed stream — and that mistake does not throw. The
+    /// format is still perfectly valid, so the converter builds, the tap
+    /// installs, and every buffer is then dropped at `processInput`'s guard.
+    /// Capture that looks alive and carries nothing is the failure shape this
+    /// whole change was warned about.
+    ///
+    /// Enabling is best-effort: a device that refuses voice processing must
+    /// still capture. Losing echo cancellation is bad, losing the microphone is
+    /// worse — and the outcome is reported either way, so the two can be told
+    /// apart afterwards.
+    ///
+    /// - Parameter attemptEnable: `false` when the engine may be running.
+    ///   Voice processing can only be toggled while it is stopped, and asking
+    ///   anyway does not fail politely — it raises, which is why this is a
+    ///   parameter rather than something the caller is trusted to remember. The
+    ///   formats are resolved from the node's real state either way, so a
+    ///   caller that cannot toggle still gets the chain that matches what the
+    ///   node is producing right now.
+    private func prepareCaptureNode(
+        _ inputNode: AVAudioInputNode,
+        attemptEnable: Bool
+    ) throws -> CapturePreparation {
+        // The node is asked what it is doing, not what was asked of it. The
+        // unit engages on both I/O nodes at once and can already be on from an
+        // earlier session, so the request alone does not determine the state —
+        // and the state is what decides which format the tap has to use.
+        let wasAlreadyOn = inputNode.isVoiceProcessingEnabled
+        var isOn = wasAlreadyOn
+        var enableFailure: String?
+
+        if voiceProcessingRequested, attemptEnable, !wasAlreadyOn {
+            do {
+                isOn = try applyVoiceProcessing(inputNode)
+            } catch {
+                // Surfaced in the report rather than thrown. A device without
+                // voice processing gets a working capture chain and a log line
+                // that says AEC is off; it does not get a dead microphone.
+                enableFailure = error.localizedDescription
+                isOn = wasAlreadyOn
+            }
+        }
+
+        // Read *after* the enable attempt, and gated on the read-back rather
+        // than the request. On success these are the processed formats; when
+        // the unit is off they are the raw ones, which is what the fallback
+        // wants — so a refused or skipped enable leaves the old chain untouched
+        // rather than half-converted.
+        let rawInput = inputNode.inputFormat(forBus: 0)
+        let processedOutput = isOn ? inputNode.outputFormat(forBus: 0) : nil
+
+        guard let format = Self.captureFormat(
+            input: rawInput,
+            processedOutput: processedOutput,
+            voiceProcessingActive: isOn
+        ) else {
+            throw AudioEngineError.invalidFormat(
+                "No usable audio input (voiceProcessing=\(isOn), input=\(Self.describe(rawInput)), processed=\(Self.describe(processedOutput))). Check microphone permission or device audio input."
+            )
+        }
+
+        return CapturePreparation(
+            format: format,
+            voiceProcessingActive: isOn,
+            report: Self.voiceProcessingReport(
+                isOn: isOn,
+                wasAlreadyOn: wasAlreadyOn,
+                format: format,
+                failure: enableFailure
+            )
+        )
+    }
+
+    /// One line for the telemetry event.
+    ///
+    /// Reports the state the node was found in, the state it ended in, and the
+    /// format the tap got — three facts, because a device run that comes back
+    /// "AEC did not help" is unreadable without knowing which of them was true.
+    /// `alreadyOn` in particular is not noise: the unit is shared across both
+    /// I/O nodes and survives between sessions, so "it was on before we asked"
+    /// is a different story from "we turned it on".
+    nonisolated static func voiceProcessingReport(
+        isOn: Bool,
+        wasAlreadyOn: Bool,
+        format: AVAudioFormat,
+        failure: String?
+    ) -> String {
+        if let failure { return "unavailable: \(failure)" }
+        let state = isOn ? "on" : "off"
+        let origin = isOn && wasAlreadyOn ? ", alreadyOn" : ""
+        return "\(state)\(origin), tap=\(Self.describe(format))"
+    }
+
+    /// Chooses the format the capture tap is installed with.
+    ///
+    /// Without voice processing this is the raw input format — byte for byte
+    /// what the chain used before, which is the property the fallback path
+    /// depends on. With voice processing the stream the tap receives is the
+    /// node's *output* format, not its input format: the unit sits between them.
+    ///
+    /// Falls back to the raw input format whenever the processed one is missing
+    /// or unusable, so a device that half-supports the feature degrades to the
+    /// old chain instead of throwing.
+    nonisolated static func captureFormat(
+        input: AVAudioFormat?,
+        processedOutput: AVAudioFormat?,
+        voiceProcessingActive: Bool
+    ) -> AVAudioFormat? {
+        guard voiceProcessingActive else { return usable(input) }
+        return usable(processedOutput) ?? usable(input)
+    }
+
+    nonisolated private static func usable(_ format: AVAudioFormat?) -> AVAudioFormat? {
+        guard let format, format.sampleRate > 0, format.channelCount > 0 else { return nil }
+        return format
+    }
+
+    /// Takes channel 0 only, when the input carries more than one.
+    ///
+    /// Voice processing does not hand back a cleaned copy of the microphone
+    /// signal — it hands back the microphone channel *plus* the channels the
+    /// echo canceller needs to do its job. Only channel 0 is the speaker.
+    ///
+    /// The default is worse than a bad mix. A discrete multi-channel layout
+    /// implies no mapping onto a single channel, so `AVAudioConverter` reports
+    /// `channelMap == [-1]`, which the API defines as "this output channel gets
+    /// no input at all" — the uplink is *empty*, from a chain that builds
+    /// cleanly and throws nothing. That is the same shape as the stale-format
+    /// failure `prepareCaptureNode` documents, reached one layer further down.
+    ///
+    /// A no-op for the single-channel formats that arrive without voice
+    /// processing, whose default mapping is already `[0]`, so the fallback path
+    /// is untouched. `channelMap` composes with sample-rate conversion — the
+    /// conversion below uses the block-based `convert(to:error:withInputFrom:)`
+    /// for that reason.
+    nonisolated static func applyCaptureChannelMap(
+        _ converter: AVAudioConverter,
+        from format: AVAudioFormat
+    ) {
+        guard format.channelCount > 1 else { return }
+        converter.channelMap = [0]
+    }
+
+    /// Short description of a format for telemetry — sample rate and channel
+    /// count are the two numbers that explain a capture chain that came up
+    /// wrong.
+    nonisolated static func describe(_ format: AVAudioFormat?) -> String {
+        guard let format else { return "none" }
+        return "\(Int(format.sampleRate))Hz/\(format.channelCount)ch"
+    }
+
     private func convertToPCM16(_ buffer: AVAudioPCMBuffer) throws -> Data? {
         guard let converter, let sourceFormat else { return nil }
 
@@ -685,6 +995,16 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         engine.isRunning
     }
 
+    /// Test-only hook reporting what the last graph build resolved to.
+    ///
+    /// Read through the same field `startCapture` and
+    /// `reconfigureForRouteChange` write, because the question worth asking is
+    /// not "did the setter store the value" — it is whether the request became
+    /// a live voice-processing unit, and those are two different facts.
+    func _testVoiceProcessingActive() -> Bool {
+        voiceProcessingActive
+    }
+
     /// Test-only hook exercising `convertToPCM16` for the supplied input
     /// buffer + input format. Production callers should keep using
     /// `startCapture()` so the tap stays the source of truth — this hook is
@@ -733,6 +1053,16 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         }
     }
 
+    /// Deliberately *not* wrapped in `FWTryCatch`, unlike `play()`.
+    ///
+    /// The format here is the source node's own output format, which
+    /// `AVAudioEngine` always accepts — the mixer resamples. Voice processing
+    /// does not change that: it changes the *output* node's format, and the
+    /// mixer→output connection is one the engine manages and re-derives on the
+    /// next `stop()`/`start()`. So the raise this would guard is speculative,
+    /// while the guard itself is not free: `.failed` ends the middleware's
+    /// audio pump for the rest of the process (`docs/49`), which would turn a
+    /// one-session playback problem into every later session going silent.
     private func attachPlayerIfNeeded() {
         guard !playerAttached else { return }
         engine.attach(playerNode)

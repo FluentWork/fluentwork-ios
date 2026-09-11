@@ -18,6 +18,15 @@ public enum AudioEngineEvent: Equatable, Sendable {
     case systemInterruptEnded
     /// Headset unplug / old output gone. Informational — not a session failure.
     case routeChanged(String)
+    /// Whether engine-level voice processing (AEC) actually took effect for the
+    /// capture session that just started, plus the format the tap ended up
+    /// with. Informational — not a session failure.
+    ///
+    /// It exists because AEC's *effect* can only be judged on a device, but
+    /// whether the switch was even on is a fact the log can carry. Without it
+    /// a failed device run cannot distinguish "AEC is not good enough" from
+    /// "AEC was never enabled" — and only the second one is a bug.
+    case voiceProcessing(String)
     case failed(String)
 }
 
@@ -57,6 +66,14 @@ public protocol AudioEngineProtocol: Sendable {
 
 extension AudioEngineProtocol {
     public func setSpeechBoundaryMode(_ mode: SpeechBoundaryMode) async {}
+    /// Declares whether the session should run engine-level voice processing.
+    ///
+    /// Same shape as `setSpeechBoundaryMode`: the middleware turns a feature
+    /// flag into an intent, and the engine applies it when it builds the
+    /// capture graph. It cannot be applied on demand — voice processing may
+    /// only be toggled while the engine is stopped, and `startCapture()` is
+    /// what starts it.
+    public func setVoiceProcessingEnabled(_ enabled: Bool) async {}
     public func beginManualSpeech() async {}
     public func endManualSpeech() async {}
     public func reconfigureForRouteChange() async {}

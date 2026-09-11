@@ -13,6 +13,24 @@ public enum AppFeatureFlag: String, CaseIterable, Codable, Hashable, Sendable, F
     /// When enabled, speaking-room turns start/stop from VAD energy.
     /// Default off: tap-to-talk is the primary path (I20 Item 4).
     case voiceVadAuto
+    /// Engine-level voice processing on the capture input — echo cancellation
+    /// plus noise suppression and AGC, via
+    /// `AVAudioInputNode.setVoiceProcessingEnabled(_:)`.
+    ///
+    /// This is a *different switch* from the session-level `.playAndRecord` +
+    /// `.voiceChat` set by `DefaultAudioSessionManager`. That one configures
+    /// the audio session; on a self-built `AVAudioEngine` graph it does not by
+    /// itself put the processed stream into the graph, which is why the
+    /// engine-level call is the one that decides. See meta `77_` §3.2.
+    ///
+    /// Default off, and deliberately absent from `firstWave`. Enabling voice
+    /// processing changes the input node's format (it can come back
+    /// multi-channel, with echo-reference channels alongside the real mic) and
+    /// puts the output node into voice-processing mode as well. Neither has
+    /// been confirmed on a device, and the failure mode it exists to remove —
+    /// the assistant hearing itself — is the one thing a stale default would
+    /// keep. Flip it only after `ios docs/62` T4 passes.
+    case voiceProcessing
 
     public var defaultValue: FeatureFlagValue {
         .bool(false)
