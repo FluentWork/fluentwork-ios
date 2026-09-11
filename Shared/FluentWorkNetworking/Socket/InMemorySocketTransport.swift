@@ -6,11 +6,15 @@ public actor InMemorySocketTransport: SocketTransportProtocol {
     public private(set) var sentControlFrames: [WSControlFrame] = []
     public private(set) var sentAudioPayloads: [Data] = []
     public private(set) var interruptMarks = 0
+    /// Diagnostics the double emitted. Recorded as well as streamed, so a test
+    /// can assert on them without draining a stream that never finishes — the
+    /// double has no `deinit` that would end it.
+    public private(set) var emittedDiagnostics: [SocketTransportDiagnostic] = []
     public private(set) var disconnectCount = 0
 
     nonisolated public let events: AsyncStream<SocketTransportEvent>
     private let continuation: AsyncStream<SocketTransportEvent>.Continuation
-    private var dropGate = AudioFrameDropGate()
+    private var bargeIn = BargeInAudioGate()
     private var isConnected = false
 
     public init() {
@@ -22,7 +26,7 @@ public actor InMemorySocketTransport: SocketTransportProtocol {
     public func connect(url: URL, sessionID: String, ticket: String) async throws {
         connectCalls.append((url, sessionID, ticket))
         isConnected = true
-        dropGate = AudioFrameDropGate()
+        bargeIn = BargeInAudioGate()
 
         continuation.yield(.stateChanged(.connecting))
         continuation.yield(
@@ -53,7 +57,7 @@ public actor InMemorySocketTransport: SocketTransportProtocol {
 
     public func markInterrupted() async {
         interruptMarks += 1
-        dropGate.markInterrupted()
+        bargeIn.markInterrupted()
     }
 
     public func emitFailure(_ error: SocketTransportError) async {
@@ -69,13 +73,20 @@ public actor InMemorySocketTransport: SocketTransportProtocol {
     }
 
     /// Injects an audio frame through the same drop-gate path as production transport.
+    ///
+    /// "The same path" now includes the **report**: this used to share only the
+    /// drop decision, so a test could not observe a drop that production would
+    /// have reported. Both go through ``BargeInAudioGate`` so they cannot drift.
     @discardableResult
     public func emitAudio(_ frame: WSAudioFrame) -> Bool {
-        dropGate.observe(sequence: frame.sequence)
-        let shouldDeliver = dropGate.shouldDeliver(sequence: frame.sequence)
-        if shouldDeliver {
+        let (deliver, diagnostic) = bargeIn.accept(frame.sequence)
+        if let diagnostic {
+            emittedDiagnostics.append(diagnostic)
+            continuation.yield(.diagnostic(diagnostic))
+        }
+        if deliver {
             continuation.yield(.audio(frame))
         }
-        return shouldDeliver
+        return deliver
     }
 }

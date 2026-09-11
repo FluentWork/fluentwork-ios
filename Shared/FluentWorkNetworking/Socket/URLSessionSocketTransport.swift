@@ -39,7 +39,7 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
     private var webSocketTask: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
-    private var dropGate = AudioFrameDropGate()
+    private var bargeIn = BargeInAudioGate()
     /// Gateway↔phone clock estimate, fed by the app-level ping/pong round trip.
     /// See ``ClockOffsetEstimator`` for why it is not simply "server time minus
     /// local time".
@@ -48,8 +48,6 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
     /// time by construction: the heartbeat sleeps a full interval between sends.
     private var pendingPingSentMs: Int64?
     private var connectionState: SocketConnectionState = .idle
-    /// Barge-in drop bookkeeping. See ``AudioDropReport``.
-    private var dropReport = AudioDropReport()
     private var consecutivePingFailures = 0
     private var activeSessionID: String?
     private var activeTicket: String?
@@ -107,8 +105,7 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         activeURL = url
         activeSessionID = sessionID
         activeTicket = ticket
-        dropGate = AudioFrameDropGate()
-        dropReport.reset()
+        bargeIn = BargeInAudioGate()
         consecutivePingFailures = 0
 
         emit(.stateChanged(.connecting))
@@ -172,9 +169,7 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
     }
 
     public func markInterrupted() async {
-        dropGate.markInterrupted()
-        // A new watermark is a new run: the previous one's report is spent.
-        dropReport.reset()
+        bargeIn.markInterrupted()
     }
 
     // MARK: - Private
@@ -354,12 +349,10 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         case let .data(data):
             do {
                 let frame = try WSAudioFrameCodec.decode(data)
-                dropGate.observe(sequence: frame.sequence)
-                if dropGate.shouldDeliver(sequence: frame.sequence) {
-                    closeDroppedAudioRunIfNeeded()
+                let (deliver, diagnostic) = bargeIn.accept(frame.sequence)
+                if let diagnostic { emit(.diagnostic(diagnostic)) }
+                if deliver {
                     emit(.audio(frame))
-                } else {
-                    recordDroppedAudioFrame(sequence: frame.sequence)
                 }
             } catch {
                 throw SocketTransportError.decodingFailed(
@@ -396,8 +389,7 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
     /// erase the only evidence that anything was lost.
     private func releaseInterruptWatermarkIfTurnEnded(_ frame: WSControlFrame) {
         guard case .aiTurnEnd = frame else { return }
-        closeDroppedAudioRunIfNeeded()
-        dropGate.clearInterrupt()
+        if let diagnostic = bargeIn.clearInterrupt() { emit(.diagnostic(diagnostic)) }
     }
 
     /// Completes a clock-probe round trip when a pong lands.
@@ -503,26 +495,6 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         continuation.yield(.diagnostic(
             .receiveLatency(frameType: frameType, sizeBytes: sizeBytes, elapsedMs: elapsedMs)
         ))
-    }
-
-    /// Reports a frame the barge-in watermark discarded.
-    ///
-    /// The gate drops silently, and that silence is expensive: a watermark
-    /// numbering a turn that has already finished discards the *front* of every
-    /// later turn, which reaches the user as "the reply is half missing" with
-    /// nothing in any log to explain it. See ``AudioDropReport`` for the rule.
-    private func recordDroppedAudioFrame(sequence: UInt32) {
-        guard let watermark = dropGate.interruptMaxSequence else { return }
-        if let report = dropReport.recordDrop(sequence: sequence, watermark: watermark) {
-            emit(.diagnostic(report))
-        }
-    }
-
-    /// Closes an open drop run once a frame is delivered again.
-    private func closeDroppedAudioRunIfNeeded() {
-        if let report = dropReport.closeRun(watermark: dropGate.interruptMaxSequence) {
-            emit(.diagnostic(report))
-        }
     }
 
     private func emit(_ event: SocketTransportEvent) {

@@ -121,3 +121,65 @@ public struct AudioFrameDropGate: Equatable, Sendable {
         )
     }
 }
+
+/// The barge-in gate **and** the record of what it swallowed, as one thing.
+///
+/// These were two values wired together by hand — and wired *differently* in the
+/// two transports. `URLSessionSocketTransport` called `recordDrop`/`closeRun` on
+/// every frame; `InMemorySocketTransport` called neither. So the double shared
+/// the drop **decision** but not the drop **report**, and a test driving it
+/// could not observe a drop at all — even though "is the drop observable" is the
+/// first thing worth checking when a reply comes back half missing.
+///
+/// Anything that decides to drop should be the thing that says it dropped.
+/// Keeping the pair in one type is what makes that true by construction rather
+/// than by two call sites agreeing with each other. `77_` P1-22.
+public struct BargeInAudioGate: Sendable {
+    private var gate = AudioFrameDropGate()
+    private var report = AudioDropReport()
+
+    public init() {}
+
+    /// The active watermark, if any. Read-only: arming and releasing go through
+    /// `markInterrupted()` / `clearInterrupt()` so the report cannot be skipped.
+    public var interruptMaxSequence: UInt32? { gate.interruptMaxSequence }
+
+    /// Arms the watermark at the highest sequence seen so far.
+    public mutating func markInterrupted() {
+        gate.markInterrupted()
+        // A new watermark is a new run: the previous one's report is spent.
+        report.reset()
+    }
+
+    /// Releases the watermark, reporting any open run **before** it goes.
+    ///
+    /// The order is the point: clearing first would erase the only record that
+    /// frames were lost.
+    @discardableResult
+    public mutating func clearInterrupt() -> SocketTransportDiagnostic? {
+        let closing = report.closeRun(watermark: gate.interruptMaxSequence)
+        gate.clearInterrupt()
+        return closing
+    }
+
+    /// One inbound audio frame.
+    ///
+    /// Returns whether it should be delivered, plus the diagnostic to emit
+    /// either way — a drop opens a run, a delivery closes one. One call so a
+    /// caller cannot take the decision without also taking the report.
+    public mutating func accept(
+        _ sequence: UInt32
+    ) -> (deliver: Bool, diagnostic: SocketTransportDiagnostic?) {
+        gate.observe(sequence: sequence)
+        guard gate.shouldDeliver(sequence: sequence) else {
+            // Nil only when there is no watermark — nothing was dropped, so
+            // there is nothing to report.
+            let watermark = gate.interruptMaxSequence
+            let diagnostic = watermark.flatMap {
+                report.recordDrop(sequence: sequence, watermark: $0)
+            }
+            return (false, diagnostic)
+        }
+        return (true, report.closeRun(watermark: gate.interruptMaxSequence))
+    }
+}

@@ -537,3 +537,40 @@ private actor TransportHolder {
     // the signature that the watermark was cleared rather than a coincidence.
     #expect(delivered.filter { $0 == 1 }.count == 2, "the post-turn frame was dropped: watermark outlived its turn")
 }
+
+/// The test double must report drops the way production does.
+///
+/// `InMemorySocketTransport` shared the drop **decision** with the real
+/// transport but not the drop **report**: production emitted an
+/// `audioFrameDropped` diagnostic for every run and the double emitted nothing.
+/// So a test could not observe a drop at all — and "is the drop observable" is
+/// the first question worth asking when a reply comes back half missing.
+///
+/// Both now go through ``BargeInAudioGate``, so neither can take the decision
+/// without the report. `77_` P1-22.
+@Test func inMemoryTransportReportsTheDropsItMakes() async {
+    let transport = InMemorySocketTransport()
+    try? await transport.connect(
+        url: URL(string: "ws://127.0.0.1/ws")!,
+        sessionID: "s-1",
+        ticket: "ticket"
+    )
+
+    #expect(await transport.emitAudio(WSAudioFrame(sequence: 1, opusPayload: Data([0x01]))) == true)
+    #expect(await transport.emitAudio(WSAudioFrame(sequence: 2, opusPayload: Data([0x02]))) == true)
+
+    await transport.markInterrupted()
+
+    // Dropped — and, crucially, *said to have been dropped*.
+    #expect(await transport.emitAudio(WSAudioFrame(sequence: 2, opusPayload: Data([0x02]))) == false)
+    // A later frame closes the run with its size.
+    #expect(await transport.emitAudio(WSAudioFrame(sequence: 3, opusPayload: Data([0x03]))) == true)
+
+    // The opening report (the first drop makes the run visible) and the closing
+    // one (its size) — the same two the production transport emits.
+    let reported = await transport.emittedDiagnostics.compactMap { diagnostic -> Int? in
+        guard case let .audioFrameDropped(_, _, dropped) = diagnostic else { return nil }
+        return dropped
+    }
+    #expect(reported == [1, 1], "the double made a drop it never reported: \(reported)")
+}
