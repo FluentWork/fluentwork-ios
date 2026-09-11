@@ -11,7 +11,7 @@ import TGReduxKitTesting
     let listening = store.state.speakingRoom.timeline[0]
     #expect(listening.speaker == .user)
     #expect(listening.status == .listening)
-    #expect(listening.text == "我正在听…")
+    #expect(listening.text == "正在转写…")
 
     store.send(.speakingRoom(.serverASRReceived(text: "Let's ship it today", turnID: "turn-1")))
     let finalized = store.state.speakingRoom.timeline[0]

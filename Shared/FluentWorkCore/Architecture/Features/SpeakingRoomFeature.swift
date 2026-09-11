@@ -182,8 +182,8 @@ public enum SpeakingRoomAction: Equatable, Sendable, Action {
         tier: BadgeFeedEntry.Tier? = nil,
         turnID: String? = nil
     )
-    /// User speech ended; opens a "我正在听…" timeline item until server ASR
-    /// replaces it (design 22 resolved decision).
+    /// User speech ended; opens a "正在转写…" timeline item until the server's
+    /// transcript replaces it (design 22 resolved decision).
     case userTurnStarted(turnID: String?)
     /// Incremental assistant text from `ai.text.delta`.
     case aiTurnTextDelta(text: String, turnID: String?)
@@ -285,11 +285,23 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
         }
 
     case let .userTurnStarted(turnID):
+        // `我已说完，正在转写` — not "I am listening to you".
+        //
+        // This item is appended when the user's speech **ended**, which is the
+        // opposite of listening, and the placeholder is what the reader sees
+        // for as long as the server takes to answer with a transcript. The old
+        // wording described the wrong half of the turn and read as the app
+        // having stopped paying attention, which is exactly the complaint it
+        // drew.
+        //
+        // The status is still `.listening` because that name is load-bearing
+        // elsewhere — `serverASRReceived` matches on it to find the item it is
+        // replacing. The text is what a person reads; the case name is not.
         state.timeline.append(
             TurnTimelineItem(
                 turnID: turnID,
                 speaker: .user,
-                text: "我正在听…",
+                text: "正在转写…",
                 status: .listening
             )
         )
