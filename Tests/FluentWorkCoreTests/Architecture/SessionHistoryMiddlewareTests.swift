@@ -118,25 +118,21 @@ private func makeStore(
     #expect(client.requestedCursors == [nil])
 }
 
-/// Switching tabs away and back re-dispatches `.appear`, and that must not
-/// re-fetch page one and throw away whatever was paged in since.
+/// **This test used to assert the opposite** — that a second appearance did
+/// not re-fetch. See `everyAppearanceReloadsTheFirstPage` for why that flipped:
+/// this is the room list, and "current" has to mean on every appearance.
 ///
-/// The two dispatches are issued back to back rather than with a wait between
-/// them, and that is deliberate: the claim under test is a *negative* — no
-/// request goes out — so a test that waited for the first one to land would
-/// need a sleep to give the second one time to be wrong, and a sleep is both
-/// slow and a flake waiting to happen. Dispatching immediately is the stronger
-/// test anyway, because the reducer has already set `didRequestInitialLoad` by
-/// the time the second one is handled, which is exactly the state a returning
-/// tab is in.
+/// The cost is pinned here rather than left as a footnote: paged-in rows are
+/// dropped when the list re-appears. Those rows are the *older* ones, still on
+/// the server, and the user can page to them again — which is why the trade was
+/// worth taking.
 ///
-/// What it pins is the middleware's *own* copy of that guard, and specifically
-/// that it is read **before** `next(action)`. Read after, `didRequestInitialLoad`
-/// is already true whatever happened, so the guard answers "not the first one"
-/// every time and the list never loads at all — the failure is not a wasted
-/// request, it is an empty screen with a spinner on it forever.
+/// The waits are load-bearing and not a sleep in disguise: the assertion is on
+/// the *number* of requests, so the second appearance has to happen after the
+/// first one has actually landed, or the shared task id would cancel it and the
+/// test would be measuring the scheduler.
 @MainActor
-@Test func aSecondAppearNeitherRefetchesNorDiscardsPages() async throws {
+@Test func aLaterAppearanceReloadsPageOneAndDropsPagedInRows() async throws {
     let client = StubSessionHistoryClient { cursor in
         if cursor == nil {
             return SessionHistoryPage(items: [makeSessionItem("s-1")], nextCursor: "c1", size: 20)
@@ -145,23 +141,27 @@ private func makeStore(
     }
     let (store, _) = makeStore(client: client)
 
-    // Page one, then leave and come back, then page two — all before anything
-    // has had a chance to complete.
-    store.dispatch(.sessionHistory(.appear))
     store.dispatch(.sessionHistory(.appear))
     try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
         store.state.sessionHistory.phase == .ready
     }
     store.dispatch(.sessionHistory(.loadMoreRequested))
-
     try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
         store.state.sessionHistory.items.count == 2
     }
+
+    // Leaving the room and coming back — the case the user asked to be current.
+    store.dispatch(.sessionHistory(.appear))
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
+        store.state.sessionHistory.appearanceCount == 2
+            && store.state.sessionHistory.phase == .ready
+    }
+
+    #expect(client.requestedCursors == [nil, "c1", nil])
     #expect(
-        client.requestedCursors == [nil, "c1"],
-        "the second appear must not have asked again, and the paged-in row must survive"
+        store.state.sessionHistory.items.map(\.sessionID) == ["s-1"],
+        "page one again, replacing — the paged-in row is the accepted cost of always being current"
     )
-    #expect(store.state.sessionHistory.items.map(\.sessionID) == ["s-1", "s-2"])
 }
 
 /// Paging is the difference between a list and a page. The cursor the second
@@ -305,7 +305,6 @@ private func makeStore(
         state: SessionHistoryState(
             phase: .ready,
             items: [makeSessionItem("s-1"), makeSessionItem("s-2")],
-            didRequestInitialLoad: true,
             detail: SessionHistoryDetailState(requestedSessionID: "s-2", phase: .loading)
         )
     )

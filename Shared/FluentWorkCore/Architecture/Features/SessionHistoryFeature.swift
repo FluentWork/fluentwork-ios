@@ -58,10 +58,18 @@ public struct SessionHistoryState: Equatable, Sendable, State {
     public var items: [SessionHistoryItem]
     public var nextCursor: String?
     public var isLoadingMore: Bool
-    /// Guards against `.appear` firing a second first-page load every time the
-    /// tab is switched. Without it, leaving and returning re-fetches page one
-    /// and discards anything paged in since.
-    public var didRequestInitialLoad: Bool
+    /// Bumped by every `.appear`, so the middleware can fire the load
+    /// unconditionally (see `sessionHistoryMiddleware`) instead of the reducer
+    /// having to be the thing that decides.
+    ///
+    /// This replaced `didRequestInitialLoad`, which loaded **once per process**
+    /// and was written when the list was imagined as a tab. It is not a tab: it
+    /// is the room list, and the room it is a list of writes a session every
+    /// time one runs. A list that shows what was there when the app started is
+    /// a list of the past — the user asked for the entry to be current, and
+    /// "current" has to mean on every appearance, including coming back from a
+    /// session that just ended.
+    public var appearanceCount: Int
     /// Message from the most recent failure, cleared by the next request that
     /// starts. Kept even when the failure did not take over the screen: a
     /// "load more" that fails and only stops its spinner is indistinguishable
@@ -80,7 +88,7 @@ public struct SessionHistoryState: Equatable, Sendable, State {
         items: [SessionHistoryItem] = [],
         nextCursor: String? = nil,
         isLoadingMore: Bool = false,
-        didRequestInitialLoad: Bool = false,
+        appearanceCount: Int = 0,
         errorMessage: String? = nil,
         detail: SessionHistoryDetailState = SessionHistoryDetailState()
     ) {
@@ -88,7 +96,7 @@ public struct SessionHistoryState: Equatable, Sendable, State {
         self.items = items
         self.nextCursor = nextCursor
         self.isLoadingMore = isLoadingMore
-        self.didRequestInitialLoad = didRequestInitialLoad
+        self.appearanceCount = appearanceCount
         self.errorMessage = errorMessage
         self.detail = detail
     }
@@ -108,8 +116,8 @@ public enum SessionHistoryAction: Equatable, Sendable, Action {
 public let sessionHistoryReducer: Reducer<SessionHistoryState, SessionHistoryAction> = { state, action in
     switch action {
     case .appear:
-        guard !state.didRequestInitialLoad else { return }
-        state.didRequestInitialLoad = true
+        // Every appearance, deliberately. See `appearanceCount`.
+        state.appearanceCount += 1
         state.phase = .loading
         state.errorMessage = nil
 
@@ -119,10 +127,8 @@ public let sessionHistoryReducer: Reducer<SessionHistoryState, SessionHistoryAct
         //
         // With nothing on screen there is nothing to keep, and both ways of
         // getting here need the spinner: a pull on an empty list, and 重试 on a
-        // failed first page. The second one is why this is not cosmetic —
-        // `didRequestInitialLoad` is already true by then, so `.appear` will
-        // never fire again and a retry that shows nothing looks like a dead
-        // button.
+        // failed first page. The second one is why this is not cosmetic — a
+        // retry that leaves the failure page up looks like a dead button.
         state.isLoadingMore = false
         state.errorMessage = nil
         if state.items.isEmpty {

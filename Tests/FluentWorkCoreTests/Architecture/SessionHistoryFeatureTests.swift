@@ -17,14 +17,23 @@ struct SessionHistoryFeatureTests {
         )
     }
 
-    /// Switching tabs must not re-fetch page one and throw away everything
-    /// paged in since. The guard is `didRequestInitialLoad`, and nothing else
-    /// in the reducer reads it.
-    @Test func appearLoadsOnceAndIsIdempotent() {
+    /// **This test used to assert the opposite**, and the flip is the fix.
+    ///
+    /// It pinned "`.appear` loads once per process" — a `didRequestInitialLoad`
+    /// guard written when this list was imagined as a tab. It is not a tab: it
+    /// is the **room list**, and the room writes a session every time one runs.
+    /// A list frozen at process start is a list of the past, and the user asked
+    /// for the entry to be current — including coming back from a session that
+    /// just ended, which is the common case.
+    ///
+    /// The cost is real and accepted: returning to the list re-fetches page one
+    /// and drops rows that were paged in. Those rows are older ones, still on
+    /// the server, and the user can page to them again.
+    @Test func everyAppearanceReloadsTheFirstPage() {
         var state = SessionHistoryState()
         sessionHistoryReducer(&state, .appear)
         #expect(state.phase == .loading)
-        #expect(state.didRequestInitialLoad)
+        #expect(state.appearanceCount == 1)
 
         sessionHistoryReducer(&state, .loadSucceeded(
             SessionHistoryPage(items: [item("a")], nextCursor: "c1", size: 20),
@@ -32,8 +41,8 @@ struct SessionHistoryFeatureTests {
         ))
         sessionHistoryReducer(&state, .appear)
 
-        #expect(state.items.map(\.sessionID) == ["a"], "a second appear must not discard the page already shown")
-        #expect(state.nextCursor == "c1")
+        #expect(state.appearanceCount == 2)
+        #expect(state.phase == .loading, "the fresh page one is on its way; showing the old one would be the stale list again")
     }
 
     /// Appending is what makes a cursor list a list. If the second page
@@ -94,11 +103,10 @@ struct SessionHistoryFeatureTests {
         )
     }
 
-    /// Retry after a failed first page goes through `.refreshRequested`,
-    /// because `.appear` will never fire again — `didRequestInitialLoad` is
-    /// already true. If the reducer left the phase on `.failed`, the retry
-    /// button would look like it did nothing at all until the response came
-    /// back, which is the same as being broken.
+    /// A retry after a failed first page, and a pull-to-refresh on an empty
+    /// list, are the same action. If the reducer left the phase on `.failed`,
+    /// the retry button would look like it did nothing at all until the
+    /// response came back, which is the same as being broken.
     @Test func refreshShowsTheSpinnerWhenThereIsNothingToKeep() {
         var failed = SessionHistoryState()
         sessionHistoryReducer(&failed, .loadFailed("offline"))

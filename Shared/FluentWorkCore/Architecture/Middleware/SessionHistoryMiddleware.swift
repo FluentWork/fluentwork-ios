@@ -22,29 +22,7 @@ public func sessionHistoryMiddleware(container: Container? = nil) -> Middleware<
         }
 
         switch historyAction {
-        case .appear:
-            // Read **before** `next(action)`. The reducer flips
-            // `didRequestInitialLoad` while applying `.appear`, so after `next`
-            // it is true whatever happened — and this guard, which asks "is
-            // this the first one", would answer "no" every single time and the
-            // list would never load at all. The reducer's guard is what keeps
-            // the state honest; this one only keeps the network quiet when the
-            // tab is switched away and back.
-            let isFirstAppear = !store.state.sessionHistory.didRequestInitialLoad
-            let base = next(action)
-            guard isFirstAppear else { return base }
-            return .merge(
-                base,
-                .task(id: AppTaskID.sessionHistoryLoad) {
-                    await loadSessions(
-                        client: client,
-                        cursor: nil,
-                        appending: false
-                    )
-                }
-            )
-
-        case .refreshRequested:
+        case .appear, .refreshRequested:
             let base = next(action)
             return .merge(
                 base,
