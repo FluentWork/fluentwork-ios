@@ -24,12 +24,21 @@ public enum SpeechSessionPhase: String, Equatable, Sendable, CaseIterable {
     case ended
     case failed
 
-    /// Maps the iOS-side phase to the backend's `stage` log tag so the iOS
-    /// `timing_phase_transition` log lines up with the backend's
-    /// `voice user speech frame`, `voice session ready`, and `session.end
-    /// persisted` events when they share the same session id. Mirrors the
-    /// voice-gateway handler's `stage` field on
-    /// `voiceproto.ProviderOutbound.Control` payloads.
+    /// A label for this phase. **Mostly iOS-local — not a backend vocabulary.**
+    ///
+    /// This used to be documented as mirroring the gateway's `stage` field, so
+    /// that the iOS `timing_phase_transition` log would "line up with" the
+    /// backend's events on the same session id. **That was true for three
+    /// values and false for the rest.** The gateway's whole `stage` vocabulary
+    /// is `orchestration` / `asr` / `tts` / `scheduler` / `transport`; the iOS
+    /// list is longer and mostly names phases the server never logs. (`77_`
+    /// P1-20.)
+    ///
+    /// A correlation field that claims a shared vocabulary has to earn it —
+    /// otherwise a reader searches the server log for a label that was never
+    /// there and concludes the event was lost. The joined values are pinned by
+    /// `StageTagVocabularyTests`, so the claim and the overlap move together.
+    ///
     /// Phase-only fallback. **Prefer `SpeechSessionState.stageTag`.**
     ///
     /// `.processing` cannot answer this alone: the stage is what distinguishes
@@ -116,8 +125,15 @@ public enum ProcessingStage: String, Equatable, Sendable, Codable, CaseIterable 
     /// differs (`docs/29`).
     case aiAnswer
 
-    /// The cross-service log tag. Preserves the exact strings the merged
-    /// phases used to emit, so backend log correlation is unchanged.
+    /// A label for this stage. **Only `asr` is a gateway stage** — the other
+    /// four name positions the client tracks and the server never logs.
+    ///
+    /// The strings are preserved exactly as the merged phases emitted them, so
+    /// nothing that already read them changes; what changes is the claim. Only
+    /// `asr` appears in the gateway's `stage` vocabulary
+    /// (`orchestration` / `asr` / `tts` / `scheduler` / `transport`), so a
+    /// cross-log search is worth trying for that one and not for the rest —
+    /// see `StageTagVocabularyTests` and `77_` P1-20.
     public var stageTag: String {
         switch self {
         case .asr: return "asr"
