@@ -98,7 +98,7 @@ import TGReduxKitTesting
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.review(.appear(sessionID: "s-1")))
-    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
         store.state.review.phase == .ready
     }
 
@@ -229,7 +229,7 @@ import TGReduxKitTesting
     let store = AppStoreFactory.make(container: container, initialState: initialState)
     store.dispatch(.review(.acceptRefineCardTapped(cardID: card.id)))
 
-    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
         store.state.review.acceptedRefineCardIDs.contains(card.id)
     }
 
@@ -286,7 +286,7 @@ import TGReduxKitTesting
     let store = AppStoreFactory.make(container: container, initialState: initialState)
     store.dispatch(.review(.acceptRefineCardTapped(cardID: card.id)))
 
-    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
         store.state.review.acceptErrorMessage == "accept denied"
     }
 

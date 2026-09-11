@@ -183,7 +183,7 @@ import TGReduxKitTesting
     let store = AppStoreFactory.make(container: container, initialState: initialState)
     store.dispatch(AppAction.corpus(.appear))
 
-    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
         store.state.corpus.items.map { $0.id } == ["cached-1", "remote-1"]
     }
 
@@ -263,7 +263,7 @@ import TGReduxKitTesting
     let store = AppStoreFactory.make(container: container, initialState: initialState)
     store.dispatch(AppAction.corpus(.loadMoreRequested))
 
-    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
         store.state.corpus.items.map { $0.id } == ["b-1", "b-2"]
     }
 
@@ -333,7 +333,7 @@ import TGReduxKitTesting
     let store = AppStoreFactory.make(container: container, initialState: initialState)
     store.dispatch(AppAction.corpus(.favoriteToggled(blockID: "b-1", isFavorite: true, pinned: true)))
 
-    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
         store.state.corpus.outbox.count == 1
     }
     #expect(store.state.corpus.items.first?.isFavorite == true)
@@ -341,7 +341,7 @@ import TGReduxKitTesting
 
     store.dispatch(.network(.connectivityChanged(.connected)))
 
-    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
         store.state.corpus.outbox.isEmpty
     }
     #expect(await client.favoriteCalls.count == 1)
@@ -441,7 +441,7 @@ import TGReduxKitTesting
     let store = AppStoreFactory.make(container: container, initialState: initialState)
     store.dispatch(.auth(.mergedIntoRegistered(userID: "user-42", deviceID: "device-1")))
 
-    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
         store.state.corpus.items.map { $0.id } == ["registered-1"]
     }
 
@@ -522,7 +522,7 @@ import TGReduxKitTesting
     let store = AppStoreFactory.make(container: container, initialState: initialState)
     store.dispatch(.corpus(.appear))
 
-    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
         store.state.corpus.hasHydratedCache &&
         store.state.corpus.hasHydratedSyncMetadata &&
         !store.state.corpus.isRefreshing &&
@@ -605,7 +605,7 @@ import TGReduxKitTesting
     let store = AppStoreFactory.make(container: container, initialState: initialState)
     store.dispatch(.corpus(.appear))
 
-    try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
         store.state.corpus.items.map(\.id) == ["fresh-1"]
     }
 

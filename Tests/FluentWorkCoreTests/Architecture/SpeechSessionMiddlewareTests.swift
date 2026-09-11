@@ -758,11 +758,22 @@ struct SpeechSessionMiddlewareB14Tests {
     @Test func pipelineAdvanceHandsTheSubStageTimerFromASRToLLM() async throws {
         let container = Container()
         container.reset()
+        // These budgets are a **clock the test races against**, not a claim
+        // about production. The ASR one has to outlast the test's own steps:
+        // the timer starts when the stage becomes `.asr`, and the handoff under
+        // test happens a few dispatches later. At 80ms a loaded CI runner
+        // outran the handoff, the ASR timer fired first, and the assertion
+        // below — "the handoff cancelled it" — failed for a reason that had
+        // nothing to do with the handoff.
+        //
+        // 1s is a 10x margin over the steps it has to beat. The two windows the
+        // doc comment describes are preserved: still inside `asr` when the
+        // handoff lands, and past `llm` when the second half runs.
         container.processingTimeouts.register {
             ProcessingTimeouts(
-                asr: .milliseconds(80),
-                llm: .milliseconds(400),
-                review: .milliseconds(400),
+                asr: .seconds(1),
+                llm: .seconds(3),
+                review: .seconds(3),
                 totalCap: .seconds(30),
                 evaluationWait: .seconds(30)
             )
@@ -788,15 +799,16 @@ struct SpeechSessionMiddlewareB14Tests {
         speechClient.emit(.control(.clientASRTranscription(text: "hello", turnID: "turn-1")))
         try await waitForProcessingStage(store, stage: .llm, timeout: 1_000_000_000)
 
-        // Past the ASR budget (80ms), still inside the LLM budget (400ms).
-        try await Task.sleep(for: .milliseconds(220))
+        // Past the ASR budget (1s), still inside the LLM budget (3s) — so a
+        // leaked ASR timer has had its chance to fire and the LLM one has not.
+        try await Task.sleep(for: .seconds(1.5))
         #expect(
             tracker.events.filter { $0.name == "processing_timeout_asr" }.isEmpty,
             "the ASR budget kept running into the LLM stage — the handoff did not cancel it"
         )
 
         // Past the LLM budget: the timer armed by the handoff must fire.
-        try await waitUntil(timeoutNanoseconds: 2_000_000_000) {
+        try await waitUntil(timeoutNanoseconds: 6_000_000_000) {
             tracker.events.contains { $0.name == "processing_timeout_llm" }
         }
     }
