@@ -67,6 +67,9 @@ public struct SpeakingRoomState: Equatable, Sendable, State {
     public var timeline: [TurnTimelineItem]
 
     public var phase: SpeechSessionPhase { session.phase }
+    /// Which backend pipeline step is running, while `phase == .processing`.
+    /// The phase alone no longer distinguishes them.
+    public var processingStage: ProcessingStage? { session.processingStage }
     public var failureReason: String? { session.failureReason }
 
     public init(
@@ -88,8 +91,13 @@ public struct SpeakingRoomState: Equatable, Sendable, State {
     }
 
     /// Test / Host helper mirroring the previous phase-centric initializer.
+    ///
+    /// `processingStage` is separate because `.processing` does not imply which
+    /// pipeline step — a caller that wants the room to look like it is in the
+    /// LLM stage has to say so.
     public init(
         phase: SpeechSessionPhase,
+        processingStage: ProcessingStage? = nil,
         liveTranscript: String = "",
         isBootstrapReady: Bool = false,
         lastBadge: String? = nil,
@@ -99,7 +107,11 @@ public struct SpeakingRoomState: Equatable, Sendable, State {
         timeline: [TurnTimelineItem] = []
     ) {
         self.init(
-            session: SpeechSessionState(phase: phase, failureReason: failureReason),
+            session: SpeechSessionState(
+                phase: phase,
+                failureReason: failureReason,
+                processingStage: processingStage
+            ),
             liveTranscript: liveTranscript,
             isBootstrapReady: isBootstrapReady,
             lastBadge: lastBadge,

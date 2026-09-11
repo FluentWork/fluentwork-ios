@@ -252,7 +252,7 @@ struct HostRootView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
         case .connecting, .recording, .waitingUser,
-             .processingASR, .processingLLM, .processingReview,
+             .processing,
              .waitingForAIAnswer, .waitingForEvaluation,
              .aiSpeaking, .degradedText:
             // This ends the whole session, not the current turn — the label has
@@ -315,6 +315,7 @@ struct HostRootView: View {
     ) -> SpeakingRoomViewModel {
         SpeakingRoomViewModel(
             phase: state.phase,
+            processingStage: state.processingStage,
             liveTranscript: state.liveTranscript,
             lastBadge: state.lastBadge,
             badgeHits: state.badgeHits,

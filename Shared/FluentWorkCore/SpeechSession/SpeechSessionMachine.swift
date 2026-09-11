@@ -31,7 +31,7 @@ public enum SpeechSessionMachine {
             state.failureReason = nil
             state.isReconnecting = false
             state.suspendedPhase = nil
-            state.processingSubStage = nil
+            state.processingStage = nil
             state.lastTurnOutcome = nil
             effects.append(.createSession)
 
@@ -44,28 +44,26 @@ public enum SpeechSessionMachine {
             state.failureReason = message
             state.isReconnecting = false
             state.suspendedPhase = nil
-            state.processingSubStage = nil
+            state.processingStage = nil
             effects.append(.endSession)
 
-        case (.processingASR, .aiTurnEnd),
-             (.processingLLM, .aiTurnEnd),
-             (.processingReview, .aiTurnEnd):
+        case (.processing, .aiTurnEnd):
             state.phase = .waitingForEvaluation
-            state.processingSubStage = nil
+            state.processingStage = nil
 
         case (.aiSpeaking, .aiTurnEnd) where state.userTurnCount > 0:
             state.phase = .waitingForEvaluation
-            state.processingSubStage = nil
+            state.processingStage = nil
 
         case (.aiSpeaking, .aiTurnEnd):
             // Greeting / bootstrap turn (DevEcho and Volc Start() send
             // ai.turn.end before the user has spoken). Land in waitingUser.
             state.phase = .waitingUser
-            state.processingSubStage = nil
+            state.processingStage = nil
 
         case (.waitingForEvaluation, .evaluationReceived):
             state.phase = .waitingUser
-            state.processingSubStage = nil
+            state.processingStage = nil
 
         case (.waitingForEvaluation, .evaluationTimedOut):
             // Badge never arrived. Keep the session; end the turn.
@@ -83,33 +81,33 @@ public enum SpeechSessionMachine {
             // stops it on both paths that mean it — from `.aiSpeaking` and from
             // this phase, both via `vadSpeechStart` / `holdStart`.
             state.phase = .waitingUser
-            state.processingSubStage = nil
+            state.processingStage = nil
 
         case (.aiSpeaking, .vadSpeechStart), (.aiSpeaking, .holdStart):
             state.phase = .recording
-            state.processingSubStage = nil
+            state.processingStage = nil
             effects.append(contentsOf: [.stopPlayback, .sendInterrupt])
 
         case (.waitingUser, .vadSpeechStart), (.waitingUser, .holdStart),
              (.waitingForAIAnswer, .vadSpeechStart), (.waitingForAIAnswer, .holdStart):
             state.phase = .recording
-            state.processingSubStage = nil
+            state.processingStage = nil
 
         case (.waitingForEvaluation, .vadSpeechStart), (.waitingForEvaluation, .holdStart):
             // Next utterance may overlap leftover TTS after ai.turn.end.
             state.phase = .recording
-            state.processingSubStage = nil
+            state.processingStage = nil
             effects.append(.stopPlayback)
 
         case (.recording, .vadSpeechEnd), (.recording, .holdEnd):
-            state.phase = .processingASR
-            state.processingSubStage = .asr
+            state.phase = .processing
+            state.processingStage = .asr
             state.userTurnCount += 1
             state.lastTurnOutcome = .ok
 
         case (.recording, .recordingTimedOut):
             // I20 T-I20-1: user still recording after 60s. Abort this turn, keep
-            // the session. Do not enter processingASR (that would arm B15's 70s
+            // the session. Do not enter .processing (that would arm B15's 70s
             // collectTurn fallback) and do not emit user.speech.end.
             // I21: land in waitingForAIAnswer, not waitingUser.
             state.phase = .waitingForAIAnswer
@@ -150,20 +148,19 @@ public enum SpeechSessionMachine {
             state.phase = .degradedText
             state.isReconnecting = false
 
-        case (.processingASR, .serverASRReceived),
-             (.processingASR, .processingSubStageReached(.llm)):
-            state.phase = .processingLLM
-            state.processingSubStage = .llm
+        // The backend pipeline advancing inside `.processing`. A `where` guard
+        // keeps the hop legal from the stage it is legal from: the phase alone
+        // can no longer say where we are.
+        case (.processing, .serverASRReceived) where state.processingStage == .asr,
+             (.processing, .processingStageReached(.llm)) where state.processingStage == .asr:
+            state.processingStage = .llm
 
-        case (.processingLLM, .processingSubStageReached(.review)):
-            state.phase = .processingReview
-            state.processingSubStage = .review
+        case (.processing, .processingStageReached(.review)) where state.processingStage == .llm:
+            state.processingStage = .review
 
-        case (.processingASR, .aiFirstAudioChunk),
-             (.processingLLM, .aiFirstAudioChunk),
-             (.processingReview, .aiFirstAudioChunk):
+        case (.processing, .aiFirstAudioChunk):
             state.phase = .aiSpeaking
-            state.processingSubStage = nil
+            state.processingStage = nil
 
         case (.degradedText, .textMessageSent):
             // User text → POST /messages (middleware interprets `.sendTextMessage`).
@@ -176,7 +173,7 @@ public enum SpeechSessionMachine {
         case (_, .networkDegraded) where isActive(state.phase):
             state.phase = .degradedText
             state.isReconnecting = false
-            state.processingSubStage = nil
+            state.processingStage = nil
 
         case (_, .networkLost) where isActive(state.phase):
             state.isReconnecting = true
@@ -192,7 +189,7 @@ public enum SpeechSessionMachine {
             state.isReconnecting = false
             if state.phase != .failed, state.phase != .ended {
                 state.phase = .degradedText
-                state.processingSubStage = nil
+                state.processingStage = nil
             }
 
         case (_, .interruptedBySystem) where isActive(state.phase) && state.suspendedPhase == nil:
@@ -208,7 +205,7 @@ public enum SpeechSessionMachine {
                 state.phase = state.suspendedPhase!
             default:
                 state.phase = .waitingUser
-                state.processingSubStage = nil
+                state.processingStage = nil
             }
             state.suspendedPhase = nil
 
@@ -216,14 +213,14 @@ public enum SpeechSessionMachine {
             state.phase = .ended
             state.isReconnecting = false
             state.suspendedPhase = nil
-            state.processingSubStage = nil
+            state.processingStage = nil
             effects.append(.forceClose)
 
         case (_, .endTap) where state.phase != .idle && state.phase != .ended:
             state.phase = .ended
             state.isReconnecting = false
             state.suspendedPhase = nil
-            state.processingSubStage = nil
+            state.processingStage = nil
             effects.append(.endSession)
 
         case (_, .failed(let message)) where state.phase != .ended:
@@ -231,7 +228,7 @@ public enum SpeechSessionMachine {
             state.failureReason = message
             state.isReconnecting = false
             state.suspendedPhase = nil
-            state.processingSubStage = nil
+            state.processingStage = nil
             effects.append(.endSession)
 
         // Production reconnect: transport maps `.connected` to `.socketReady`,
@@ -241,8 +238,7 @@ public enum SpeechSessionMachine {
 
         // Idempotent: duplicate socketReady while already live.
         case (.aiSpeaking, .socketReady), (.waitingUser, .socketReady), (.recording, .socketReady),
-             (.processingASR, .socketReady), (.processingLLM, .socketReady),
-             (.processingReview, .socketReady), (.waitingForAIAnswer, .socketReady),
+             (.processing, .socketReady), (.waitingForAIAnswer, .socketReady),
              (.waitingForEvaluation, .socketReady), (.degradedText, .socketReady):
             state.isReconnecting = false
 
@@ -255,7 +251,21 @@ public enum SpeechSessionMachine {
                 state = snapshot
                 return []
             }
-            effects.insert(.trackTransition(from: from, to: state.phase), at: 0)
+            effects.insert(
+                .trackTransition(from: from, to: state.phase, stage: state.processingStage),
+                at: 0
+            )
+        } else if state.processingStage != snapshot.processingStage {
+            // The backend pipeline advanced without a phase change. Before the
+            // merge each hop *was* a phase change and `trackTransition` carried
+            // it; afterwards an ASR → LLM advance would emit nothing at all,
+            // and a pipeline step that silently stops running is
+            // indistinguishable from one that never runs. `from == to` is the
+            // signal that this is a stage advance — read `stage` for what moved.
+            effects.insert(
+                .trackTransition(from: .processing, to: .processing, stage: state.processingStage),
+                at: 0
+            )
         }
 
         return effects
@@ -275,24 +285,16 @@ public enum SpeechSessionMachine {
              (.waitingUser, .recording),
              (.waitingForAIAnswer, .recording),
              (.waitingForEvaluation, .recording),
-             (.recording, .processingASR),
+             (.recording, .processing),
              (.recording, .waitingForAIAnswer),
              (.recording, .waitingUser),
-             (.processingASR, .processingLLM),
-             (.processingASR, .aiSpeaking),
-             (.processingLLM, .processingReview),
-             (.processingLLM, .aiSpeaking),
-             (.processingReview, .aiSpeaking),
-             (.processingASR, .waitingForEvaluation),
-             (.processingLLM, .waitingForEvaluation),
-             (.processingReview, .waitingForEvaluation),
+             (.processing, .aiSpeaking),
+             (.processing, .waitingForEvaluation),
              (.aiSpeaking, .waitingForEvaluation),
              (.waitingForEvaluation, .waitingUser),
              (.waitingForAIAnswer, .waitingUser),
              (.aiSpeaking, .waitingUser),
-             (.processingASR, .waitingUser),
-             (.processingLLM, .waitingUser),
-             (.processingReview, .waitingUser):
+             (.processing, .waitingUser):
             return true
         case (_, .ended) where old.isActive:
             return true
@@ -321,7 +323,7 @@ public enum SpeechSessionMachine {
         }
         guard state.phase.discardsTurnOnReconnect else { return [] }
         state.phase = .waitingUser
-        state.processingSubStage = nil
+        state.processingStage = nil
         return [.stopPlayback]
     }
 
@@ -333,7 +335,7 @@ public enum SpeechSessionMachine {
     ) -> SpeechSessionSideEffect {
         state.userTurnCount += 1
         state.lastTurnOutcome = outcome
-        state.processingSubStage = nil
+        state.processingStage = nil
         return .sendTurnAbort(
             turnID: "turn-\(state.userTurnCount)",
             outcome: outcome

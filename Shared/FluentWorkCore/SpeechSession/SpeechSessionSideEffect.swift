@@ -17,5 +17,17 @@ public enum SpeechSessionSideEffect: Equatable, Sendable {
     case sendTextMessage
     /// Immediate background-safe teardown (stop capture, session.end, close transport).
     case forceClose
-    case trackTransition(from: SpeechSessionPhase, to: SpeechSessionPhase)
+    /// A phase change, or an advance within `.processing`.
+    ///
+    /// `stage` is the resulting pipeline position, `nil` outside `.processing`.
+    /// It is carried here because after the three processing phases merged,
+    /// an ASR → LLM advance is **not a phase change** — `from == to` — and a
+    /// telemetry stream that stopped at "entered processing" would make a
+    /// stage that never runs look identical to one that ran silently. That is
+    /// precisely the failure shape `P1-15` records.
+    case trackTransition(
+        from: SpeechSessionPhase,
+        to: SpeechSessionPhase,
+        stage: ProcessingStage?
+    )
 }

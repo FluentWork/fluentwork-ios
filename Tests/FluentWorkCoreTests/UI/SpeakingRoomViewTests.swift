@@ -14,17 +14,17 @@ import Testing
 }
 
 @Test func speakingRoomProcessingASRStateShowsRecognizingTitle() {
-    let model = SpeakingRoomViewModel(phase: .processingASR)
+    let model = SpeakingRoomViewModel(phase: .processing, processingStage: .asr)
     #expect(model.controlState.title == "识别中")
 }
 
 @Test func speakingRoomProcessingLLMStateShowsThinkingTitle() {
-    let model = SpeakingRoomViewModel(phase: .processingLLM)
+    let model = SpeakingRoomViewModel(phase: .processing, processingStage: .llm)
     #expect(model.controlState.title == "思考中")
 }
 
 @Test func speakingRoomProcessingReviewStateShowsReviewTitle() {
-    let model = SpeakingRoomViewModel(phase: .processingReview)
+    let model = SpeakingRoomViewModel(phase: .processing, processingStage: .review)
     #expect(model.controlState.title == "生成评价中")
 }
 

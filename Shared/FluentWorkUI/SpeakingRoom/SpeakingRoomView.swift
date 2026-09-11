@@ -43,6 +43,11 @@ public struct SpeakingRoomTimelineRow: Equatable, Sendable, Identifiable {
 
 public struct SpeakingRoomViewModel: Equatable, Sendable {
     public var phase: SpeechSessionPhase
+    /// Which backend pipeline step is running. Non-nil exactly while
+    /// `phase == .processing`; the copy for that phase is chosen from here,
+    /// because `.processing` alone cannot say whether to show "识别中" or
+    /// "思考中".
+    public var processingStage: ProcessingStage?
     public var liveTranscript: String
     public var lastBadge: String?
     public var badgeHits: Int
@@ -53,6 +58,7 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
 
     public init(
         phase: SpeechSessionPhase,
+        processingStage: ProcessingStage? = nil,
         liveTranscript: String = "",
         lastBadge: String? = nil,
         badgeHits: Int = 0,
@@ -61,6 +67,7 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
         usesAutoVAD: Bool = false
     ) {
         self.phase = phase
+        self.processingStage = processingStage
         self.liveTranscript = liveTranscript
         self.lastBadge = lastBadge
         self.badgeHits = badgeHits
@@ -153,26 +160,23 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
                 showsProgress: false,
                 primaryAction: .start(title: "开始说话", systemImage: "mic.circle.fill")
             )
-        case .processingASR:
+        case .processing:
+            // One phase, three copies. An unknown stage falls back to the
+            // generic "working on it" rather than guessing which step it is.
+            let copy: (title: String, detail: String)
+            switch processingStage {
+            case .asr:
+                copy = ("识别中", "正在识别你的语音。")
+            case .llm:
+                copy = ("思考中", "正在生成回复。")
+            case .review:
+                copy = ("生成评价中", "正在生成这一轮的评价。")
+            case nil:
+                copy = ("处理中", "正在处理这一轮。")
+            }
             return .init(
-                title: "识别中",
-                detail: "正在识别你的语音。",
-                accent: .neutral,
-                showsProgress: true,
-                primaryAction: nil
-            )
-        case .processingLLM:
-            return .init(
-                title: "思考中",
-                detail: "正在生成回复。",
-                accent: .neutral,
-                showsProgress: true,
-                primaryAction: nil
-            )
-        case .processingReview:
-            return .init(
-                title: "生成评价中",
-                detail: "正在生成这一轮的评价。",
+                title: copy.title,
+                detail: copy.detail,
                 accent: .neutral,
                 showsProgress: true,
                 primaryAction: nil

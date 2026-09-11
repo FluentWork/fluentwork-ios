@@ -64,7 +64,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
         tracker: resolvedContainer.tracker(),
         clock: resolvedContainer.clock().now
     )
-    // B15: turn-level timeout tracking — set when we enter .processingASR, cleared
+    // B15: turn-level timeout tracking — set when we enter .processing, cleared
     // when ai.turn.end arrives or the session ends. Lives here so both the
     // middleware dispatch path and the timeout tasks can access it.
     let turnTimeoutTracking = TurnTimeoutTracking()
@@ -133,6 +133,10 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
         var session = store.state.speakingRoom.session
         let preEventCount = session.userTurnCount
         let previousPhase = session.phase
+        // Captured alongside the phase because the sub-stage timers hand off on
+        // the *pipeline* advancing, and after the merge that advance no longer
+        // changes the phase.
+        let previousStage = session.processingStage
         let effects = SpeechSessionMachine.reduce(&session, event: event)
         // Keep the audio loop's "current count" in sync. The audio loop
         // computes `turnID = "turn-\(count + 1)"` at speech-end time —
@@ -140,10 +144,10 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
         // transition's count increment, so the two never drift.
         turnCounter.set(session.userTurnCount)
 
-        // B15: flag to start the turn timeout when we enter .processingASR from
+        // B15: flag to start the turn timeout when we enter .processing from
         // .recording. Sub-stage timers are scheduled as `.task(id:)` so they
         // cancel independently of the transport loop.
-        let enteredProcessing = previousPhase == .recording && session.phase == .processingASR
+        let enteredProcessing = previousPhase == .recording && session.phase == .processing
         let enteredRecording = previousPhase != .recording && session.phase == .recording
         if event == .sessionStartTap {
             evaluationArrival.reset()
@@ -172,6 +176,8 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
         let timeoutEffects = processingTimeoutEffects(
             from: previousPhase,
             to: session.phase,
+            fromStage: previousStage,
+            toStage: session.processingStage,
             enteredProcessing: enteredProcessing,
             enteredRecording: enteredRecording,
             turnTimeoutTracking: turnTimeoutTracking,
@@ -723,8 +729,8 @@ private func transportEventPump(
     
                 case let .control(.clientASRTranscription(text, turnID)):
                     // Display-layer transcript plus the ASR → LLM hop.
-                    // `.session(.serverASRReceived)` advances processingASR →
-                    // processingLLM; `.serverASRReceived` still updates the
+                    // `.session(.serverASRReceived)` advances the ASR → LLM
+                    // stage; it still updates the
                     // speaking-room transcript overlay.
                     await dispatchBox.dispatch(
                         .speakingRoom(.session(.serverASRReceived(text: text, turnID: turnID)))
@@ -881,17 +887,20 @@ private func interpretSpeechSessionSideEffect(
         timings.mark(event: "degraded_text_send")
     case .forceClose:
         timings.mark(event: "session_force_close")
-    case let .trackTransition(from, to):
+    case let .trackTransition(from, to, stage):
         // `trackTransition` fires alongside the reducer's `speech_session_transition`
         // event. We piggy-back the delta timing on the same transition so the
         // iOS log can match the backend's stage markers without a second
         // tracker stream.
+        //
+        // `stage` is what the backend log is keyed on, and after the processing
+        // phases merged it is no longer recoverable from `to` alone.
         timings.mark(
             event: "phase_transition",
             properties: [
                 "from": from.rawValue,
                 "to": to.rawValue,
-                "stage": to.stageTag,
+                "stage": stage?.stageTag ?? to.stageTag,
             ]
         )
     }
@@ -899,7 +908,7 @@ private func interpretSpeechSessionSideEffect(
     switch effect {
     case .createSession:
         // B15 total-cap is armed by `processingTimeoutEffects` when we enter
-        // processingASR from recording — not from createSession.
+        // .processing from recording — not from createSession.
         return .merge(
             .task {
                 do {
@@ -1041,15 +1050,23 @@ private func interpretSpeechSessionSideEffect(
             }
         }
 
-    case let .trackTransition(from, to):
+    case let .trackTransition(from, to, stage):
         return .fireAndForget {
             tracker.track(
                 event: "speech_session_transition",
                 properties: [
                     "from": from.rawValue,
                     "to": to.rawValue,
+                    // `from_label` stays the *phase* label: it must not be
+                    // back-filled with the stage, or a stage advance
+                    // (`from == to == .processing`) would report the
+                    // destination as its own origin. `to_label` resolves with
+                    // the stage because that is the half that answers "where is
+                    // it now" — and for the merged pipeline the phase alone
+                    // cannot.
                     "from_label": from.label,
-                    "to_label": to.label,
+                    "to_label": stage?.stageTag ?? to.label,
+                    "stage": stage?.stageTag ?? "",
                 ]
             )
         }
@@ -1061,6 +1078,8 @@ private func interpretSpeechSessionSideEffect(
 private func processingTimeoutEffects(
     from previousPhase: SpeechSessionPhase,
     to newPhase: SpeechSessionPhase,
+    fromStage previousStage: ProcessingStage?,
+    toStage newStage: ProcessingStage?,
     enteredProcessing: Bool,
     enteredRecording: Bool,
     turnTimeoutTracking: TurnTimeoutTracking,
@@ -1085,12 +1104,15 @@ private func processingTimeoutEffects(
         effects.append(scheduleProcessingTimeoutTask(stage: .asr, timeouts: timeouts, tracker: tracker))
     }
 
-    if previousPhase == .processingASR, newPhase == .processingLLM {
+    // The sub-stage timers hand off on the pipeline advancing, which after the
+    // merge is a stage change rather than a phase change. Keyed on the stage so
+    // the handoff cannot be skipped by a phase that no longer moves.
+    if previousStage == .asr, newStage == .llm {
         effects.append(.cancel(id: SpeechSessionTaskID.processingASRTimeout))
         effects.append(scheduleProcessingTimeoutTask(stage: .llm, timeouts: timeouts, tracker: tracker))
     }
 
-    if previousPhase == .processingLLM, newPhase == .processingReview {
+    if previousStage == .llm, newStage == .review {
         effects.append(.cancel(id: SpeechSessionTaskID.processingLLMTimeout))
         effects.append(scheduleProcessingTimeoutTask(stage: .review, timeouts: timeouts, tracker: tracker))
     }
@@ -1249,7 +1271,7 @@ private func scheduleTurnTimeoutTask(
 }
 
 private func scheduleProcessingTimeoutTask(
-    stage: ProcessingSubStage,
+    stage: ProcessingStage,
     timeouts: ProcessingTimeouts,
     tracker: TrackerClientProtocol
 ) -> Effect<AppAction> {

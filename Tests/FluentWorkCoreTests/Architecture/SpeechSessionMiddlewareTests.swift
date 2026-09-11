@@ -306,7 +306,7 @@ struct SpeechSessionMiddlewareB14Tests {
     @MainActor
     @Test func serverASRDispatchesTranscriptUpdateViaReducer() async throws {
         // Note: serverASRReceived can be dispatched two ways:
-        // 1. As .session(.serverASRReceived) - advances processingASR → processingLLM
+        // 1. As .session(.serverASRReceived) - advances the ASR → LLM stage
         // 2. As .serverASRReceived directly - handled by reducer to update liveTranscript
         let container = Container()
         container.reset()
@@ -389,11 +389,11 @@ struct SpeechSessionMiddlewareB14Tests {
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
 
         audioEngine.emit(.speechEnded)
-        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
 
         let boundariesAfterVAD = await speechClient.getBoundaryCallCount()
         speechClient.emit(.control(.clientASRTranscription(text: "Transport transcript", turnID: "turn-1")))
-        try await waitForPhase(store, phase: .processingLLM, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .llm, timeout: 1_000_000_000)
 
         #expect(store.state.speakingRoom.liveTranscript == "Transport transcript")
         #expect(await speechClient.getBoundaryCallCount() == boundariesAfterVAD)
@@ -462,7 +462,7 @@ struct SpeechSessionMiddlewareB14Tests {
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
         audioEngine.emit(.speechEnded)
-        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
 
         speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil)))
         try await waitForPhase(store, phase: .waitingForEvaluation, timeout: 1_000_000_000)
@@ -498,7 +498,7 @@ struct SpeechSessionMiddlewareB14Tests {
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
         audioEngine.emit(.speechEnded)
-        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
 
         speechClient.emit(.control(.feedbackBadge(
             badge: "ship it",
@@ -509,7 +509,8 @@ struct SpeechSessionMiddlewareB14Tests {
         try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
             store.state.speakingRoom.lastBadge == "ship it"
         }
-        #expect(store.state.speakingRoom.phase == .processingASR)
+        #expect(store.state.speakingRoom.phase == .processing)
+        #expect(store.state.speakingRoom.processingStage == .asr)
 
         speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil)))
         try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
@@ -536,7 +537,7 @@ struct SpeechSessionMiddlewareB14Tests {
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
         audioEngine.emit(.speechEnded)
-        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
 
         speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil)))
         try await waitForPhase(store, phase: .waitingForEvaluation, timeout: 1_000_000_000)
@@ -728,15 +729,74 @@ struct SpeechSessionMiddlewareB14Tests {
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
         audioEngine.emit(.speechEnded)
-        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
 
         // Several times the injected ASR budget. No ai.turn.end arrives, so the
         // only thing that could end this turn is a timeout.
         try await Task.sleep(for: .milliseconds(400))
 
-        #expect(store.state.speakingRoom.phase == .processingASR)
+        #expect(store.state.speakingRoom.phase == .processing)
+        #expect(store.state.speakingRoom.processingStage == .asr)
         #expect(store.state.speakingRoom.failureReason == nil)
         #expect(await speechClient.endSessionCalled == false)
+    }
+
+    /// The sub-stage timers hand off when the pipeline advances.
+    ///
+    /// After the processing phases merged, that advance is a **stage** change
+    /// rather than a phase change — so the handoff keys on the stage, and
+    /// nothing in the phase machinery would notice if it stopped happening.
+    /// A missed handoff leaves the ASR budget counting into the LLM stage
+    /// (a spurious `processing_timeout_asr`) and never arms the LLM budget,
+    /// which is silent: the overrun it exists to report simply never arrives.
+    ///
+    /// Both halves are asserted, in the order they can be observed: past the
+    /// ASR budget but before the LLM one, then past both.
+    @MainActor
+    @Test func pipelineAdvanceHandsTheSubStageTimerFromASRToLLM() async throws {
+        let container = Container()
+        container.reset()
+        container.processingTimeouts.register {
+            ProcessingTimeouts(
+                asr: .milliseconds(80),
+                llm: .milliseconds(400),
+                review: .milliseconds(400),
+                totalCap: .seconds(30),
+                evaluationWait: .seconds(30)
+            )
+        }
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        let tracker = CapturingTracker()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+        container.tracker.register { tracker }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        audioEngine.emit(.speechStarted)
+        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        audioEngine.emit(.speechEnded)
+        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
+
+        // The hop under test. `.processing` stays put; only the stage moves.
+        speechClient.emit(.control(.clientASRTranscription(text: "hello", turnID: "turn-1")))
+        try await waitForProcessingStage(store, stage: .llm, timeout: 1_000_000_000)
+
+        // Past the ASR budget (80ms), still inside the LLM budget (400ms).
+        try await Task.sleep(for: .milliseconds(220))
+        #expect(
+            tracker.events.filter { $0.name == "processing_timeout_asr" }.isEmpty,
+            "the ASR budget kept running into the LLM stage — the handoff did not cancel it"
+        )
+
+        // Past the LLM budget: the timer armed by the handoff must fire.
+        try await waitUntil(timeoutNanoseconds: 2_000_000_000) {
+            tracker.events.contains { $0.name == "processing_timeout_llm" }
+        }
     }
 
     @MainActor
@@ -781,13 +841,14 @@ struct SpeechSessionMiddlewareB14Tests {
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
         audioEngine.emit(.speechEnded)
-        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
 
         store.dispatch(.speakingRoom(.session(.networkLost)))
         try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
             store.state.speakingRoom.session.isReconnecting
         }
-        #expect(store.state.speakingRoom.phase == .processingASR)
+        #expect(store.state.speakingRoom.phase == .processing)
+        #expect(store.state.speakingRoom.processingStage == .asr)
 
         speechClient.emit(.stateChanged(.connected))
         try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
@@ -818,8 +879,9 @@ struct SpeechSessionMiddlewareB14Tests {
         #expect(store.state.speakingRoom.phase == .recording)
 
         store.dispatch(.speakingRoom(.manualSpeechEnd))
-        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
-        #expect(store.state.speakingRoom.phase == .processingASR)
+        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
+        #expect(store.state.speakingRoom.phase == .processing)
+        #expect(store.state.speakingRoom.processingStage == .asr)
         #expect(store.state.speakingRoom.failureReason == nil)
         #expect(await speechClient.endSessionCalled == false)
         let boundaries = await speechClient.getEndBoundaries()
@@ -843,7 +905,7 @@ struct SpeechSessionMiddlewareB14Tests {
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
         audioEngine.emit(.speechEnded)
-        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
 
         speechClient.emit(
             .control(.aiTurnEnd(turnID: "turn-1", outcome: .timeout, logID: "volc-timeout"))
@@ -990,7 +1052,7 @@ struct SpeechSessionMiddlewareB14Tests {
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
 
         audioEngine.emit(.speechEnded)
-        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
 
         // Verify userTurnCount is 1
         #expect(store.state.speakingRoom.session.userTurnCount == 1)
@@ -1012,7 +1074,7 @@ struct SpeechSessionMiddlewareB14Tests {
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
 
         audioEngine.emit(.speechEnded)
-        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
 
         // Verify userTurnCount is 2
         #expect(store.state.speakingRoom.session.userTurnCount == 2)
@@ -1298,7 +1360,7 @@ struct I20TurnTelemetryTests {
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
         audioEngine.emit(.speechEnded)
-        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
         try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
             tracker.events.contains { $0.name == "turn.outcome" }
         }
@@ -1321,7 +1383,7 @@ struct I20TurnTelemetryTests {
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
         audioEngine.emit(.speechEnded)
-        try await waitForPhase(store, phase: .processingASR, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
 
         speechClient.emit(
             .control(.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: "volc-abc123"))
@@ -1662,6 +1724,24 @@ private func waitForPhase(
 ) async throws {
     try await waitUntil(timeoutNanoseconds: timeout) {
         store.state.speakingRoom.phase == phase
+    }
+}
+
+/// Waits for a specific pipeline step, not just "somewhere in processing".
+///
+/// `.processing` is one phase covering ASR, LLM and review, so a phase-only
+/// wait can no longer tell a test which step it is standing in — and would
+/// return immediately at a hop that the test exists to observe. Waiting on the
+/// stage keeps the original precision.
+@MainActor
+private func waitForProcessingStage(
+    _ store: Store<AppState, AppAction>,
+    stage: ProcessingStage,
+    timeout: UInt64
+) async throws {
+    try await waitUntil(timeoutNanoseconds: timeout) {
+        store.state.speakingRoom.phase == .processing
+            && store.state.speakingRoom.processingStage == stage
     }
 }
 

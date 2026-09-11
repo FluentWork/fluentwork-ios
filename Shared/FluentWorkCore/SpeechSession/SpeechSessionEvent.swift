@@ -21,10 +21,12 @@ public enum SpeechSessionEvent: Equatable, Sendable {
     /// middleware immediately calls `sendSpeechBoundary(text:)` so the backend
     /// can perform badge hit detection using the confirmed server-side text.
     case serverASRReceived(text: String, turnID: String?)
-    /// Advances processingASR → processingLLM or processingLLM → processingReview
+    /// Advances the pipeline inside `.processing` — ASR → LLM, or LLM → review —
     /// when no dedicated protocol event exists for that hop (review has none).
     /// Prefer `.serverASRReceived` for the ASR → LLM hop.
-    case processingSubStageReached(ProcessingSubStage)
+    ///
+    /// This is **not** a phase change: `.processing` is one product state.
+    case processingStageReached(ProcessingStage)
     case aiFirstAudioChunk
     /// Turn-level feedback landed (`feedback.badge`). Leaves `.waitingForEvaluation`.
     /// Full session review is REST (I16), not a WSS eval.frame.
