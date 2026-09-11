@@ -51,6 +51,22 @@ public struct TurnTimelineItem: Equatable, Sendable, Identifiable {
         self.status = status
         self.hits = hits
     }
+
+    /// One turn of a *stored* transcript, rendered into the same timeline.
+    ///
+    /// `status` is `.finalized` because it is: these turns came off the server
+    /// having been written down, so there is nothing still arriving and nothing
+    /// to show as listening. `turnID` stays nil — these turns have no live turn
+    /// to be correlated with, and inventing one would let a badge land on a
+    /// conversation from last week.
+    public init(utterance: SessionUtterance) {
+        self.init(
+            turnID: nil,
+            speaker: utterance.speaker == "user" ? .user : .ai,
+            text: utterance.text,
+            status: .finalized
+        )
+    }
 }
 
 public struct SpeakingRoomState: Equatable, Sendable, State {
@@ -142,10 +158,14 @@ public enum SpeakingRoomAction: Equatable, Sendable, Action {
     case session(SpeechSessionEvent)
     /// State snapshot applied after Middleware runs the machine.
     case applySession(SpeechSessionState)
-    /// The room was opened. `continueFrom` names a past session to carry into
-    /// the next one — nil for an ordinary entry, which is what every entry
-    /// except the list's 继续 button is.
-    case enterRoom(continueFrom: String?)
+    /// The room was opened.
+    ///
+    /// `continueFrom` names a past session to carry into the next one — nil for
+    /// an ordinary entry, which is what every entry except the list's 继续
+    /// button is. `seeding` is that session's transcript, already loaded by the
+    /// screen the user came from; passing it in beats re-fetching it, because
+    /// the fetch already happened to draw the page they tapped the button on.
+    case enterRoom(continueFrom: String?, seeding: [SessionUtterance] = [])
     /// I20 Item 4: tap-to-talk. Middleware asks the engine to emit speech boundaries.
     case manualSpeechBegin
     case manualSpeechEnd
@@ -196,18 +216,37 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
     case .manualSpeechBegin, .manualSpeechEnd:
         break
 
-    case let .enterRoom(continueFrom):
+    case let .enterRoom(continueFrom, seeding):
+        // A room entry only happens when nothing is running — the room is a
+        // full-screen cover, so there is no way to reach the list from inside a
+        // live session. Which means an entry arriving *during* one is SwiftUI
+        // re-firing `onAppear` for the sheet already on screen, and the one
+        // thing it must not do is wipe the conversation the user is in the
+        // middle of. This guard is what makes `onAppear` safe to make
+        // destructive, and it is why the entry — not the session start — is
+        // allowed to clear anything at all.
+        guard state.session.phase == .idle
+            || state.session.phase == .ended
+            || state.session.phase == .failed
+        else {
+            return
+        }
+
         state.continueFromSessionID = continueFrom
+        state.liveTranscript = ""
+        state.lastBadge = nil
+        state.badgeHits = 0
+        state.timeline = seeding.map(TurnTimelineItem.init(utterance:))
 
     case let .applySession(session):
-        let enteredConnecting = state.session.phase != .connecting && session.phase == .connecting
+        // Deliberately does **not** clear the timeline when the session enters
+        // `.connecting`. It used to, and that is the whole of what the user
+        // reported as 「点击重新开始，前面的内容都没有了」: "start" and "start
+        // over" were the same event, so the only way to begin a turn after a
+        // session ended was to lose the session. Clearing belongs to the room
+        // entry (`.enterRoom`), which is where the user actually chooses
+        // between continuing something and starting fresh (`79_` §设计 3).
         state.session = session
-        if enteredConnecting {
-            state.liveTranscript = ""
-            state.lastBadge = nil
-            state.badgeHits = 0
-            state.timeline = []
-        }
 
     case let .badgeHit(badge, phraseBlockID, tier, turnID):
         state.lastBadge = badge

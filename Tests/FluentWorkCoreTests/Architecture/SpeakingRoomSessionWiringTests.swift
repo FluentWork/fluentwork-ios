@@ -254,7 +254,18 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     func discardActiveSpeech() async {}
 }
 
-@Test func applySessionConnectingResetsBadgeAndTranscript() throws {
+/// **This test used to assert the opposite**, and the flip is the fix.
+///
+/// It pinned "entering `.connecting` clears the live transcript, the badge and
+/// the timeline" — which is one event doing two jobs: *a session started* and
+/// *start over*. Because they were the same event, the only way to begin
+/// another session after one ended was to lose the one that had just finished,
+/// which is exactly what was reported as 「点击重新开始，前面的内容都没有了」.
+///
+/// Clearing now belongs to the room entry (`.enterRoom`), which is where the
+/// user actually chooses between continuing something and starting fresh.
+/// `enterRoomClearsEverythingAFreshRoomShouldNotKeep` is the other half.
+@Test func applySessionConnectingKeepsWhatTheUserWasLookingAt() throws {
     let initial = AppState(
         speakingRoom: SpeakingRoomState(
             phase: .processing,
@@ -270,9 +281,6 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     var expected = initial
     expected.speakingRoom.session = SpeechSessionState(phase: .connecting)
-    expected.speakingRoom.liveTranscript = ""
-    expected.speakingRoom.lastBadge = nil
-    expected.speakingRoom.badgeHits = 0
 
     store.send(.speakingRoom(.applySession(SpeechSessionState(phase: .connecting))))
     try store.assert(equals: expected)

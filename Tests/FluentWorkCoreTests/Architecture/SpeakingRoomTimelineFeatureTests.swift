@@ -1,3 +1,4 @@
+import FluentWorkNetworking
 import Testing
 import TGReduxKitTesting
 @testable import FluentWorkCore
@@ -70,7 +71,74 @@ import TGReduxKitTesting
     #expect(userItem?.hits.first?.phraseBlockID == "block-1")
 }
 
-@Test func connectingSessionClearsPreviousTimeline() {
+/// **This test used to assert the opposite**, and the flip is the fix: the
+/// timeline no longer empties when a session enters `.connecting`. See
+/// `applySessionConnectingKeepsWhatTheUserWasLookingAt` for why.
+@MainActor
+@Test func connectingSessionKeepsPreviousTimeline() {
+    let store = makeStoreWithOneTimelineItem()
+
+    store.send(.speakingRoom(.applySession(SpeechSessionState(phase: .connecting))))
+
+    #expect(store.state.speakingRoom.timeline.map(\.text) == ["previous"])
+}
+
+/// A fresh room clears, and that is the *only* thing that clears now. Without
+/// it, entering the room tomorrow would still show yesterday's turns — a room
+/// that never forgets is as wrong as one that always does.
+@MainActor
+@Test func enteringAFreshRoomClearsTheTimeline() {
+    let store = makeStoreWithOneTimelineItem()
+
+    store.send(.speakingRoom(.enterRoom(continueFrom: nil)))
+
+    #expect(store.state.speakingRoom.timeline.isEmpty)
+    #expect(store.state.speakingRoom.continueFromSessionID == nil)
+}
+
+/// Opening a past session fills the room with that session's turns, so
+/// 继续 starts from something instead of from a blank screen.
+@MainActor
+@Test func enteringToContinueSeedsTheTimeline() {
+    let store = makeStoreWithOneTimelineItem()
+
+    store.send(.speakingRoom(.enterRoom(
+        continueFrom: "s-yesterday",
+        seeding: [
+            SessionUtterance(seq: 1, speaker: "user", text: "how do I say 限流?"),
+            SessionUtterance(seq: 2, speaker: "ai", text: "Rate limiting.")
+        ]
+    )))
+
+    #expect(store.state.speakingRoom.continueFromSessionID == "s-yesterday")
+    #expect(store.state.speakingRoom.timeline.map(\.text) == ["how do I say 限流?", "Rate limiting."])
+    #expect(store.state.speakingRoom.timeline.map(\.speaker) == [.user, .ai])
+    // Seeded turns are history: nothing is still arriving, and giving them a
+    // turn id would let a badge land on a conversation from last week.
+    #expect(store.state.speakingRoom.timeline.allSatisfy { $0.status == .finalized })
+    #expect(store.state.speakingRoom.timeline.allSatisfy { $0.turnID == nil })
+}
+
+/// SwiftUI may fire `onAppear` more than once for one presentation. The entry
+/// is the only thing that clears, so a re-fire during a live session would
+/// delete the conversation the user is in the middle of — this is the guard
+/// that makes making `onAppear` destructive safe.
+@Test func aRoomEntryDuringALiveSessionIsIgnored() {
+    var state = AppState.initial
+    state.speakingRoom = SpeakingRoomState(
+        phase: .recording,
+        timeline: [
+            TurnTimelineItem(turnID: "turn-1", speaker: .user, text: "mid-sentence", status: .streaming)
+        ]
+    )
+    let store = TestStore(initialState: state, reducer: appReducer)
+
+    store.send(.speakingRoom(.enterRoom(continueFrom: nil)))
+    #expect(store.state.speakingRoom.timeline.map(\.text) == ["mid-sentence"])
+}
+
+@MainActor
+private func makeStoreWithOneTimelineItem() -> TestStore<AppState, AppAction> {
     var state = AppState.initial
     state.speakingRoom.timeline = [
         TurnTimelineItem(
@@ -80,8 +148,5 @@ import TGReduxKitTesting
             status: .finalized
         )
     ]
-    let store = TestStore(initialState: state, reducer: appReducer)
-
-    store.send(.speakingRoom(.applySession(SpeechSessionState(phase: .connecting))))
-    #expect(store.state.speakingRoom.timeline.isEmpty)
+    return TestStore(initialState: state, reducer: appReducer)
 }

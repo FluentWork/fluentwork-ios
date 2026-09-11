@@ -167,9 +167,13 @@ struct HostRootView: View {
                 // the route when a session starts — is what makes leaving and
                 // re-entering with a different id take effect.
                 //
-                // A plain entry from the workbench passes nil, which is what
-                // clears a continuation left over from a previous visit.
-                store.dispatch(.speakingRoom(.enterRoom(continueFrom: sessionID)))
+                // A plain entry from the workbench passes nil and no seeding,
+                // which is what makes it a *fresh* room: it clears whatever the
+                // last visit left on screen.
+                store.dispatch(.speakingRoom(.enterRoom(
+                    continueFrom: sessionID,
+                    seeding: store.state.sessionHistory.detail.detail?.utterances ?? []
+                )))
             }
         case let .review(sessionID):
             let effectiveSessionID = sessionID ?? store.state.speakingRoom.lastSessionID
