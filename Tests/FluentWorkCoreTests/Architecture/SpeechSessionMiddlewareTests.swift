@@ -317,11 +317,11 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
 
         // Connect first
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
 
         // Dispatch serverASR directly (not wrapped in .session) for reducer to handle
         store.dispatch(.speakingRoom(.serverASRReceived(text: "这是服务器转写结果", turnID: "turn-1")))
@@ -352,11 +352,11 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
 
         // Connect so we can receive transport events
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
 
         // Emit server ASR via transport event.
         speechClient.emit(.control(.clientASRTranscription(text: "Transport transcript", turnID: "turn-1")))
@@ -380,20 +380,20 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
 
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
 
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
 
         audioEngine.emit(.speechEnded)
-        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr)
 
         let boundariesAfterVAD = await speechClient.getBoundaryCallCount()
         speechClient.emit(.control(.clientASRTranscription(text: "Transport transcript", turnID: "turn-1")))
-        try await waitForProcessingStage(store, stage: .llm, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .llm)
 
         #expect(store.state.speakingRoom.liveTranscript == "Transport transcript")
         #expect(await speechClient.getBoundaryCallCount() == boundariesAfterVAD)
@@ -410,16 +410,16 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
 
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
 
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
 
         store.dispatch(.speakingRoom(.session(.recordingTimedOut)))
-        try await waitForProcessingStage(store, stage: .aiAnswer, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .aiAnswer)
         try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
             await speechClient.getTurnAbortCalls().count == 1
         }
@@ -441,7 +441,7 @@ struct SpeechSessionMiddlewareB14Tests {
         #expect(store.state.speakingRoom.processingStage == .aiAnswer)
 
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
         #expect(store.state.speakingRoom.phase == .recording)
         #expect(store.state.speakingRoom.failureReason == nil)
         #expect(await speechClient.endSessionCalled == false)
@@ -458,16 +458,16 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
         audioEngine.emit(.speechEnded)
-        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr)
 
         speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil)))
-        try await waitForProcessingStage(store, stage: .evaluation, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .evaluation)
 
         speechClient.emit(.control(.feedbackBadge(
             badge: "表达自然",
@@ -475,7 +475,7 @@ struct SpeechSessionMiddlewareB14Tests {
             tier: .soft,
             turnID: "turn-1"
         )))
-        try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .waitingUser)
 
         #expect(store.state.speakingRoom.phase == .waitingUser)
         #expect(store.state.speakingRoom.failureReason == nil)
@@ -494,13 +494,13 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
         audioEngine.emit(.speechEnded)
-        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr)
 
         speechClient.emit(.control(.feedbackBadge(
             badge: "ship it",
@@ -515,7 +515,7 @@ struct SpeechSessionMiddlewareB14Tests {
         #expect(store.state.speakingRoom.processingStage == .asr)
 
         speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil)))
-        try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .waitingUser)
 
         #expect(store.state.speakingRoom.phase == .waitingUser)
         #expect(store.state.speakingRoom.failureReason == nil)
@@ -533,19 +533,19 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
         audioEngine.emit(.speechEnded)
-        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr)
 
         speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil)))
-        try await waitForProcessingStage(store, stage: .evaluation, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .evaluation)
 
         store.dispatch(.speakingRoom(.session(.evaluationTimedOut)))
-        try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .waitingUser)
         try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
             await audioEngine.interruptCalls >= 1
         }
@@ -606,18 +606,18 @@ struct SpeechSessionMiddlewareB14Tests {
 
         // Session 1 — start, connect, then end it.
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         speechClient.emit(.stateChanged(.connected))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
         store.dispatch(.speakingRoom(.session(.endTap)))
-        try await waitForPhase(store, phase: .ended, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .ended)
 
         // Session 2 — leave and re-enter, exactly the flow that failed.
         store.dispatch(.speakingRoom(.applySession(.initial)))
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         speechClient.emit(.stateChanged(.connected))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
 
         #expect(
             speechClient.transportEventsRequestCount == 1,
@@ -649,23 +649,23 @@ struct SpeechSessionMiddlewareB14Tests {
 
         // Session 1 — connect, then end it.
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         speechClient.emit(.stateChanged(.connected))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
         store.dispatch(.speakingRoom(.session(.endTap)))
-        try await waitForPhase(store, phase: .ended, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .ended)
 
         // Session 2 — re-enter and connect.
         store.dispatch(.speakingRoom(.applySession(.initial)))
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         speechClient.emit(.stateChanged(.connected))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
 
         // The tap: the engine reports speech starting. Nothing else carries it.
         audioEngine.emit(.speechStarted)
         do {
-            try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+            try await waitForPhase(store, phase: .recording)
         } catch {
             Issue.record("stuck at \(store.state.speakingRoom.phase) after emitting speechStarted")
             throw error
@@ -697,7 +697,7 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
 
         // The stub transport never produces `.socketReady`. Without a watchdog
         // this is where the room stays.
@@ -725,13 +725,13 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
         audioEngine.emit(.speechEnded)
-        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr)
 
         // Several times the injected ASR budget. No ai.turn.end arrives, so the
         // only thing that could end this turn is a timeout.
@@ -787,17 +787,17 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
         audioEngine.emit(.speechEnded)
-        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr)
 
         // The hop under test. `.processing` stays put; only the stage moves.
         speechClient.emit(.control(.clientASRTranscription(text: "hello", turnID: "turn-1")))
-        try await waitForProcessingStage(store, stage: .llm, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .llm)
 
         // Past the ASR budget (1s), still inside the LLM budget (3s) — so a
         // leaked ASR timer has had its chance to fire and the LLM one has not.
@@ -824,9 +824,9 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
 
         audioEngine.emit(.routeChanged("oldDeviceUnavailable"))
         try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
@@ -849,13 +849,13 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
         audioEngine.emit(.speechEnded)
-        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr)
 
         store.dispatch(.speakingRoom(.session(.networkLost)))
         try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
@@ -865,7 +865,7 @@ struct SpeechSessionMiddlewareB14Tests {
         #expect(store.state.speakingRoom.processingStage == .asr)
 
         speechClient.emit(.stateChanged(.connected))
-        try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .waitingUser)
 
         #expect(store.state.speakingRoom.phase == .waitingUser)
         #expect(store.state.speakingRoom.session.isReconnecting == false)
@@ -884,16 +884,16 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
 
         store.dispatch(.speakingRoom(.manualSpeechBegin))
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
         #expect(store.state.speakingRoom.phase == .recording)
 
         store.dispatch(.speakingRoom(.manualSpeechEnd))
-        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr)
         #expect(store.state.speakingRoom.phase == .processing)
         #expect(store.state.speakingRoom.processingStage == .asr)
         #expect(store.state.speakingRoom.failureReason == nil)
@@ -913,18 +913,18 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
         audioEngine.emit(.speechEnded)
-        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr)
 
         speechClient.emit(
             .control(.aiTurnEnd(turnID: "turn-1", outcome: .timeout, logID: "volc-timeout"))
         )
-        try await waitForPhase(store, phase: .failed, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .failed)
 
         #expect(store.state.speakingRoom.failureReason == "turn_timeout")
         #expect(store.state.speakingRoom.phase == .failed)
@@ -944,15 +944,15 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
         #expect(store.state.speakingRoom.session.userTurnCount == 0)
 
         speechClient.emit(
             .control(.aiTurnEnd(turnID: "bootstrap", outcome: .ok, logID: nil))
         )
-        try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .waitingUser)
 
         #expect(store.state.speakingRoom.phase == .waitingUser)
         #expect(store.state.speakingRoom.failureReason == nil)
@@ -970,11 +970,11 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
 
         // Enter degraded mode
         store.dispatch(.speakingRoom(.session(.networkDegraded)))
-        try await waitForPhase(store, phase: .degradedText, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .degradedText)
 
         // Send text message
         speechClient.setSendDegradedTextMessageResult(.success(PostMessageResponse(sessionID: "s-1", reply: "AI回复", channel: "text", generator: "stub")))
@@ -1001,7 +1001,7 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
 
         // Give time for async track call to complete
         try await Task.sleep(for: .milliseconds(100))
@@ -1056,17 +1056,17 @@ struct SpeechSessionMiddlewareB14Tests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
 
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
 
         // First turn
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
 
         audioEngine.emit(.speechEnded)
-        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr)
 
         // Verify userTurnCount is 1
         #expect(store.state.speakingRoom.session.userTurnCount == 1)
@@ -1078,17 +1078,17 @@ struct SpeechSessionMiddlewareB14Tests {
         // Trigger AI response to return to waiting
         let frame = WSAudioFrame(sequence: 1, opusPayload: Data([0x01]))
         speechClient.emit(.audio(frame))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
 
         speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: nil, logID: nil)))
-        try await waitForProcessingStage(store, stage: .evaluation, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .evaluation)
 
         // Second turn
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
 
         audioEngine.emit(.speechEnded)
-        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr)
 
         // Verify userTurnCount is 2
         #expect(store.state.speakingRoom.session.userTurnCount == 2)
@@ -1133,10 +1133,10 @@ struct SpeechSessionMiddlewareReconnectTests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
 
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
 
         // Network lost starts reconnect
         store.dispatch(.speakingRoom(.session(.networkLost)))
@@ -1168,10 +1168,10 @@ struct SpeechSessionMiddlewareReconnectTests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
 
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
 
         // Network lost starts reconnect
         store.dispatch(.speakingRoom(.session(.networkLost)))
@@ -1206,10 +1206,10 @@ struct SpeechSessionMiddlewareSystemInterruptTests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
 
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
 
         audioEngine.emit(.interruptedBySystem)
         try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
@@ -1219,7 +1219,7 @@ struct SpeechSessionMiddlewareSystemInterruptTests {
         #expect(store.state.speakingRoom.phase == .aiSpeaking)
 
         audioEngine.emit(.systemInterruptEnded)
-        try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .waitingUser)
         #expect(store.state.speakingRoom.session.suspendedPhase == nil)
     }
 }
@@ -1240,11 +1240,11 @@ struct SpeechSessionMiddlewareEndSessionTests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
 
         // End session
         store.dispatch(.speakingRoom(.session(.endTap)))
-        try await waitForPhase(store, phase: .ended, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .ended)
 
         // `.endSession` cleanup is fire-and-forget; poll instead of a fixed
         // sleep so parallel CI load cannot miss `speechClient.endSession()`.
@@ -1266,7 +1266,7 @@ struct SpeechSessionMiddlewareEndSessionTests {
 
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .failed, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .failed)
 
         // The .endSession effect is dispatched by the machine after entering .failed phase.
         // Wait for it to complete (stopCapture + endSession calls).
@@ -1348,14 +1348,14 @@ struct I20TurnTelemetryTests {
         let store = makeStore(audioEngine: audioEngine, speechClient: speechClient, tracker: tracker)
 
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
 
         store.dispatch(.speakingRoom(.session(.recordingTimedOut)))
-        try await waitForProcessingStage(store, stage: .aiAnswer, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .aiAnswer)
         try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
             await speechClient.getTurnAbortCalls().count == 1
         }
@@ -1390,13 +1390,13 @@ struct I20TurnTelemetryTests {
         let store = makeStore(audioEngine: audioEngine, speechClient: speechClient, tracker: tracker)
 
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
         audioEngine.emit(.speechEnded)
-        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr)
         try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
             tracker.events.contains { $0.name == "turn.outcome" }
         }
@@ -1413,13 +1413,13 @@ struct I20TurnTelemetryTests {
         let store = makeStore(audioEngine: audioEngine, speechClient: speechClient, tracker: tracker)
 
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
         audioEngine.emit(.speechEnded)
-        try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .asr)
 
         speechClient.emit(
             .control(.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: "volc-abc123"))
@@ -1446,14 +1446,14 @@ struct I20TurnTelemetryTests {
         let store = makeStore(audioEngine: audioEngine, speechClient: speechClient, tracker: tracker)
 
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
 
         store.dispatch(.speakingRoom(.session(.endTap)))
-        try await waitForPhase(store, phase: .ended, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .ended)
         try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
             await speechClient.getTurnAbortCalls().count == 1
         }
@@ -1475,14 +1475,14 @@ struct I20TurnTelemetryTests {
         let store = makeStore(audioEngine: audioEngine, speechClient: speechClient, tracker: tracker)
 
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
         store.dispatch(.speakingRoom(.session(.socketReady)))
-        try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
-        try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .recording)
 
         store.dispatch(.speakingRoom(.session(.failed("network"))))
-        try await waitForPhase(store, phase: .failed, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .failed)
         try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
             await speechClient.getTurnAbortCalls().count == 1
         }
@@ -1510,7 +1510,7 @@ struct I20TurnTelemetryTests {
         )
 
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-        try await waitForPhase(store, phase: .connecting, timeout: 1_000_000_000)
+        try await waitForPhase(store, phase: .connecting)
 
         speechClient.emit(
             .control(
@@ -1902,10 +1902,23 @@ private actor AsyncValue<T: Sendable> {
 // MARK: - Wait Helpers
 
 @MainActor
+/// How long a test waits for the store to reach a phase before calling it hung.
+///
+/// **Not a specification, and not a latency assertion.** Everything these tests
+/// dispatch is in-memory; the only reason a phase is ever late is that its
+/// effect is a `Task` and the machine is busy. A broken implementation does not
+/// arrive *slowly*, it never arrives — so a generous budget catches exactly the
+/// same bugs as a tight one and only makes the failure take longer to report.
+///
+/// It used to be one second, restated at ninety-odd call sites, and that read
+/// like a claim about how fast the middleware should be. It was not; it was how
+/// long a loaded parallel CI runner was assumed to take, and on 2026-09-12 one
+/// of them proved the assumption wrong (`endTapCancelsTransportAndAudioEngineTasks`
+/// timed out on `8328542` with 511 tests passing locally).
 private func waitForPhase(
     _ store: Store<AppState, AppAction>,
     phase: SpeechSessionPhase,
-    timeout: UInt64
+    timeout: UInt64 = 10_000_000_000
 ) async throws {
     try await waitUntil(timeoutNanoseconds: timeout) {
         store.state.speakingRoom.phase == phase
@@ -1922,7 +1935,7 @@ private func waitForPhase(
 private func waitForProcessingStage(
     _ store: Store<AppState, AppAction>,
     stage: ProcessingStage,
-    timeout: UInt64
+    timeout: UInt64 = 10_000_000_000
 ) async throws {
     try await waitUntil(timeoutNanoseconds: timeout) {
         store.state.speakingRoom.phase == .processing
