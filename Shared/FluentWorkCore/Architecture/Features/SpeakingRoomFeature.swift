@@ -237,6 +237,15 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
         state.lastBadge = nil
         state.badgeHits = 0
         state.timeline = seeding.map(TurnTimelineItem.init(utterance:))
+        // A visit does not inherit the last one's *session*.
+        //
+        // `lastSessionID` and the machine snapshot used to survive a room
+        // entry, so entering from the workbench after an earlier visit showed
+        // "本轮已结束，重新开始" for a session that was over — and the id of a
+        // session the user had already left was still lying around to be used
+        // as a continuation origin.
+        state.session = .initial
+        state.lastSessionID = nil
 
     case let .applySession(session):
         // Deliberately does **not** clear the timeline when the session enters

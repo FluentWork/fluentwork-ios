@@ -1646,6 +1646,62 @@ struct SpeechSessionMiddlewareVoiceProcessingTests {
         #expect(await client.continueFromValues == [nil])
     }
 
+    /// **The user's report: 「重新开始」shows the old conversation but the AI
+    /// does not know about it.**
+    ///
+    /// Showing history and *carrying* history are two different things, and the
+    /// room only did the first: the timeline survived a restart while the
+    /// server was told nothing, so the screen said "we were just talking about
+    /// X" and the model had never heard of X. A room that looks continuous and
+    /// is not is worse than one that looks empty, because the user stops
+    /// checking.
+    ///
+    /// The origin is the session that just ended *in this room*
+    /// (`lastSessionID`), not wherever the visit started — the user has
+    /// certainly moved on since then.
+    @MainActor
+    @Test func restartingInARoomContinuesFromTheSessionThatJustEnded() async throws {
+        let container = Container()
+        container.reset()
+        let client = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { StubAudioEngineForMiddleware() }
+        container.speechSessionClient.register { client }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.enterRoom(continueFrom: "session-yesterday")))
+        // The visit's first session runs and ends.
+        store.dispatch(.speakingRoom(.sessionIDCaptured("session-just-now")))
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+
+        try await waitUntil(timeoutNanoseconds: 2_000_000_000) {
+            await !client.continueFromValues.isEmpty
+        }
+        #expect(
+            await client.continueFromValues == ["session-just-now"],
+            "the most recent session wins; continuing from where the visit began would replay a conversation the user has moved past"
+        )
+    }
+
+    /// ...and a visit that never ran a session continues from the one it was
+    /// opened with.
+    @MainActor
+    @Test func theFirstSessionOfAVisitContinuesFromWhereItWasOpened() async throws {
+        let container = Container()
+        container.reset()
+        let client = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { StubAudioEngineForMiddleware() }
+        container.speechSessionClient.register { client }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.enterRoom(continueFrom: "session-yesterday")))
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+
+        try await waitUntil(timeoutNanoseconds: 2_000_000_000) {
+            await !client.continueFromValues.isEmpty
+        }
+        #expect(await client.continueFromValues == ["session-yesterday"])
+    }
+
     /// Waits for the middleware to hand the engine a value at all, and says
     /// why it might never have.
     ///

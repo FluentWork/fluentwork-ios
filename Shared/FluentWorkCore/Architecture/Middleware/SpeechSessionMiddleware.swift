@@ -172,7 +172,16 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
                 ttsTrace: ttsTrace,
                 usesAutoVAD: store.state.featureFlags.isEnabled(.voiceVadAuto),
                 voiceProcessingEnabled: store.state.featureFlags.isEnabled(.voiceProcessing),
-                continueFromSessionID: store.state.speakingRoom.continueFromSessionID
+                // Where this session continues from, most recent first.
+                //
+                // `lastSessionID` is the session that just ended *in this
+                // room* — so a restart mid-visit continues from what the user
+                // was actually just talking about, rather than from wherever
+                // the visit originally started. Falling back to
+                // `continueFromSessionID` covers the first session of a visit
+                // that was opened from the list.
+                continueFromSessionID: store.state.speakingRoom.lastSessionID
+                    ?? store.state.speakingRoom.continueFromSessionID
             )
         }
         let timeoutEffects = processingTimeoutEffects(

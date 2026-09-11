@@ -137,6 +137,39 @@ import TGReduxKitTesting
     #expect(store.state.speakingRoom.timeline.map(\.text) == ["mid-sentence"])
 }
 
+/// Entering the room must not inherit the last visit's *session*. Before this,
+/// a workbench entry after an earlier visit showed "本轮已结束，重新开始" for a
+/// session that was over, and kept that session's id around as a continuation
+/// origin.
+@MainActor
+@Test func enteringARoomForgetsTheLastVisitsSession() {
+    var state = AppState.initial
+    state.speakingRoom = SpeakingRoomState(
+        phase: .ended,
+        lastSessionID: "session-from-last-visit",
+        continueFromSessionID: "session-from-last-visit"
+    )
+    let store = TestStore(initialState: state, reducer: appReducer)
+
+    store.send(.speakingRoom(.enterRoom(continueFrom: nil)))
+
+    #expect(store.state.speakingRoom.phase == .idle)
+    #expect(store.state.speakingRoom.lastSessionID == nil)
+    #expect(store.state.speakingRoom.continueFromSessionID == nil)
+}
+
+/// Entering to *continue*, though, keeps the origin it was given — that is the
+/// whole point of the entry.
+@MainActor
+@Test func enteringToContinueKeepsItsOrigin() {
+    let store = makeStoreWithOneTimelineItem()
+
+    store.send(.speakingRoom(.enterRoom(continueFrom: "session-yesterday")))
+
+    #expect(store.state.speakingRoom.continueFromSessionID == "session-yesterday")
+    #expect(store.state.speakingRoom.phase == .idle)
+}
+
 @MainActor
 private func makeStoreWithOneTimelineItem() -> TestStore<AppState, AppAction> {
     var state = AppState.initial
