@@ -56,6 +56,13 @@ public final class TTSFrameDispatcher: @unchecked Sendable {
         switch frame {
         case let .aiTTSStart(turnID, voiceID, sampleRate, codec):
             try queue.sync {
+                // `.draining` is ended here as well, by the assignment below
+                // rather than by a branch — which is the *second* exit from a
+                // state whose only other exit (`ai.tts.end`) an abandoned turn
+                // never sends. Without it a stuck stream would sit in
+                // `.draining` and swallow the next turn's audio, and the only
+                // symptom would be silence. Pinned by
+                // `testTTSDispatcher_NewStartEndsAStuckDrainingStream`.
                 if case let .active(previousTurnID) = stream {
                     try decoder.finish(
                         turnId: previousTurnID,

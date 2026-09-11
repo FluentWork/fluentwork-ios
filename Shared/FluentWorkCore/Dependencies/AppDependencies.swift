@@ -532,7 +532,26 @@ public extension Container {
     var ttsDecoder: Factory<any TTSDecoder> {
         // Unique so parallel tests do not share a recording mock, and so each
         // middleware instance owns its own decoder for the session lifetime.
-        self { MockTTSDecoder() }.unique
+        self {
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                // Tests drive the dispatcher directly and assert on what was
+                // fed to it; a decoder that plays would need an audio engine
+                // they do not have.
+                return MockTTSDecoder()
+            }
+            // Production plays. This is the path `TTSFrameDispatcher` hands
+            // binary frames to once it has seen an `ai.tts.start` — and until
+            // 2026-09-12 it handed them to a recorder, which is silent. Nothing
+            // noticed, because the gateway sent no `ai.tts.start` and every
+            // frame missed the dispatcher entirely. The gateway is being taught
+            // to send one (`meta docs/30_技术方案/83_`), and the day it does,
+            // the difference between these two lines is whether the assistant
+            // can be heard at all.
+            let engine = self.audioEngine()
+            return EngineBackedTTSDecoder { frame in
+                await engine.play(frame: frame)
+            }
+        }.unique
     }
 
     var speechSessionClient: Factory<SpeechSessionClientProtocol> {

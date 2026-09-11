@@ -160,6 +160,42 @@ import Testing
     #expect(decoder.snapshotFinishes().map(\.status) == ["interrupted"])
 }
 
+/// **The case that makes a stuck `.draining` harmless mid-session.**
+///
+/// `.draining` ends on `ai.tts.end` — which an interrupted turn does receive in
+/// the ordinary course of things, but which it will never receive if the turn
+/// was abandoned or the connection dropped. Without a second exit, the stream
+/// would sit in `.draining` and **eat the next turn's audio too**, and the only
+/// symptom would be silence.
+///
+/// There is a second exit: `ai.tts.start` overwrites the state unconditionally.
+/// This pins it, because it is load-bearing now — until 2026-09-12 the gateway
+/// sent no `ai.tts.start` at all and every frame missed the dispatcher, so a
+/// stuck stream could not swallow anything. Teaching the gateway to send one
+/// (`meta docs/30_技术方案/83_`) is what makes this path live.
+@Test func testTTSDispatcher_NewStartEndsAStuckDrainingStream() throws {
+    let decoder = MockTTSDecoder()
+    let dispatcher = TTSFrameDispatcher(decoder: decoder)
+    try dispatcher.handle(
+        control: .aiTTSStart(turnID: "turn-1", voiceID: "v", sampleRate: 24_000, codec: "opus")
+    )
+    try dispatcher.interrupt()
+
+    // No `ai.tts.end` for turn-1 — the turn was abandoned. The next turn starts.
+    try dispatcher.handle(
+        control: .aiTTSStart(turnID: "turn-2", voiceID: "v", sampleRate: 24_000, codec: "opus")
+    )
+    let consumed = try dispatcher.handle(
+        audio: WSAudioFrame(sequence: 1, opusPayload: Data([0x01]))
+    )
+
+    #expect(consumed == true, "turn-2's audio must reach the decoder, not be eaten by turn-1's leftovers")
+    #expect(
+        decoder.snapshotFeeds().map(\.turnId) == ["turn-2"],
+        "the frame belongs to turn-2 and must be fed as turn-2"
+    )
+}
+
 @Test func testTTSDispatcher_ResetClearsActiveStreamSoLegacyPCMCanPlay() throws {
     let decoder = MockTTSDecoder()
     let dispatcher = TTSFrameDispatcher(decoder: decoder)
