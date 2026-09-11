@@ -783,6 +783,20 @@ private func transportEventPump(
                 case let .diagnostic(.clockOffsetEstimated(offset)):
                     timings.setClockOffset(offset)
 
+                // A frame type this client does not know. The connection stays
+                // up — that is the point — so without this line the only trace
+                // of a server-side rollout would be a feature that appears to
+                // do nothing. `type` is the datum: it names what we are behind
+                // on, which is what says whether it matters.
+                case let .diagnostic(.unsupportedControlFrame(type, sizeBytes)):
+                    tracker.track(
+                        event: "transport_control_frame_ignored",
+                        properties: [
+                            "type": type,
+                            "size_bytes": String(sizeBytes),
+                        ]
+                    )
+
                 case let .diagnostic(.audioFrameDropped(sequence, watermark, dropped)):
                     tracker.track(
                         event: "transport_audio_dropped",

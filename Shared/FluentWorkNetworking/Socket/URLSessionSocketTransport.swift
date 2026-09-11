@@ -222,18 +222,16 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         }
     }
 
-    private func startPingLoop(_ task: URLSessionWebSocketTask) {
-        pingTask?.cancel()
-        pingTask = Task { [weak self] in
-            await self?.pingLoop(task)
-        }
-    }
-
-    private func receiveLoop(_ task: URLSessionWebSocketTask) async {
+    /// The receive loop's body, split from `startReceiveLoop` so its lifecycle
+    /// can be driven by a scripted ``SocketMessageSource`` instead of a live
+    /// socket. Internal rather than private for the same reason
+    /// ``makeEventStream()`` is: the thing worth asserting is the loop's
+    /// contract, and it cannot be reached through the public protocol.
+    func receiveLoop(_ source: any SocketMessageSource) async {
         while !Task.isCancelled {
             let receivedAt = ContinuousClock.now
             do {
-                let message = try await task.receive()
+                let message = try await source.receive()
                 let decodedAt = ContinuousClock.now
                 let receiveElapsedMs = Self.elapsedMs(from: receivedAt, to: decodedAt)
                 try handle(message: message)
@@ -245,6 +243,13 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
                 emit(.stateChanged(.disconnected))
                 break
             }
+        }
+    }
+
+    private func startPingLoop(_ task: URLSessionWebSocketTask) {
+        pingTask?.cancel()
+        pingTask = Task { [weak self] in
+            await self?.pingLoop(task)
         }
     }
 
@@ -304,6 +309,22 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
                 recordClockOffsetIfPong(frame)
                 emit(.control(frame))
             } catch let error as WSControlFrameCodingError {
+                // An unknown `type` is a version difference, not a broken
+                // frame: the envelope decoded, this client just does not know
+                // the name. The gateway takes the same position on frames it
+                // does not recognise (it ignores and counts them), and a
+                // client that throws here disconnects itself from a server
+                // that is merely newer — turning a server-side rollout into a
+                // fleet-wide outage reported as a decode failure.
+                //
+                // Skipped, reported, connection kept. Everything else the
+                // decoder rejects — a missing required field, a type
+                // mismatch, malformed JSON — is a real contract violation and
+                // still fails below.
+                if case let .unknownType(type) = error {
+                    emit(.diagnostic(.unsupportedControlFrame(type: type, sizeBytes: data.count)))
+                    return
+                }
                 throw SocketTransportError.decodingFailed(
                     "control frame decode failed: \(describe(error)) (bytes=\(data.count))"
                 )
@@ -367,8 +388,12 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
 
     /// Pretty-prints a `WSControlFrameCodingError` so the iOS log doesn't
     /// fall back to NSError's default "the operation couldn't be completed"
-    /// bridge (`framecodingerror error 0`) when the backend sends a frame
-    /// type iOS doesn't know about.
+    /// bridge (`framecodingerror error 0`) for a *fatal* decode failure.
+    ///
+    /// No longer reached for `unknownType` — that case is a version
+    /// difference and is skipped rather than failed (see `handle`). It stays
+    /// in the switch because the enum is closed and the remaining case must
+    /// keep its readable message.
     private func describe(_ error: WSControlFrameCodingError) -> String {
         switch error {
         case let .unknownType(type):

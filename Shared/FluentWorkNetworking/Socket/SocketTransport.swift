@@ -50,6 +50,19 @@ public enum SocketTransportDiagnostic: Equatable, Sendable {
     /// after the turn that set it, is what says the numbering went backwards.
     case audioFrameDropped(sequence: UInt32, watermark: UInt32, dropped: Int)
 
+    /// A control frame arrived carrying a `type` this client does not know.
+    ///
+    /// Forward compatibility has to be symmetric. The gateway already ignores
+    /// unknown frame types and counts them; the client used to throw on one,
+    /// which the receive loop turned into `.failure` + `.disconnected` — so a
+    /// gateway that merely *adds* a frame type could disconnect every older
+    /// client, and the client log would blame a decode failure that was really
+    /// a version difference. The frame is skipped rather than fatal, and
+    /// reported rather than silent: "the server is sending something we ignore"
+    /// is the first thing worth knowing when a new feature appears to do
+    /// nothing at all.
+    case unsupportedControlFrame(type: String, sizeBytes: Int)
+
     /// A ping/pong round trip produced a tighter gateway↔phone clock estimate
     /// than any before it.
     ///
@@ -61,6 +74,22 @@ public enum SocketTransportDiagnostic: Equatable, Sendable {
     /// the latency the field exists to measure.
     case clockOffsetEstimated(ClockOffset)
 }
+
+/// The inbound half of one socket connection, as the receive loop sees it.
+///
+/// Extracted so the loop's lifecycle is directly testable: *which* inbound
+/// frames it survives and which ones end it is the property that matters, and
+/// it cannot be observed through `SocketTransportProtocol` — a transport whose
+/// loop has died still answers `send`, and the only outward sign is an event
+/// the test would have to race. A scripted source turns that into a fact.
+///
+/// A live `URLSessionWebSocketTask` is one implementation; nothing else about
+/// the transport depends on which one it is.
+public protocol SocketMessageSource: Sendable {
+    func receive() async throws -> URLSessionWebSocketTask.Message
+}
+
+extension URLSessionWebSocketTask: SocketMessageSource {}
 
 public protocol SocketTransportProtocol: Sendable {
     /// Connects to `url`, sends the handshake control frame with `ticket`, then starts receive/ping loops.

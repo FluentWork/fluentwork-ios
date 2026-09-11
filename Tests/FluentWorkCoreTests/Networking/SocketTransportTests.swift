@@ -216,6 +216,100 @@ import Testing
     #expect(mapped == .networkLost)
 }
 
+/// Plays a fixed script through the receive loop, then ends it the way a
+/// cancelled task does — `CancellationError` is the loop's clean exit, so a
+/// scripted source can finish without inventing a failure.
+private actor ScriptedMessageSource: SocketMessageSource {
+    private var remaining: [URLSessionWebSocketTask.Message]
+
+    init(_ messages: [URLSessionWebSocketTask.Message]) {
+        self.remaining = messages
+    }
+
+    func receive() async throws -> URLSessionWebSocketTask.Message {
+        guard !remaining.isEmpty else { throw CancellationError() }
+        return remaining.removeFirst()
+    }
+}
+
+/// Drives the receive loop with `source` and returns everything it emitted.
+///
+/// The transport is scoped so it deinits — that finishes the event stream,
+/// which is what lets the loop's output be read without racing it.
+private func eventsFromScriptedReceiveLoop(
+    _ source: any SocketMessageSource
+) async -> [SocketTransportEvent] {
+    let stream: AsyncStream<SocketTransportEvent>
+    do {
+        let transport = URLSessionSocketTransport()
+        stream = transport.events
+        await transport.receiveLoop(source)
+    }
+
+    var events: [SocketTransportEvent] = []
+    for await event in stream { events.append(event) }
+    return events
+}
+
+/// A gateway that adds a frame type must not be able to disconnect every
+/// older client.
+///
+/// The backend already ignores unknown frame types and counts them. The client
+/// threw on one, and the receive loop turned that throw into `.failure` +
+/// `.disconnected` + `break` — so shipping a *new* frame type server-side was
+/// a fleet-wide disconnect, reported as a decode failure that was really a
+/// version difference. This is the same accident class as `unsupported_frame`
+/// killing live sessions, relocated to the other end of the wire.
+@Test func receiveLoopSurvivesAnUnknownControlFrameType() async {
+    let events = await eventsFromScriptedReceiveLoop(
+        ScriptedMessageSource([
+            .string(#"{"type":"ai.something.new","payload":1}"#),
+            .string(#"{"type":"ping","ts":7}"#),
+        ])
+    )
+
+    // The proof is the *next* frame: it is only delivered if the loop lived.
+    #expect(events.contains(.control(.ping(ts: 7))))
+    #expect(!events.contains(.stateChanged(.disconnected)))
+    #expect(events.contains { if case .failure = $0 { return true } else { return false } } == false)
+}
+
+/// Skipping an unknown type must not become skipping *everything*.
+///
+/// A frame whose envelope is broken is a real contract violation, not a
+/// version difference, and must still end the loop — otherwise "be liberal in
+/// what you accept" quietly deletes the only signal that the wire is wrong.
+@Test func receiveLoopStillDiesOnAMalformedControlFrame() async {
+    let events = await eventsFromScriptedReceiveLoop(
+        ScriptedMessageSource([
+            .string(#"{"type":"ping""#),
+        ])
+    )
+
+    #expect(events.contains(.stateChanged(.disconnected)))
+    #expect(events.contains { if case .failure = $0 { return true } else { return false } })
+}
+
+/// An ignored frame is reported, not swallowed.
+///
+/// "The server is sending something we ignore" is the first thing worth
+/// knowing when a new feature appears to do nothing — and it is indistinguishable
+/// from "the server sent nothing" if the skip is silent.
+@Test func receiveLoopReportsTheIgnoredFrameType() async {
+    let body = #"{"type":"ai.something.new","payload":1}"#
+    let events = await eventsFromScriptedReceiveLoop(
+        ScriptedMessageSource([.string(body)])
+    )
+
+    #expect(
+        events.contains(
+            .diagnostic(
+                .unsupportedControlFrame(type: "ai.something.new", sizeBytes: body.utf8.count)
+            )
+        )
+    )
+}
+
 /// The transport must not trade events for a bound.
 ///
 /// A dropped `ai.turn.end` strands the state machine in `processing`; a dropped
