@@ -9,6 +9,7 @@ import TGFeatureFlag
 public protocol BootstrapClientProtocol: Sendable {
     func loadBootstrap() async throws -> BootstrapResult
 }
+
 public enum AudioEngineEvent: Equatable, Sendable {
     case speechStarted
     case speechEnded

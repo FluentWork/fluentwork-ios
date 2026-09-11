@@ -40,11 +40,17 @@ import Testing
 @Test func mapperConvertsUnsupportedFrameToFailedAction() {
     // Pre-I20 gateway replied to client.turn.abort with unsupported_frame.
     // iOS still maps that to .failed — 联调 must not see this code after abort.
+    //
+    // The code is now **retired** (the gateway ignores unknown frame types
+    // instead of rejecting them — `handler.go` keeps `unsupported_frame` only
+    // in the comments explaining that), so this also covers the unknown-code
+    // path: the identifier is kept for diagnostics, but beside a human sentence
+    // rather than as the whole message. See `docs/57`.
     let event = SocketTransportEvent.control(
         .error(code: "unsupported_frame", message: "unknown type")
     )
     let action = SocketTransportEventMapper.speakingRoomAction(for: event)
-    #expect(action == .failed("[unsupported_frame] unknown type"))
+    #expect(action == .failed("语音服务出了点问题，请重试（unsupported_frame: unknown type）"))
 }
 
 @Test func mapperConvertsClientASRTranscriptionToServerASRReceived() {

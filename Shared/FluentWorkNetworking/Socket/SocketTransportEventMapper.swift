@@ -59,19 +59,48 @@ public enum SocketTransportEventMapper {
     }
 }
 
-/// Stable provider/transport failures must not surface raw socket text (e.g.
-/// "write tcp ... broken pipe") to the learner. Known codes get a concise,
-/// actionable message; unknown codes keep the raw detail for diagnostics.
-private func userFacingErrorText(code: String, rawMessage: String?) -> String {
+/// Maps a backend error `code` to text a learner can act on.
+///
+/// **Every code gets a human sentence.** The previous table covered five of the
+/// twelve codes the gateway can send; the rest fell through to the raw machine
+/// code, and the split had no rationale — `provider_audio_failed` got a careful
+/// line while `provider_start_failed`, its sibling from the same subsystem,
+/// rendered as `[provider_start_failed] ...`.
+///
+/// An unrecognised code still carries its identifier, but as an **appendix to a
+/// human sentence** rather than instead of one. A code we have never seen is
+/// precisely the case where support needs the identifier and the learner must
+/// not be shown it alone.
+///
+/// Coverage is pinned by `SocketTransportEventMapperErrorCopyTests`, so a new
+/// code cannot quietly start rendering as machine text.
+///
+/// `internal` rather than `private` so that test can reach it.
+func userFacingErrorText(code: String, rawMessage: String?) -> String {
     switch code {
-    case "provider_audio_failed", "provider_control_failed", "provider_open_failed":
+    // Upstream provider failures — the whole family, not three of the five.
+    case "provider_audio_failed", "provider_control_failed", "provider_open_failed",
+         "provider_start_failed":
         return "语音服务连接中断，请重试"
+    case "provider_interrupt_failed":
+        return "这次打断没有送达，请重试"
     case "activate_failed":
         return "会话激活失败，请重试"
     case "client_asr_required":
         return "当前无法识别语音，请重试"
+    case "end_failed":
+        return "结束练习时出了点问题，请返回工作台重试"
+    case "idle_timeout":
+        return "长时间没有操作，这次练习已经结束"
+    // Client-side protocol violations: a bug on our side, not something the
+    // learner did — so the copy asks them to retry rather than blaming input.
+    case "invalid_frame", "session_not_started", "already_authenticated":
+        return "客户端状态异常，请重试"
+
     default:
-        return rawMessage?.isEmpty == false ? "[\(code)] \(rawMessage ?? "")" : "[\(code)]"
+        let detail = rawMessage.flatMap { $0.isEmpty ? nil : $0 }
+        return detail.map { "语音服务出了点问题，请重试（\(code): \($0)）" }
+            ?? "语音服务出了点问题，请重试（\(code)）"
     }
 }
 
