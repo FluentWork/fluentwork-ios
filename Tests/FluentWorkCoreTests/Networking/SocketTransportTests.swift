@@ -271,9 +271,9 @@ private func eventsFromScriptedReceiveLoop(
         await transport.receiveLoop(source)
     }
 
-    var events: [SocketTransportEvent] = []
-    for await event in stream { events.append(event) }
-    return events
+    var collected: [SocketTransportEvent] = []
+    for await event in stream { collected.append(event) }
+    return collected
 }
 
 /// The `frame_type` column must carry the frame's type, not the key `type`.
@@ -427,4 +427,113 @@ private func eventsFromScriptedReceiveLoop(
     for await _ in stream { received += 1 }
 
     #expect(received == burst)
+}
+
+/// A scripted source that can run a side effect between frames — the only way to
+/// put a barge-in *in the middle* of an audio stream from a test.
+private actor InterleavingMessageSource: SocketMessageSource {
+    enum Step: Sendable {
+        case message(URLSessionWebSocketTask.Message)
+        case perform(@Sendable () async -> Void)
+    }
+
+    private var steps: [Step]
+
+    init(_ steps: [Step]) {
+        self.steps = steps
+    }
+
+    func receive() async throws -> URLSessionWebSocketTask.Message {
+        while !steps.isEmpty {
+            switch steps.removeFirst() {
+            case let .message(message):
+                return message
+            case let .perform(action):
+                await action()
+            }
+        }
+        throw CancellationError()
+    }
+}
+
+/// Holds the transport so a `@Sendable` scripted step can reach it, and can
+/// drop it again so `deinit` finishes the event stream.
+private actor TransportHolder {
+    private var transport: URLSessionSocketTransport?
+
+    /// Creates the transport and returns it already owned by the holder.
+    ///
+    /// **The caller must not keep a reference of its own.** The stream only
+    /// finishes when the transport deinits, so a surviving local binding makes
+    /// `release()` a no-op and the drain below waits forever. That is not
+    /// hypothetical — it is how this test first hung.
+    static func make() -> (holder: TransportHolder, events: AsyncStream<SocketTransportEvent>) {
+        let transport = URLSessionSocketTransport()
+        return (TransportHolder(transport), transport.events)
+    }
+
+    private init(_ transport: URLSessionSocketTransport) {
+        self.transport = transport
+    }
+
+    func markInterrupted() async {
+        await transport?.markInterrupted()
+    }
+
+    func run(_ source: any SocketMessageSource) async {
+        await transport?.receiveLoop(source)
+    }
+
+    func release() {
+        transport = nil
+    }
+}
+
+/// The barge-in watermark must not outlive the turn that set it.
+///
+/// `AudioFrameDropGate.interruptMaxSequence` was cleared only by `connect()`, so
+/// within a session it never cleared at all — `clearInterrupt()` had **no
+/// production caller**. The thing the gate does is per-turn (drop the audio
+/// already in flight when the user barges in); the lifetime it was given is
+/// per-session. `77_` P1-7.
+///
+/// The two only diverge when the sequence numbering goes backwards, which is
+/// exactly what F18 was: a transparent reopen restarted numbering at 1 while the
+/// watermark sat in the hundreds, and every frame after it was dropped **in
+/// silence** — text kept arriving, audio was simply gone. The gateway no longer
+/// restarts numbering, but the gate still relies on that. This pins the gate
+/// instead of the gateway.
+@Test func theBargeInWatermarkDoesNotOutliveItsTurn() async {
+    // The holder owns the transport so it can be released before the stream is
+    // drained: its `deinit` is what finishes the event stream. Holding a plain
+    // reference leaves the loop below waiting on a stream that never ends.
+    let (holder, events) = TransportHolder.make()
+    let source = InterleavingMessageSource([
+        .message(.data(WSAudioFrameCodec.encode(WSAudioFrame(sequence: 1, opusPayload: Data([0x01]))))),
+        .message(.data(WSAudioFrameCodec.encode(WSAudioFrame(sequence: 2, opusPayload: Data([0x02]))))),
+        // The user barges in: the gate records the highest sequence seen.
+        .perform { await holder.markInterrupted() },
+        // The interrupted turn ends. Everything it had in flight is now moot,
+        // so the watermark has done its job and must go.
+        .message(.string(#"{"type":"ai.turn.end","turn_id":"turn-1","outcome":"ok"}"#)),
+        // A later frame whose numbering went backwards — the F18 shape. It is
+        // a *new* turn's audio and must be delivered, not swallowed by a
+        // watermark that belongs to a turn that is over.
+        .message(.data(WSAudioFrameCodec.encode(WSAudioFrame(sequence: 1, opusPayload: Data([0x03]))))),
+    ])
+
+    await holder.run(source)
+    await holder.release()
+
+    var delivered: [UInt32] = []
+    for await event in events {
+        if case let .audio(frame) = event { delivered.append(frame.sequence) }
+    }
+
+    // First turn: 1 and 2 arrive before the barge-in and are played.
+    #expect(delivered.contains(1))
+    #expect(delivered.contains(2))
+    // The last frame shares a sequence with the first, so "delivered twice" is
+    // the signature that the watermark was cleared rather than a coincidence.
+    #expect(delivered.filter { $0 == 1 }.count == 2, "the post-turn frame was dropped: watermark outlived its turn")
 }

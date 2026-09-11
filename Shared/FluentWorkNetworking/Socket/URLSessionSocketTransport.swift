@@ -323,6 +323,7 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
             do {
                 let frame = try WSControlFrameCodec.decode(data)
                 recordClockOffsetIfPong(frame)
+                releaseInterruptWatermarkIfTurnEnded(frame)
                 emit(.control(frame))
             } catch let error as WSControlFrameCodingError {
                 // An unknown `type` is a version difference, not a broken
@@ -369,6 +370,34 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         @unknown default:
             throw SocketTransportError.decodingFailed("unsupported websocket message")
         }
+    }
+
+    /// A finished turn releases the barge-in watermark it set.
+    ///
+    /// The gate drops frames at or below the watermark, and the watermark was
+    /// cleared **only by `connect()`** — so within a session it never cleared at
+    /// all, and `AudioFrameDropGate.clearInterrupt()` had no production caller.
+    ///
+    /// What the gate does is per-turn: when the user barges in, drop the audio
+    /// already in flight for the turn they interrupted. What it was given is a
+    /// per-session lifetime. The two only diverge when the sequence numbering
+    /// goes backwards — which is exactly F18, where a transparent reopen
+    /// restarted numbering at 1 while the watermark sat in the hundreds, and
+    /// every frame afterwards was dropped **in silence**. The gateway no longer
+    /// restarts numbering; this makes the gate stop depending on that.
+    ///
+    /// `ai.turn.end` is the boundary: it is terminal for its turn, B15
+    /// guarantees it on every exit path, and audio for a turn always precedes
+    /// it. Deliberately **not** a "the sequence went backwards" heuristic — that
+    /// would fire on a genuinely out-of-order frame and hide the real defect.
+    ///
+    /// The drop run is closed *before* the watermark goes, so the record of
+    /// what the watermark swallowed survives the release. Clearing first would
+    /// erase the only evidence that anything was lost.
+    private func releaseInterruptWatermarkIfTurnEnded(_ frame: WSControlFrame) {
+        guard case .aiTurnEnd = frame else { return }
+        closeDroppedAudioRunIfNeeded()
+        dropGate.clearInterrupt()
     }
 
     /// Completes a clock-probe round trip when a pong lands.
