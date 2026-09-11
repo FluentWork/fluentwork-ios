@@ -75,6 +75,23 @@
 
 修法是把 `func setVoiceProcessingEnabled(_ enabled: Bool) async` 加回 requirement 列表（extension 里保留默认实现，所以 5 个 conformer 一个都不用改）。
 
+## 3.2 一轮对抗性评审改掉了什么
+
+落地后跑了 `code-review`（目标 `ecfaf7d`，14 条）。它**独立**复现了 §3.1 那条（同一处、同一后果），另外 5 条是真的，已改：
+
+| 改了什么 | 为什么 |
+|---|---|
+| `reconfigureForRouteChange` 的 `installTap` 也包 `FWTryCatch` | 我包了 `startCapture` 那条、**漏了这条** —— 而这条才是运行中会话 + 设备真的换了的那条路。同一个已知崩溃点，一半有兜底等于没有 |
+| `captureFormat` 取消 `?? usable(input)` 回落 | 单元开着时原始格式描述的是**已经不存在的流**；回落等于把那个 abort 又请回来，而且报告还说 `on`。**这条与 §2.2 是同一类错误的两个位置** |
+| `startCapture` 里可失败的步骤全部挪到拆旧 tap **之前** | 旧顺序下转换器守卫一抛，`hasInstalledTap` 就留在「有 tap」而 tap 已经没了 —— 路由变化会据此给一个死会话重装 tap，`stopCapture()` 会对不存在的 tap 调 `removeTap` |
+| 报告区分「关」与「想开但没开成」 | 引擎已在运行时 `startCapture` 会**跳过** enable，而旧的报告只写 `off` —— 与 flag 关着一字不差。按 T4 的规矩就会把人打发去改 `firstWave` 重新构建，而真正的原因是引擎在跑。**A/B 会悄悄变成「关 vs 关」** |
+| `reconfigureForRouteChange` **不再尝试** enable，且只在格式/状态真的变了才重装 tap | 代码此前与提交信息和本文档说的**相反**（文档说不切换，代码切了）。而且切换落在旧 tap 还装着的时候 |
+| `_testConvertToPCM16` 补上 `channelMap` | 它此前**不建模生产链**：多声道源的默认映射是静音，而这个 hook 不设映射 —— 于是「tap 链正常」是对一片生产会变成空上行的输入说的 |
+
+另有两条**只改文档、不改代码**：§5 里「不做关闭路径」的理由（见该条下的更正框），以及 §6 里「全部密闭」的过头说法（见该节的更正）。
+
+> 一条**没改**但值得记：`setVoiceProcessingEnabled` 的 extension 默认空实现**保留着**。评审指出「任何漏写这个方法的 conformer 都会静默空转，`PlaceholderAudioEngine` 今天就是」。但那是默认实现这个机制的固有代价，与其余四个同类方法一致；**§3.1 的病根是它没进 requirement 列表，不是它有默认实现**。加了 requirement 之后，默认实现只会作为真正的默认被动态派发到 —— 对 `PlaceholderAudioEngine` 而言那正是想要的。
+
 ## 4. 顺序上的两条硬约束
 
 **① `attemptEnable` 必须按引擎状态给，`startCapture()` 也不例外。**
@@ -87,17 +104,29 @@
 
 ## 5. 明确否决 / 未做
 
-- **不在 `reconfigureForRouteChange` 里切换 VP。** 切换需要 `engine.stop()`，而路由变化可能发生在 AI 正说话时——为了一个路由事件把用户欠着的那句回答掐掉不值得。只改格式来源与重装 tap（且只有格式真的变了才重装）。
-- **不做「关闭」路径。** `voiceProcessingRequested == false` 而节点仍开着（只能由运行时改 flag 造成，而 `setLocalOverride` 在生产零调用方）时，回读会给出一致的格式，链是对的；只是 flag 的语义不再等价于节点状态。**登记为未做**，免得有人以为 flag 关就一定能关掉单元。
-- **`AudioEngineError` 不 conform `LocalizedError`，本次不改。** middleware 用 `error.localizedDescription`，所以本票新加的格式断言即使抛出，用户看到的也是泛化的 "The operation couldn't be completed. (FluentWorkCore.AudioEngineError error 0.)"。一个以「把静默失败变响亮」为目的的守卫喊出来的话看不懂——但修它要**顺带改掉 `audioSessionConflict` 既有的用户可见文案**（变成一句英文的"关掉其他音频 App"），本产品是中文的，英文文案是否可接受属于产品决定。
+- **不在 `reconfigureForRouteChange` 里切换 VP。** 切换需要 `engine.stop()`，而路由变化可能发生在 AI 正说话时——为了一个路由事件把用户欠着的那句回答掐掉不值得。而且切换会落在**旧 tap 仍装在 bus 0 上**的时刻（拆装在同一条路径上），把节点的产出格式换到那个 tap 底下。**什么都不用牺牲**：状态是回读的，路由变化丢掉的单元给出原始格式、活下来的给出处理格式，两种都自洽。
+- **不做「关闭」路径。** `voiceProcessingRequested == false` 而节点仍开着时，回读给出一致的格式，链是对的；只是 flag 的语义不再等价于节点状态。**登记为未做**，免得有人以为 flag 关就一定能关掉单元。
+  > ⚠️ **第一版的理由是错的**：原文写「只能由运行时改 flag 造成，而 `setLocalOverride` 在生产零调用方」。评审指出**那不是唯一的通道** —— `.lifecycle(.bootstrapSucceeded)` 会把 `state.featureFlags.snapshot` 直接写成解析器给的那份（`AppReducer.swift:114`）。核对后：今天仍不可达，因为 `makeFirstWaveResolver()` 只注册了 `DebugProvider` 与 `LocalProvider`，**没有远端 provider**，所以那份 snapshot 只能等于 `firstWave`。但**理由是「今天没有远端通道」，不是「没有通道」** —— 接上远端 flag 的那天，这条就从「不可达」变成「可达」。留此存档。
+- **`AudioEngineError` 不 conform `LocalizedError`，本次不改** —— 但**载荷现在进日志**。middleware 用 `error.localizedDescription`，所以本票新加的格式断言抛出时，用户看到的仍是泛化的 "The operation couldn't be completed. (FluentWorkCore.AudioEngineError error 0.)"。改文案要**顺带改掉 `audioSessionConflict` 既有的英文文案**，中文产品里是否可接受属于产品决定。但「用户看到什么」与「日志里有什么」是两件事：`createSession` 的 catch 现在单独接住 `AudioEngineError`，把关联值原样 `timings.mark` 出去。否则一次死在格式守卫上的真机会话，日志里什么线索都没有 —— 那正是这些守卫要消除的失败形态。
 - **不动 `attachPlayerIfNeeded` 的 connect 格式**（16 kHz mono Int16 进 mixer 是源节点自己的格式，引擎会重采样，F16 以来未崩过）；也**没有**给它加 `FWTryCatch`——那条路抛出的概率是推测的，而它的失败分支走 `.failed`，会**终止 middleware 的音频事件泵**（`docs/49` 的 `OnceFlag`，全进程不再重启），把一个会话的播放问题变成之后每个会话都静默。代价不对称，所以不动。
 - **不动播放入口那些既有的 `.failed`**（F16 的测试断言着它们）。但要知道：**任何** `.failed` 都会结束那个泵，本票没有改变这一点。
 
 ## 6. 测试
 
-9 条，全部密闭、不碰音频硬件（`docs/19` §4.2）：**引擎侧 7 条**（格式决策 + 顺序 + 降级 + 报告措辞）+ **中间件侧 2 条**（flag → 引擎的接线）。
+12 条：**引擎侧 8 条**（格式决策 + 顺序 + 拒绝 + 报告措辞 + 多声道端到端）+ **中间件侧 2 条**（flag → 引擎的接线）+ **flag 默认值 1 条** + 既有的声道映射 1 条。
 
 中间件那 2 条不是凑数：§3.1 那个 bug 只有它们能抓到。**引擎侧测试全绿而生产路径是死的**，这是本票最值得记的一课 —— 只测具体类型，测不出经过存在类型的调用。
+
+### ⚠️ 但「全部密闭」是**过头的话**，这里更正
+
+其中 3 条（`startCaptureEnablesVoiceProcessingBeforeReadingTheInputFormat` / `...LeavesVoiceProcessingAlone...` / `aRefusedVoiceProcessingUnit...`）调的是**真实的 `startCapture()`**，它们「不碰硬件」靠的是 `docs/19` §4.2 第 5 项**明令禁止**的那件事 —— 依赖当前机器有没有音频设备：
+
+- **CI 上**：`inputFormat` 是 0Hz/0ch，`startCapture()` 在格式守卫处停住，测的确实只是「守卫之前发生过什么」。
+- **一台有麦克风的开发机上**：守卫**通过**，于是这三条会真的 `installTap` 到真实输入节点并调真实 `engine.start()`，而且**没有一条调 `stopCapture()`** —— 引擎会一直开着。
+
+这个形状是**继承来的**：既有的 `liveAudioEngineStartCaptureKeepsTheConfiguredBoundaryMode` 就是同样的写法（`PermissiveAudioSessionManager` + `try? startCapture()`）。本票照抄了它，没有让它变好。**登记为已知局限**，不假装是密闭的。
+
+真正完全密闭的是另外那些：纯静态函数、采样器 seam、中间件接线、flag 默认值断言。
 
 CI 的关键约束：`swift test` 跑在没有音频输入设备的 macOS runner 上，`inputFormat` 是 0Hz/0ch，所以 `startCapture()` **在格式守卫处就停住**，之后一行都不执行。**不能靠 `try? startCapture()` 去够被测代码**——仓里既有的那条 `startCapture()` 测试在 CI 里就是空的。所以本票的断言分两类：
 
@@ -149,10 +178,25 @@ CI 的关键约束：`swift test` 跑在没有音频输入设备的 macOS runner
 
 这条的失败信息是刻意写长的：`waitUntil` 超时本身只会给一个 `TimeoutError`，说不清任何事情，而这里的成因非常具体、而且**已经发生过一次**。
 
+**⑤ 让 `_testConvertToPCM16` 不设 `channelMap`**（即它改前的样子）——
+
+```
+✘ Test multiChannelInputReachesTheTapChainAsAudioNotSilence() recorded an issue at
+  LiveAudioEngineTests.swift:598:5: Expectation failed: (peak → 0) > (1_000 → 1000)
+```
+
+`peak` **恰好是 0**。§2.2 那条「默认映射是静音，不是 downmix」到这里才算真的证完：前面只是断言映射值是 `[-1]`，这条是把它**跑过一遍 tap 链**，证明那一头出来的是空的上行。
+
+**⑥ 把 `captureFormat` 改回 `?? usable(input)`** ——
+
+```
+✘ Test captureFormatRefusesRatherThanFallingBackToTheRawInputWhileVoiceProcessingIsOn() recorded an issue
+```
+
 ### 门禁
 
 ```bash
-swift test          # 475 tests passed  (466 + 9)
+swift test          # 478 tests passed  (466 + 12)
 xcodebuild -project FluentWorkHost.xcodeproj -scheme FluentWorkHost \
   -configuration Debug -destination 'generic/platform=iOS Simulator' build   # BUILD SUCCEEDED
 ```

@@ -478,10 +478,16 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
     )
 }
 
-/// A unit that refuses, or an OS that hands back nothing usable, must leave the
-/// old chain standing rather than throwing the session away.
+/// With the unit engaged there is **no** fallback to the raw format, and this
+/// pin is what keeps a well-meaning `?? usable(input)` from coming back.
+///
+/// While the unit is on the node produces the processed stream, so the raw
+/// input format describes a stream that is no longer there. Falling back would
+/// install a tap the node cannot satisfy — the documented `CreateRecordingTap`
+/// abort — and the report would still say `on`, because the unit really is on.
+/// A dead chain logged as a healthy one is worse than a refused session.
 @available(iOS 17, macOS 14, *)
-@Test func captureFormatFallsBackToTheRawInputWhenTheProcessedStreamIsUnusable() throws {
+@Test func captureFormatRefusesRatherThanFallingBackToTheRawInputWhileVoiceProcessingIsOn() throws {
     let raw = try #require(AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
         sampleRate: 44_100,
@@ -494,6 +500,16 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
             input: raw,
             processedOutput: nil,
             voiceProcessingActive: true
+        ) == nil,
+        "the raw format is not the node's stream while the unit is on"
+    )
+    // Off is the other half, and it is unchanged: the raw format, exactly as
+    // the chain worked before this feature existed.
+    #expect(
+        LiveAudioEngine.captureFormat(
+            input: raw,
+            processedOutput: nil,
+            voiceProcessingActive: false
         )?.sampleRate == 44_100
     )
     // Nothing usable on either side is still `nil` — the caller turns that into
@@ -504,9 +520,7 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
 
 /// Voice processing does not hand back a cleaned copy of the microphone — it
 /// hands back the microphone channel *plus* the channels the echo canceller
-/// needs. Left alone, the converter downmixes all of them, so the uplink
-/// carries the echo-reference channels mixed into the voice: AEC working, and
-/// the transcript still worse, which reads as AEC not working.
+/// needs, and only channel 0 is the speaker.
 @available(iOS 17, macOS 14, *)
 @Test func captureChannelMapTakesOnlyTheMicrophoneChannel() throws {
     let target = try #require(AVAudioFormat(
@@ -545,6 +559,46 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
     let monoConverter = try #require(AVAudioConverter(from: mono, to: target))
     LiveAudioEngine.applyCaptureChannelMap(monoConverter, from: mono)
     #expect(monoConverter.channelMap.map(\.intValue) == [0], "the single-channel chain keeps its mapping")
+}
+
+/// The same finding, run through the tap chain instead of asserted on the
+/// helper — because "the mapping is `[0]`" and "a voice comes out the other
+/// end" are two different claims, and only the second one is the product.
+///
+/// It also closes the gap that let the hook go stale: `_testConvertToPCM16`
+/// now applies the same map production does, so this is the tap chain as it
+/// actually is, not a simplified stand-in.
+@available(iOS 17, macOS 14, *)
+@Test func multiChannelInputReachesTheTapChainAsAudioNotSilence() throws {
+    let source = try #require(makeDiscreteFormat(channels: 3))
+    let frames: AVAudioFrameCount = 4_800
+    let input = try #require(AVAudioPCMBuffer(pcmFormat: source, frameCapacity: frames))
+    input.frameLength = frames
+
+    // Channel 0 is the microphone; the rest are the echo canceller's. Constant
+    // amplitude, so "did anything arrive" is a magnitude question rather than a
+    // shape one.
+    for channel in 0 ..< Int(source.channelCount) {
+        let samples = try #require(input.floatChannelData?[channel])
+        for index in 0 ..< Int(frames) {
+            samples[index] = channel == 0 ? 0.5 : 0
+        }
+    }
+
+    let engine = LiveAudioEngine(decoder: RawPCM16FrameDecoder())
+    let pcm = try #require(
+        try engine._testConvertToPCM16(input, from: source),
+        "the tap chain should produce PCM16 bytes"
+    )
+    let samples = pcm.withUnsafeBytes { raw -> [Int16] in
+        Array(raw.bindMemory(to: Int16.self))
+    }
+    #expect(!samples.isEmpty)
+    let peak = samples.map { abs(Int($0)) }.max() ?? 0
+    #expect(
+        peak > 1_000,
+        "channel 0 carries the microphone; a chain that drops it produces silence, not a quieter voice"
+    )
 }
 
 /// The enable has to run before the input format is read. Enabling is what
@@ -589,24 +643,66 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
 
     // Turned on by this call.
     #expect(
-        LiveAudioEngine.voiceProcessingReport(isOn: true, wasAlreadyOn: false, format: format, failure: nil)
-            == "on, tap=48000Hz/1ch"
+        LiveAudioEngine.voiceProcessingReport(
+            requested: true, isOn: true, wasAlreadyOn: false, skipReason: nil, format: format, failure: nil
+        ) == "on, tap=48000Hz/1ch"
     )
     // Already on before the session asked — a different story, and one a
     // device log needs to be able to tell apart from the line above.
     #expect(
-        LiveAudioEngine.voiceProcessingReport(isOn: true, wasAlreadyOn: true, format: format, failure: nil)
-            == "on, alreadyOn, tap=48000Hz/1ch"
+        LiveAudioEngine.voiceProcessingReport(
+            requested: true, isOn: true, wasAlreadyOn: true, skipReason: nil, format: format, failure: nil
+        ) == "on, alreadyOn, tap=48000Hz/1ch"
     )
     // The silent no-op: the call was clean and the unit is off anyway.
     #expect(
-        LiveAudioEngine.voiceProcessingReport(isOn: false, wasAlreadyOn: false, format: format, failure: nil)
-            == "off, tap=48000Hz/1ch"
+        LiveAudioEngine.voiceProcessingReport(
+            requested: true, isOn: false, wasAlreadyOn: false, skipReason: nil, format: format, failure: nil
+        ) == "off, tap=48000Hz/1ch"
     )
     // A refusal says so instead of reporting a state it does not have.
     #expect(
-        LiveAudioEngine.voiceProcessingReport(isOn: false, wasAlreadyOn: false, format: format, failure: "boom")
-            == "unavailable: boom"
+        LiveAudioEngine.voiceProcessingReport(
+            requested: true, isOn: false, wasAlreadyOn: false, skipReason: nil, format: format, failure: "boom"
+        ) == "unavailable: boom"
+    )
+}
+
+/// The one line that must never read as a plain `off`.
+///
+/// When the session asked for the unit and this path could not toggle it, the
+/// node being off is not the same fact as the flag being off. Reported as
+/// `off` it is byte-identical to a build with the flag off — and the device
+/// procedure's rule is "not `on`, don't judge yet", which would send the tester
+/// off to patch `firstWave` and rebuild while the real cause was a running
+/// engine. The A/B would quietly become "AEC off vs AEC off".
+@available(iOS 17, macOS 14, *)
+@Test func voiceProcessingReportDistinguishesAskedAndSkippedFromSimplyOff() throws {
+    let format = try #require(makeDiscreteFormat(channels: 1))
+
+    let skipped = LiveAudioEngine.voiceProcessingReport(
+        requested: true,
+        isOn: false,
+        wasAlreadyOn: false,
+        skipReason: "engine already running",
+        format: format,
+        failure: nil
+    )
+    #expect(skipped.contains("requested-but-not-applied"))
+    #expect(skipped.contains("engine already running"))
+
+    // The flag simply being off is the other state, and stays terse.
+    #expect(
+        LiveAudioEngine.voiceProcessingReport(
+            requested: false, isOn: false, wasAlreadyOn: false, skipReason: nil, format: format, failure: nil
+        ) == "off, tap=48000Hz/1ch"
+    )
+    // Skipping is only worth shouting about when it left the unit off. Had it
+    // already been on, the skip cost nothing and `alreadyOn` is the story.
+    #expect(
+        LiveAudioEngine.voiceProcessingReport(
+            requested: true, isOn: true, wasAlreadyOn: true, skipReason: "route change", format: format, failure: nil
+        ) == "on, alreadyOn, tap=48000Hz/1ch"
     )
 }
 
@@ -930,10 +1026,6 @@ final class VoiceProcessingRecorder: @unchecked Sendable {
 
     func refuseNextCall() {
         queue.sync { refuses = true }
-    }
-
-    func reportNotEnabled() {
-        queue.sync { reportsEnabled = false }
     }
 
     func record(_ inputNode: AVAudioInputNode) throws -> Bool {

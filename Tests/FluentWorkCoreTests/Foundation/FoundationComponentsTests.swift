@@ -429,3 +429,22 @@ import TGReduxKitTesting
     #expect(domain.isEnabled(.dailyRead))
     #expect(!domain.isEnabled(.voiceVadAuto))
 }
+
+/// Engine-level voice processing ships **off** until a device run says
+/// otherwise (`ios docs/62` T4), and the switch that decides that is one hand
+/// edit to `firstWave` plus a line of instructions in the manual.
+///
+/// That is a revert someone has to remember. This is the reminder: T4's
+/// procedure is "add it to `firstWave`, rebuild" — and if the add is never
+/// undone, an engine change whose own header says 未真机验证 goes out to every
+/// user by default. Failing here is the intended outcome of forgetting.
+///
+/// When T4 passes, delete this test in the same commit that adds the flag —
+/// deliberately, not accidentally.
+@Test func voiceProcessingIsNotOnByDefaultUntilDeviceVerified() {
+    #expect(
+        !FeatureFlagSnapshot.firstWave.isEnabled(.voiceProcessing),
+        "engine-level AEC is device-unverified; T4 must pass before this becomes the default"
+    )
+    #expect(!FeatureFlagSnapshot.firstWave.isEnabled(.voiceVadAuto))
+}

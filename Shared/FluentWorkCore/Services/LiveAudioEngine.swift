@@ -163,12 +163,12 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// stopped — and `startCapture()` is what starts it. Same shape as
     /// `speechBoundaryMode`.
     private var voiceProcessingRequested = false
-    /// Whether voice processing actually took effect on the current graph.
+    /// What voice processing is doing on the current graph.
     ///
-    /// Deliberately separate from the request. A device that refuses voice
-    /// processing still captures, just without AEC, and the difference has to
-    /// be visible somewhere or a bad echo-cancellation result cannot be told
-    /// apart from a switch that never came on.
+    /// Read back from the node, never inferred from the request, and stored
+    /// only so `reconfigureForRouteChange` can tell whether a route change
+    /// actually moved it — the report carries the value to the log, so nothing
+    /// else reads it.
     private var voiceProcessingActive = false
     private let clock = ContinuousClock()
 
@@ -308,21 +308,15 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // `startPlaybackIfNeeded()`, and a retry of `startCapture()` then finds
         // it already running. Toggling voice processing there raises rather
         // than returning an error — the F12–F16 class — so it is not attempted.
-        let preparation = try prepareCaptureNode(inputNode, attemptEnable: !engine.isRunning)
+        let preparation = try prepareCaptureNode(
+            inputNode,
+            skipEnableReason: engine.isRunning ? "engine already running" : nil
+        )
         let inputFormat = preparation.format
-        voiceProcessingActive = preparation.voiceProcessingActive
         // Reported before the engine starts, so a session that dies during
         // `engine.start()` still leaves behind the one fact a device log needs:
         // whether AEC was even on. See `AudioEngineEvent.voiceProcessing`.
         continuation.yield(.voiceProcessing(preparation.report))
-
-        // Install tap BEFORE startCapture calls engine.start(). The tap must
-        // be in place when the engine comes online, otherwise the first audio
-        // buffers are lost and the speaking-room UI never sees `.speechStarted`.
-        let hadInstalledTap = hasInstalledTap
-        if hadInstalledTap {
-            inputNode.removeTap(onBus: 0)
-        }
 
         // Guarded rather than assigned blind. `AVAudioConverter(from:to:)`
         // returns an Optional and the old line stored it unchecked: a converter
@@ -332,20 +326,28 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // voice-processing unit changed underneath us would have landed exactly
         // there, which is why the format chain and the engine-level switch were
         // never separable.
+        //
+        // Built *before* the old tap is torn down. Removing the tap is
+        // irreversible in this window and `hasInstalledTap` is what two other
+        // paths act on: throwing between the two used to leave the flag
+        // claiming a tap that no longer existed, after which a route change
+        // would reinstall into a dead session and `stopCapture()` would remove
+        // a tap that was not there. `reconfigureForRouteChange` already had the
+        // right order; this is the same order.
         guard let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat) else {
             throw AudioEngineError.invalidFormat(
                 "Could not convert \(Self.describe(inputFormat)) to \(Self.describe(Self.targetFormat)). Check microphone permission or device audio input."
             )
         }
         Self.applyCaptureChannelMap(converter, from: inputFormat)
-        self.sourceFormat = inputFormat
-        self.converter = converter
-        // Rebuild from the configured mode, not from the initializer defaults.
-        // A bare `AudioSpeechActivityTracker()` here silently reinstated the
-        // auto-VAD configuration for every session.
-        self.speechTracker = .forMode(speechBoundaryMode)
-        self.playbackGate.reset()
-        self.hasInstalledTap = false
+
+        // Install tap BEFORE startCapture calls engine.start(). The tap must
+        // be in place when the engine comes online, otherwise the first audio
+        // buffers are lost and the speaking-room UI never sees `.speechStarted`.
+        if hasInstalledTap {
+            inputNode.removeTap(onBus: 0)
+            hasInstalledTap = false
+        }
 
         // Wrapped, and this one is not speculative. `installTap` is the
         // documented abort site for engine-level voice processing: the reported
@@ -370,7 +372,16 @@ public actor LiveAudioEngine: AudioEngineProtocol {
                 "Could not tap \(Self.describe(inputFormat)) (voiceProcessing=\(preparation.voiceProcessingActive)): \(installRaised?.localizedDescription ?? "unknown"). Check microphone permission or device audio input."
             )
         }
+
+        // Committed together, and only once there is a tap to use them.
         hasInstalledTap = true
+        self.sourceFormat = inputFormat
+        self.converter = converter
+        // Rebuild from the configured mode, not from the initializer defaults.
+        // A bare `AudioSpeechActivityTracker()` here silently reinstated the
+        // auto-VAD configuration for every session.
+        self.speechTracker = .forMode(speechBoundaryMode)
+        self.playbackGate.reset()
 
         // Build the WHOLE graph before the engine starts — including the
         // playback node.
@@ -432,25 +443,38 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
         let inputNode = engine.inputNode
 
-        // A route change can drop voice processing — the unit follows the
-        // device pair, and this is the event that announces the pair changed.
-        // Re-applying it is only legal while the engine is stopped, and this
-        // path routinely runs with it still running, so the toggle is gated.
+        // This path **never toggles** voice processing, and says so rather than
+        // leaving it to the engine's run state.
         //
-        // The formats are resolved either way, and they have to be: a tap
-        // rebuilt against a format that no longer matches the node is the same
-        // silent-death shape `prepareCaptureNode` documents, and a route change
-        // is the other moment the format genuinely moves.
-        guard let preparation = try? prepareCaptureNode(
-            inputNode,
-            attemptEnable: !engine.isRunning
-        ) else {
+        // Toggling here would be wrong twice over. It requires stopping the
+        // engine, which throws away the assistant's in-flight playback mid-
+        // reply — a route change is not worth cutting the sentence the user is
+        // owed. And the toggle would land while the previous tap is still
+        // installed on bus 0, changing the node's produced format underneath a
+        // tap that describes the old one.
+        //
+        // Nothing is lost by not toggling: the state is *read back* either way,
+        // so a unit the route change dropped yields the raw format and a unit
+        // that survived yields the processed one. Both are consistent.
+        guard let preparation = try? prepareCaptureNode(inputNode, skipEnableReason: "route change") else {
             // No usable format after the route change. Keep the existing graph
             // and let the interruption observer surface the failure — killing
             // the session on a headset unplug is worse than a stale chain.
             return
         }
         let inputFormat = preparation.format
+
+        // Rebuild only when the node's stream actually moved.
+        //
+        // A route change that leaves the format and the unit state alone — the
+        // common case for a plug/unplug of the same headset — used to tear the
+        // tap down and reinstall it regardless, dropping whatever audio was
+        // buffered mid-turn and emitting a telemetry line per event.
+        guard sourceFormat?.isEqual(inputFormat) != true
+            || voiceProcessingActive != preparation.voiceProcessingActive
+        else {
+            return
+        }
 
         // Built before anything is torn down, so a converter that will not
         // build leaves the working chain in place instead of swapping in a
@@ -462,21 +486,32 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         }
         Self.applyCaptureChannelMap(replacement, from: inputFormat)
 
-        voiceProcessingActive = preparation.voiceProcessingActive
-        continuation.yield(.voiceProcessing(preparation.report))
-
+        // Wrapped for the same reason `startCapture`'s install is: this is the
+        // documented abort site, and this path is the one that runs while a
+        // session is live and a real device pair changes underneath it.
         inputNode.removeTap(onBus: 0)
         hasInstalledTap = false
+        var installRaised: NSError?
+        let installed = FWTryCatch({
+            inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak self] buffer, _ in
+                guard let self else { return }
+                Task {
+                    await self.processInput(buffer)
+                }
+            }
+        }, &installRaised)
+        guard installed else {
+            // No tap, and `hasInstalledTap` already says so — the session keeps
+            // running silent rather than taking the process down with it.
+            continuation.yield(.failed("could not reinstall the capture tap after a route change: \(installRaised?.localizedDescription ?? "unknown")"))
+            return
+        }
+
+        hasInstalledTap = true
         sourceFormat = inputFormat
         converter = replacement
-
-        inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-            Task {
-                await self.processInput(buffer)
-            }
-        }
-        hasInstalledTap = true
+        voiceProcessingActive = preparation.voiceProcessingActive
+        continuation.yield(.voiceProcessing(preparation.report))
 
         if !engine.isRunning {
             try? engine.start()
@@ -806,7 +841,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     ///   node is producing right now.
     private func prepareCaptureNode(
         _ inputNode: AVAudioInputNode,
-        attemptEnable: Bool
+        skipEnableReason: String?
     ) throws -> CapturePreparation {
         // The node is asked what it is doing, not what was asked of it. The
         // unit engages on both I/O nodes at once and can already be on from an
@@ -816,7 +851,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         var isOn = wasAlreadyOn
         var enableFailure: String?
 
-        if voiceProcessingRequested, attemptEnable, !wasAlreadyOn {
+        if voiceProcessingRequested, skipEnableReason == nil, !wasAlreadyOn {
             do {
                 isOn = try applyVoiceProcessing(inputNode)
             } catch {
@@ -850,8 +885,10 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             format: format,
             voiceProcessingActive: isOn,
             report: Self.voiceProcessingReport(
+                requested: voiceProcessingRequested,
                 isOn: isOn,
                 wasAlreadyOn: wasAlreadyOn,
+                skipReason: skipEnableReason,
                 format: format,
                 failure: enableFailure
             )
@@ -867,15 +904,30 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// I/O nodes and survives between sessions, so "it was on before we asked"
     /// is a different story from "we turned it on".
     nonisolated static func voiceProcessingReport(
+        requested: Bool,
         isOn: Bool,
         wasAlreadyOn: Bool,
+        skipReason: String?,
         format: AVAudioFormat,
         failure: String?
     ) -> String {
         if let failure { return "unavailable: \(failure)" }
-        let state = isOn ? "on" : "off"
-        let origin = isOn && wasAlreadyOn ? ", alreadyOn" : ""
-        return "\(state)\(origin), tap=\(Self.describe(format))"
+
+        let state: String
+        if isOn {
+            state = wasAlreadyOn ? "on, alreadyOn" : "on"
+        } else if requested, let skipReason {
+            // The one state that must never read as a plain `off`. The session
+            // asked for the unit, this code path could not toggle it, and it is
+            // off — reported as `off` it is byte-identical to a build where the
+            // flag is off, and the device procedure's rule ("not `on`, don't
+            // judge yet") would send the tester off to patch `firstWave` and
+            // rebuild while the real cause was a running engine.
+            state = "off, requested-but-not-applied (\(skipReason))"
+        } else {
+            state = "off"
+        }
+        return "\(state), tap=\(Self.describe(format))"
     }
 
     /// Chooses the format the capture tap is installed with.
@@ -885,16 +937,26 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// depends on. With voice processing the stream the tap receives is the
     /// node's *output* format, not its input format: the unit sits between them.
     ///
-    /// Falls back to the raw input format whenever the processed one is missing
-    /// or unusable, so a device that half-supports the feature degrades to the
-    /// old chain instead of throwing.
+    /// With the unit engaged there is no fallback, and that is deliberate.
+    ///
+    /// The obvious `?? usable(input)` is wrong: while the unit is on the node
+    /// produces the *processed* stream, so the raw input format describes a
+    /// stream that is no longer there. Tapping it is a format mismatch, and a
+    /// format mismatch at the tap is the documented abort site for this very
+    /// feature — so the "safe" fallback re-admits the crash it was written to
+    /// avoid. Worse, the report would still say `on`, because the unit really
+    /// is on; a dead chain would be logged as a healthy one.
+    ///
+    /// Returning `nil` hands that to the caller, which refuses the session with
+    /// both formats in the message. A half-supporting device fails loudly on
+    /// the first session instead of running deaf.
     nonisolated static func captureFormat(
         input: AVAudioFormat?,
         processedOutput: AVAudioFormat?,
         voiceProcessingActive: Bool
     ) -> AVAudioFormat? {
         guard voiceProcessingActive else { return usable(input) }
-        return usable(processedOutput) ?? usable(input)
+        return usable(processedOutput)
     }
 
     nonisolated private static func usable(_ format: AVAudioFormat?) -> AVAudioFormat? {
@@ -995,15 +1057,6 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         engine.isRunning
     }
 
-    /// Test-only hook reporting what the last graph build resolved to.
-    ///
-    /// Read through the same field `startCapture` and
-    /// `reconfigureForRouteChange` write, because the question worth asking is
-    /// not "did the setter store the value" — it is whether the request became
-    /// a live voice-processing unit, and those are two different facts.
-    func _testVoiceProcessingActive() -> Bool {
-        voiceProcessingActive
-    }
 
     /// Test-only hook exercising `convertToPCM16` for the supplied input
     /// buffer + input format. Production callers should keep using
@@ -1015,6 +1068,12 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         guard let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat) else {
             return nil
         }
+        // The map production applies, applied here too. Without it this hook
+        // models a chain that no longer exists: for a multi-channel source the
+        // default mapping is silence (see `applyCaptureChannelMap`), so a hook
+        // that skips it would report "the tap chain works" for input that
+        // production turns into an empty uplink.
+        Self.applyCaptureChannelMap(converter, from: inputFormat)
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * (Self.targetFormat.sampleRate / max(inputFormat.sampleRate, 1))) + 16
         guard let output = AVAudioPCMBuffer(pcmFormat: Self.targetFormat, frameCapacity: capacity) else {
             return nil

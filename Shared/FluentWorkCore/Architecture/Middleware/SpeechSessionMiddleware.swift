@@ -936,6 +936,25 @@ private func interpretSpeechSessionSideEffect(
                         message = "无法访问麦克风，请在系统设置中允许 FluentWork 使用麦克风。"
                     }
                     return .speakingRoom(.session(.failed(message)))
+                } catch let error as AudioEngineError {
+                    // Logged in full, then shown generically.
+                    //
+                    // `AudioEngineError` is not `LocalizedError`, so
+                    // `localizedDescription` is the synthesized "The operation
+                    // couldn't be completed. (FluentWorkCore.AudioEngineError
+                    // error 0.)" — which means the format facts the new guards
+                    // were written to carry reach nobody at all. Writing
+                    // Chinese copy for them is a product decision (see
+                    // `ios docs/63` §5); getting them into the log is not, and
+                    // a device run that dies at a format guard is unreadable
+                    // without them.
+                    let detail: String
+                    switch error {
+                    case let .invalidFormat(message), let .audioSessionConflict(message):
+                        detail = message
+                    }
+                    timings.mark(event: "audio_engine_failed", properties: ["detail": detail])
+                    return .speakingRoom(.session(.failed(error.localizedDescription)))
                 } catch {
                     return .speakingRoom(.session(.failed(error.localizedDescription)))
                 }
