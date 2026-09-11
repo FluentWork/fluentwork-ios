@@ -14,7 +14,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		2A2398228915080B3CDF244E /* FluentWorkHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FluentWorkHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		2A2398228915080B3CDF244E /* FluentWorkHost.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = FluentWorkHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5D05B54570125A8DB4C40B98 /* fluentwork-ios */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "fluentwork-ios"; path = .; sourceTree = SOURCE_ROOT; };
 		6A84B0BE190F8DF585A3FDAD /* HostRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostRootView.swift; sourceTree = "<group>"; };
 		6F43D1C05162D9A9E8FCBF2F /* FluentWorkHostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluentWorkHostApp.swift; sourceTree = "<group>"; };
@@ -108,6 +108,7 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					DC4DAE9F387FD39D481DB128 = {
+						DevelopmentTeam = UKXWZ3FS84;
 						ProvisioningStyle = Automatic;
 					};
 				};

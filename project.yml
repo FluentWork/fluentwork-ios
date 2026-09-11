@@ -32,6 +32,13 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.fluentwork.host
         PRODUCT_NAME: $(TARGET_NAME)
+        # Declared here, not only in the generated project.
+        #
+        # It used to live only in `project.pbxproj`, which is a *generated*
+        # file — so the next `xcodegen generate` silently dropped it and the
+        # next device build failed to sign. A setting that device testing
+        # depends on cannot live only in an artifact that gets regenerated.
+        DEVELOPMENT_TEAM: UKXWZ3FS84
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
