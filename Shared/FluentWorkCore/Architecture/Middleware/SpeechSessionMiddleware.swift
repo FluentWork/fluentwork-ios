@@ -754,10 +754,15 @@ private func transportEventPump(
                             "text": text,
                         ]
                     )
-                    timings.mark(
-                        event: "server_asr_received",
+                    // Anchored on the turn, not on the previous mark: the
+                    // question this line exists to answer is "how long after
+                    // the user stopped talking did their own words appear",
+                    // and the chain of marks in between is not something a
+                    // reader should have to sum.
+                    timings.markTurnAnchored(
+                        "server_asr_received",
+                        turnID: turnID,
                         properties: [
-                            "turn_id": turnID ?? "nil",
                             "text_bytes": String(text.utf8.count),
                         ]
                     )

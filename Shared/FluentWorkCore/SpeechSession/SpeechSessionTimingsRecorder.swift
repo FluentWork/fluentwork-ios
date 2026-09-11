@@ -137,6 +137,56 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
         tracker.track(event: "timing_\(event)", properties: props)
     }
 
+    /// Records a milestone whose headline number is measured from the **turn's
+    /// start** — the user's last word — rather than from the previous mark.
+    ///
+    /// `mark` reports `delta_ms` as "time since whatever was marked last",
+    /// which is what a pipeline chain wants and the wrong thing for the
+    /// question people actually ask of a turn: *how long until X happened?*
+    /// That span crosses an unknown number of intermediate marks, so summing
+    /// deltas means knowing the chain — and the chain changes whenever anyone
+    /// adds a mark. `markFirstResponse` already anchors on the turn for exactly
+    /// this reason; this is the same anchor, for every other per-turn moment,
+    /// so a new one costs a call rather than a new recorder method and a new
+    /// per-event key name to remember.
+    ///
+    /// Emits `timing_<event>` with `since_turn_start_ms` alongside the usual
+    /// `total_ms` / `prev_event`. An unresolvable turn id reports
+    /// `since_turn_start_ms=missing` rather than `0` — a turn with no anchor is
+    /// a bug worth seeing, and `0` reads as a suspiciously perfect latency.
+    public func markTurnAnchored(
+        _ event: String,
+        turnID: String?,
+        properties: [String: String] = [:]
+    ) {
+        let now = clock()
+        let snapshot = storage.withLock {
+            state -> (resolved: String?, sinceStartMs: Double?, totalMs: Double?, prev: String?, logID: String?) in
+            let resolved = turnID ?? state.latestTurnID
+            let sinceStart = resolved.flatMap { state.turnStartTimes[$0] }
+                .map { now.timeIntervalSince($0) * 1000 }
+            let total = state.startTime.map { now.timeIntervalSince($0) * 1000 }
+            let prev = state.lastEvent
+            let logID = state.vendorLogID
+            state.lastMarkTime = now
+            state.lastEvent = event
+            return (resolved, sinceStart, total, prev, logID)
+        }
+
+        var props = properties
+        props["turn_id"] = snapshot.resolved ?? "nil"
+        props["since_turn_start_ms"] = snapshot.sinceStartMs.map(Self.format) ?? "missing"
+        if let totalMs = snapshot.totalMs {
+            props["total_ms"] = Self.format(totalMs)
+        }
+        props["prev_event"] = snapshot.prev ?? "none"
+        if let logID = snapshot.logID {
+            props["log_id"] = logID
+        }
+
+        tracker.track(event: "timing_\(event)", properties: props)
+    }
+
     /// Anchors the start of a turn so we can later emit a per-turn `turn_duration_ms`
     /// when the matching `markTurnEnded` runs. Kept separate from `mark` so the
     /// audio-loop and middleware writers don't have to share a single

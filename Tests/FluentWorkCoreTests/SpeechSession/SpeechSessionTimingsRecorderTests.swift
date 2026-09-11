@@ -194,6 +194,70 @@ private final class SteppableClock: @unchecked Sendable {
     }
 }
 
+/// A turn-anchored mark answers "how long after the user stopped talking",
+/// which is the question a reader has — and it answers it even when other marks
+/// landed in between.
+///
+/// This is the whole reason the anchored variant exists. `mark` reports
+/// `delta_ms` from the *previous* mark, so a reader asking "how long until the
+/// user saw their own words" would have to know and sum the chain between the
+/// turn boundary and the transcript — and that chain changes whenever anyone
+/// adds a mark anywhere. Here an unrelated mark is inserted between the anchor
+/// and the measurement precisely to prove it does not matter.
+@Test func turnAnchoredMarkMeasuresFromTheTurnNotFromThePreviousMark() {
+    let tracker = CapturingTracker()
+    let clock = SteppableClock(Date(timeIntervalSince1970: 1_000))
+    let recorder = SpeechSessionTimingsRecorder(tracker: tracker, clock: { clock.now })
+    recorder.reset()
+    recorder.markTurnStarted("turn-1")
+    clock.advance(seconds: 0.60)
+
+    // Someone else's milestone, on the same chain.
+    recorder.mark(event: "playback_stop")
+    clock.advance(seconds: 0.40)
+
+    recorder.markTurnAnchored("server_asr_received", turnID: "turn-1")
+
+    let asr = tracker.events.first { $0.name == "timing_server_asr_received" }
+    #expect(
+        asr?.properties["since_turn_start_ms"] == "1000.000",
+        "the number is the distance from the user's last word, not from playback_stop"
+    )
+    // The chain column is still there for anyone who wants the hop itself.
+    #expect(asr?.properties["prev_event"] == "playback_stop")
+}
+
+/// An unresolvable anchor says so instead of reporting `0`, which would read as
+/// a suspiciously perfect latency rather than as a missing marker.
+@Test func turnAnchoredMarkReportsAMissingAnchorRatherThanZero() {
+    let tracker = CapturingTracker()
+    let clock = SteppableClock(Date(timeIntervalSince1970: 1_000))
+    let recorder = SpeechSessionTimingsRecorder(tracker: tracker, clock: { clock.now })
+    recorder.reset()
+
+    recorder.markTurnAnchored("server_asr_received", turnID: "never-started")
+
+    let asr = tracker.events.first { $0.name == "timing_server_asr_received" }
+    #expect(asr?.properties["since_turn_start_ms"] == "missing")
+}
+
+/// The audio path has no turn id to offer, so a `nil` resolves to the turn most
+/// recently started — the same rule `markFirstResponse` uses.
+@Test func turnAnchoredMarkResolvesToTheLatestTurnWhenGivenNoID() {
+    let tracker = CapturingTracker()
+    let clock = SteppableClock(Date(timeIntervalSince1970: 1_000))
+    let recorder = SpeechSessionTimingsRecorder(tracker: tracker, clock: { clock.now })
+    recorder.reset()
+    recorder.markTurnStarted("turn-9")
+    clock.advance(seconds: 1.5)
+
+    recorder.markTurnAnchored("server_asr_received", turnID: nil)
+
+    let asr = tracker.events.first { $0.name == "timing_server_asr_received" }
+    #expect(asr?.properties["turn_id"] == "turn-9")
+    #expect(asr?.properties["since_turn_start_ms"] == "1500.000")
+}
+
 /// A streaming reply announces itself once per frame. Only the first one is the
 /// assistant *starting* to answer — counting the rest would turn "how long until
 /// the AI spoke" into "how long until it finished".
