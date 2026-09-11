@@ -27,6 +27,23 @@ public enum AudioEngineEvent: Equatable, Sendable {
     /// a failed device run cannot distinguish "AEC is not good enough" from
     /// "AEC was never enabled" — and only the second one is a bug.
     case voiceProcessing(String)
+    /// How the utterance that just ended was closed, and what the endpointing
+    /// looked like. Informational — the session proceeds either way.
+    ///
+    /// It exists because the hold that ends a turn is a **guess** about how
+    /// long a speaker pauses before finishing a sentence, and nothing ever
+    /// measured it. Raising the guess would only trade one guess for another.
+    ///
+    /// `trailingSilenceMs` is the number that decides: how long the room waited
+    /// after the last sound before submitting. When it lands on the hold, the
+    /// hold is what closed the turn — which is the case where someone pausing
+    /// to think is cut off mid-sentence.
+    ///
+    /// Both numbers are optional so "not measured" and "measured as zero" stay
+    /// distinguishable: a turn closed by a tap has no trailing silence to
+    /// report, and reporting `0` would read as "stopped and finished instantly",
+    /// which is a real and different case.
+    case speechEndpointed(reason: String, windowMs: Int?, trailingSilenceMs: Int?)
     case failed(String)
 }
 

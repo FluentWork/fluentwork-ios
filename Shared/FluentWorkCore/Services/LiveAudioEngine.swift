@@ -30,6 +30,37 @@ struct AudioSpeechActivityTracker: Sendable {
 
     private(set) var isSpeechActive = false
     private(set) var lastSpeechAt: ContinuousClock.Instant?
+
+    /// When the current utterance opened, and the shape of the one that just
+    /// closed.
+    ///
+    /// The endpointing hold is a guess about how long a speaker pauses before
+    /// finishing a sentence. Nothing measured it, so raising it would only
+    /// trade one guess for another — this is the number that decides.
+    ///
+    /// `trailingSilence` is the one that matters: it is how long the room
+    /// waited after the last sound before submitting. When it lands on the
+    /// hold, the hold is what closed the turn — which is the case where a
+    /// learner pausing to think gets cut off mid-sentence.
+    private(set) var lastEndpoint: Endpoint?
+
+    struct Endpoint: Equatable, Sendable {
+        /// `manual` — the user pressed 说完了. `silenceHold` — the room decided.
+        /// Only the second can cut someone off mid-sentence.
+        enum Reason: String, Equatable, Sendable {
+            case manual
+            case silenceHold
+        }
+
+        let reason: Reason
+        /// Last detected speech → close. The number the hold is measured
+        /// against.
+        ///
+        /// `nil` on a tap, which has no trailing silence to measure — `nil`
+        /// rather than zero, because a zero here reads as "the user stopped
+        /// and immediately finished", which is a real and different case.
+        let trailingSilence: Duration?
+    }
     let speechThreshold: Float
     var silenceHold: Duration
     /// When false an utterance can only begin via `forceStart()`; energy is
@@ -61,10 +92,12 @@ struct AudioSpeechActivityTracker: Sendable {
         // followed by silence never submits an empty turn — it falls through to
         // the 60s recording abort instead.
         guard isSpeechActive, let lastSpeechAt else { return nil }
-        guard now - lastSpeechAt >= silenceHold else { return nil }
+        let trailing = now - lastSpeechAt
+        guard trailing >= silenceHold else { return nil }
 
         isSpeechActive = false
         self.lastSpeechAt = nil
+        lastEndpoint = Endpoint(reason: .silenceHold, trailingSilence: trailing)
         return .speechEnded
     }
 
@@ -78,6 +111,7 @@ struct AudioSpeechActivityTracker: Sendable {
     mutating func forceEnd() -> AudioEngineEvent? {
         guard isSpeechActive else { return nil }
         discard()
+        lastEndpoint = Endpoint(reason: .manual, trailingSilence: nil)
         return .speechEnded
     }
 
@@ -154,6 +188,10 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     private var sourceFormat: AVAudioFormat?
     private var hasInstalledTap = false
     private var speechTracker = AudioSpeechActivityTracker.forMode(.manual)
+    /// When the current utterance opened, so its length can be reported
+    /// alongside how it closed. The tracker cannot hold this itself: it has no
+    /// clock — every timestamp it uses is handed in by the caller.
+    private var speechStartedAt: ContinuousClock.Instant?
     private var playbackGate = AudioPlaybackGate()
     private var speechBoundaryMode: SpeechBoundaryMode = .manual
     /// Whether the session asked for engine-level voice processing (AEC).
@@ -543,7 +581,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         }
 
         if let emitted = speechTracker.reset() {
-            continuation.yield(emitted)
+            yieldSpeechBoundary(emitted)
         }
         playbackGate.reset()
         lastInterruptRequestedAt = nil
@@ -712,13 +750,13 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
     public func beginManualSpeech() async {
         if let emitted = speechTracker.forceStart() {
-            continuation.yield(emitted)
+            yieldSpeechBoundary(emitted)
         }
     }
 
     public func endManualSpeech() async {
         if let emitted = speechTracker.forceEnd() {
-            continuation.yield(emitted)
+            yieldSpeechBoundary(emitted)
         }
     }
 
@@ -788,6 +826,39 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         }
     }
 
+    /// Yields a speech-boundary event, and attaches the endpointing facts when
+    /// it closes an utterance.
+    ///
+    /// Kept in one place so every path that opens or closes a turn — energy,
+    /// the tap, and `stopCapture`'s reset — is measured the same way. A path
+    /// that emitted its boundary directly would silently contribute nothing to
+    /// the distribution, and the missing data would look like a quiet week.
+    private func yieldSpeechBoundary(_ event: AudioEngineEvent) {
+        switch event {
+        case .speechStarted:
+            speechStartedAt = clock.now
+            continuation.yield(event)
+
+        case .speechEnded:
+            let now = clock.now
+            let facts = speechTracker.lastEndpoint
+            continuation.yield(.speechEndpointed(
+                reason: facts?.reason.rawValue ?? "unknown",
+                windowMs: speechStartedAt.map { Self.milliseconds($0.duration(to: now)) },
+                trailingSilenceMs: facts?.trailingSilence.map(Self.milliseconds)
+            ))
+            speechStartedAt = nil
+            continuation.yield(event)
+
+        default:
+            continuation.yield(event)
+        }
+    }
+
+    private static func milliseconds(_ duration: Duration) -> Int {
+        Int((duration / .milliseconds(1)).rounded())
+    }
+
     private func updateSpeechState(using pcm: Data) {
         // `.manual` decides both ends with taps, so energy is not consulted at
         // all. The other modes let energy close the utterance; only `.autoVAD`
@@ -797,7 +868,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         let now = clock.now
 
         if let emitted = speechTracker.register(energy: energy, at: now) {
-            continuation.yield(emitted)
+            yieldSpeechBoundary(emitted)
         }
     }
 

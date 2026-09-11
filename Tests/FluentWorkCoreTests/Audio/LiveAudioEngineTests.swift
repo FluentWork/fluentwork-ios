@@ -227,6 +227,34 @@ import Testing
     #expect(ended == .speechEnded)
 }
 
+/// Every path that closes an utterance has to report how it closed — a path
+/// that emitted its boundary directly would contribute nothing to the
+/// distribution, and the missing data would look like a quiet week rather than
+/// like a bug.
+///
+/// This is the tap path, which is reachable hermetically; the energy path uses
+/// the same `yieldSpeechBoundary`, and the tracker half is pinned separately in
+/// `FoundationComponentsTests`.
+@available(iOS 17, macOS 14, *)
+@Test func endingAManualTurnReportsHowItClosed() async {
+    let engine = LiveAudioEngine(decoder: RawPCM16FrameDecoder())
+    let stream = engine.events()
+
+    await engine.beginManualSpeech()
+    await engine.endManualSpeech()
+
+    let endpointed = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        if case .speechEndpointed = event { return event } else { return nil }
+    }
+    guard case let .speechEndpointed(reason, windowMs, trailingSilenceMs) = endpointed else {
+        Issue.record("expected a .speechEndpointed, got \(String(describing: endpointed))")
+        return
+    }
+    #expect(reason == "manual")
+    #expect(trailingSilenceMs == nil, "a tap has no trailing silence — and nil is not zero")
+    #expect(windowMs != nil, "the window is measured by the engine, which is the only party holding a clock")
+}
+
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineManualSpeechStartIsIdempotent() async {
     let engine = LiveAudioEngine(

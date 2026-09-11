@@ -100,6 +100,50 @@ import TGReduxKitTesting
     )
 }
 
+/// The endpointing hold can only be argued about until the number that decides
+/// it is measured: how long the room waited after the last sound before
+/// submitting. This pins the measurement itself.
+@available(iOS 17, macOS 14, *)
+@Test func speechTrackerReportsTheSilenceThatClosedTheTurn() {
+    // A short hold, so the numbers in the assertions are the shape of the
+    // measurement and not a coincidence of the shipped 8s.
+    var tracker = AudioSpeechActivityTracker(silenceHold: .milliseconds(200), autoStart: true)
+    let clock = ContinuousClock()
+    let start = clock.now
+
+    _ = tracker.register(energy: 0.02, at: start) // turn opens
+    _ = tracker.register(energy: 0.02, at: start + .milliseconds(600)) // last sound
+    // A pause short of the hold must not close it — and must not record
+    // anything, so a turn still in flight has no endpoint at all. It must also
+    // not move the reference point: this is silence, not sound.
+    _ = tracker.register(energy: 0.0, at: start + .milliseconds(700))
+    #expect(tracker.lastEndpoint == nil, "a turn still in flight has no endpoint")
+
+    // Closed at 900ms with the last sound at 600ms: the silence is 300ms while
+    // the hold is 200ms. Deliberately not equal — if the two coincided, a bug
+    // that recorded the *hold* instead of the measurement would pass.
+    #expect(tracker.register(energy: 0.0, at: start + .milliseconds(900)) == .speechEnded)
+    #expect(tracker.lastEndpoint?.reason == .silenceHold)
+    #expect(
+        tracker.lastEndpoint?.trailingSilence == .milliseconds(300),
+        "measured from the last sound (600ms) — not from the turn's start, not from the last silent sample, and not the hold itself"
+    )
+}
+
+/// A tap is the other way a turn ends, and it has no trailing silence to
+/// report. `nil` rather than zero: zero would read as "stopped and finished
+/// instantly", which is a real case and a different one — and telling them
+/// apart is the entire point of the measurement.
+@available(iOS 17, macOS 14, *)
+@Test func speechTrackerReportsNoTrailingSilenceWhenTheUserTappedDone() {
+    var tracker = AudioSpeechActivityTracker(autoStart: false)
+    _ = tracker.forceStart()
+    _ = tracker.forceEnd()
+
+    #expect(tracker.lastEndpoint?.reason == .manual)
+    #expect(tracker.lastEndpoint?.trailingSilence == nil)
+}
+
 /// The hold is a property of the mode, not a single global.
 @available(iOS 17, macOS 14, *)
 @Test func tapToStartSilenceHoldOutlastsAutoVADHold() {

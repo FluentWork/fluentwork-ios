@@ -465,6 +465,29 @@ private func audioEventPump(
                     timings.mark(event: "audio_route_changed", properties: ["reason": reason])
                     await audioEngine.reconfigureForRouteChange()
 
+                case let .speechEndpointed(reason, windowMs, trailingSilenceMs):
+                    // The distribution that decides the endpointing hold.
+                    //
+                    // `reason` separates the two ways a turn ends: the user
+                    // pressed 说完了, or the room's silence hold decided. Only
+                    // the second can cut someone off mid-sentence, and a
+                    // `trailingSilenceMs` that sits right on the hold says the
+                    // hold is what closed the turn. Without this the value can
+                    // only be argued about, never set.
+                    // Plain `mark`, not the turn-anchored one: this fires
+                    // *before* the turn starts (the engine emits it ahead of
+                    // `.speechEnded`, which is what calls `markTurnStarted`),
+                    // so an anchor here would measure from the previous turn.
+                    // The two numbers are self-contained anyway.
+                    timings.mark(
+                        event: "speech_endpointed",
+                        properties: [
+                            "reason": reason,
+                            "window_ms": windowMs.map(String.init) ?? "unknown",
+                            "trailing_silence_ms": trailingSilenceMs.map(String.init) ?? "unknown",
+                        ]
+                    )
+
                 case let .voiceProcessing(detail):
                     // Not a dispatch and not a failure: the session runs either
                     // way. It is recorded because echo cancellation can only be
