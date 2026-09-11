@@ -6,7 +6,8 @@ import Testing
     var state = SpeechSessionState(phase: .recording)
     let effects = SpeechSessionMachine.reduce(&state, event: .recordingTimedOut)
 
-    #expect(state.phase == .waitingForAIAnswer)
+    #expect(state.phase == .processing)
+    #expect(state.processingStage == .aiAnswer)
     #expect(effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: .timeout)))
     #expect(!effects.contains(.turnTimeoutExpired))
     #expect(!effects.contains(.endSession))

@@ -20,8 +20,6 @@ public enum SpeechSessionPhase: String, Equatable, Sendable, CaseIterable {
     /// phase made a backend timer into user-visible behaviour (F19) and made
     /// every phase-enumerating list a place to forget one (F20, F17).
     case processing
-    case waitingForAIAnswer
-    case waitingForEvaluation
     case degradedText
     case ended
     case failed
@@ -46,8 +44,6 @@ public enum SpeechSessionPhase: String, Equatable, Sendable, CaseIterable {
         case .waitingUser:             return "waiting_user"
         case .recording:               return "vad_capture"
         case .processing:              return "processing"
-        case .waitingForAIAnswer:      return "waiting_for_ai_answer"
-        case .waitingForEvaluation:    return "waiting_for_evaluation"
         case .degradedText:            return "text_fallback"
         case .ended:                   return "ended"
         case .failed:                  return "failed"
@@ -64,25 +60,13 @@ public enum SpeechSessionPhase: String, Equatable, Sendable, CaseIterable {
         case .idle, .ended, .failed:
             return false
         case .connecting, .aiSpeaking, .waitingUser, .recording,
-             .processing, .waitingForAIAnswer, .waitingForEvaluation, .degradedText:
+             .processing, .degradedText:
             return true
         }
     }
 
     /// True while the machine is processing the user's last turn.
     public var isProcessing: Bool { self == .processing }
-
-    /// In-flight AI turn cannot be recovered after the socket comes back.
-    /// PCM is not replayed; land in `.waitingUser`.
-    public var discardsTurnOnReconnect: Bool {
-        switch self {
-        case .processing, .aiSpeaking, .waitingForEvaluation:
-            return true
-        case .idle, .connecting, .waitingUser, .recording,
-             .waitingForAIAnswer, .degradedText, .ended, .failed:
-            return false
-        }
-    }
 }
 
 /// Where the **backend pipeline** is, while the phase is `.processing`.
@@ -99,10 +83,31 @@ public enum ProcessingStage: String, Equatable, Sendable, Codable, CaseIterable 
     case llm
     /// Review / scoring pass.
     case review
+    /// The turn is finished; the backend's scorer has not answered yet.
+    ///
+    /// Its own stage rather than its own phase because **it is a backend timer,
+    /// not a product state.** Giving it a phase is what let F19 hang a
+    /// `.stopPlayback` on the 20s budget and cut the tail off every reply
+    /// longer than that: the room looked like it had a state for "waiting for
+    /// the score", so the timer acquired user-visible behaviour.
+    case evaluation
+    /// I21: the recording was aborted, and its answer is still on the way.
+    ///
+    /// Same wait as every other entry into this phase — only the entrance
+    /// differs (`docs/29`).
+    case aiAnswer
 
     /// The cross-service log tag. Preserves the exact strings the merged
     /// phases used to emit, so backend log correlation is unchanged.
-    public var stageTag: String { rawValue }
+    public var stageTag: String {
+        switch self {
+        case .asr: return "asr"
+        case .llm: return "llm"
+        case .review: return "review"
+        case .evaluation: return "waiting_for_evaluation"
+        case .aiAnswer: return "waiting_for_ai_answer"
+        }
+    }
 }
 
 public struct SpeechSessionState: Equatable, Sendable {
@@ -139,6 +144,29 @@ public struct SpeechSessionState: Equatable, Sendable {
     /// the three merged phases produced, so backend correlation is unchanged.
     public var stageTag: String {
         processingStage?.stageTag ?? phase.stageTag
+    }
+
+    /// In-flight AI turn cannot be recovered after the socket comes back.
+    /// PCM is not replayed; land in `.waitingUser`.
+    ///
+    /// **Stage-aware, and that is the point.** This used to be a property of
+    /// the phase, which worked only while the two things it separates had
+    /// phases of their own: an evaluation wait discards the turn, an abort
+    /// landing pad (`aiAnswer`) does not — the user already abandoned that
+    /// turn, so there is nothing left to discard and dropping playback would
+    /// cut off an answer they are still owed. Merged into one phase, the
+    /// distinction has nowhere else to live.
+    public var discardsTurnOnReconnect: Bool {
+        switch phase {
+        case .aiSpeaking:
+            return true
+        case .processing:
+            // The pipeline stages and the evaluation wait belong to a turn
+            // that will not be replayed; `aiAnswer` is the abort landing pad.
+            return processingStage != .aiAnswer
+        case .idle, .connecting, .waitingUser, .recording, .degradedText, .ended, .failed:
+            return false
+        }
     }
 
     public init(

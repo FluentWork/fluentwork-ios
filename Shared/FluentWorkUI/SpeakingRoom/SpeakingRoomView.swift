@@ -105,8 +105,14 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
         switch phase {
         case .idle, .ended, .failed:
             return .startSession
-        case .waitingUser, .waitingForAIAnswer, .waitingForEvaluation, .aiSpeaking:
+        case .waitingUser, .aiSpeaking:
             return usesAutoVAD ? .none : .beginTurn
+        case .processing:
+            // Only the two wait stages accept a new turn. The pipeline stages
+            // are still working on the current one, so a tap there must not
+            // open a second turn on top of it.
+            let accepting = processingStage == .evaluation || processingStage == .aiAnswer
+            return (accepting && !usesAutoVAD) ? .beginTurn : .none
         default:
             return .none
         }
@@ -161,63 +167,82 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
                 primaryAction: .start(title: "开始说话", systemImage: "mic.circle.fill")
             )
         case .processing:
-            // One phase, three copies. An unknown stage falls back to the
-            // generic "working on it" rather than guessing which step it is.
-            let copy: (title: String, detail: String)
+            // One phase, five stages. The pipeline stages are "busy"; the two
+            // wait stages are not — the machine lets the user open the next
+            // turn from them, so a spinner there said both "busy" and "go".
             switch processingStage {
             case .asr:
-                copy = ("识别中", "正在识别你的语音。")
-            case .llm:
-                copy = ("思考中", "正在生成回复。")
-            case .review:
-                copy = ("生成评价中", "正在生成这一轮的评价。")
-            case nil:
-                copy = ("处理中", "正在处理这一轮。")
-            }
-            return .init(
-                title: copy.title,
-                detail: copy.detail,
-                accent: .neutral,
-                showsProgress: true,
-                primaryAction: nil
-            )
-        case .waitingForAIAnswer:
-            if usesAutoVAD {
                 return .init(
-                    title: "本轮已超时",
-                    detail: "直接开口开始下一轮。",
-                    accent: .warning,
-                    showsProgress: false,
+                    title: "识别中",
+                    detail: "正在识别你的语音。",
+                    accent: .neutral,
+                    showsProgress: true,
                     primaryAction: nil
                 )
-            }
-            return .init(
-                title: "本轮已超时",
-                detail: "录音超时已取消这一轮，点击开始说话继续。",
-                accent: .warning,
-                showsProgress: false,
-                primaryAction: .start(title: "开始说话", systemImage: "mic.circle.fill")
-            )
-        // Waiting for the badge is not a blocking state: the machine lets the
-        // user open the next turn from here, so showing a spinner *and* a start
-        // button said both "busy" and "go" at once.
-        case .waitingForEvaluation:
-            if usesAutoVAD {
+            case .llm:
+                return .init(
+                    title: "思考中",
+                    detail: "正在生成回复。",
+                    accent: .neutral,
+                    showsProgress: true,
+                    primaryAction: nil
+                )
+            case .review:
+                return .init(
+                    title: "生成评价中",
+                    detail: "正在生成这一轮的评价。",
+                    accent: .neutral,
+                    showsProgress: true,
+                    primaryAction: nil
+                )
+            case .evaluation:
+                if usesAutoVAD {
+                    return .init(
+                        title: "可以继续",
+                        detail: "这一轮的评价还在生成，也可以直接开口开始下一轮。",
+                        accent: .neutral,
+                        showsProgress: false,
+                        primaryAction: nil
+                    )
+                }
                 return .init(
                     title: "可以继续",
-                    detail: "这一轮的评价还在生成，也可以直接开口开始下一轮。",
+                    detail: "这一轮的评价还在生成，你也可以直接开始下一轮。",
                     accent: .neutral,
                     showsProgress: false,
+                    primaryAction: .start(title: "开始说话", systemImage: "mic.circle.fill")
+                )
+            case .aiAnswer:
+                // I21: the recording was aborted and its answer is still on the
+                // way, so this reads as "that turn timed out" rather than as
+                // "the system is working".
+                if usesAutoVAD {
+                    return .init(
+                        title: "本轮已超时",
+                        detail: "直接开口开始下一轮。",
+                        accent: .warning,
+                        showsProgress: false,
+                        primaryAction: nil
+                    )
+                }
+                return .init(
+                    title: "本轮已超时",
+                    detail: "录音超时已取消这一轮，点击开始说话继续。",
+                    accent: .warning,
+                    showsProgress: false,
+                    primaryAction: .start(title: "开始说话", systemImage: "mic.circle.fill")
+                )
+            case nil:
+                // Phase and stage drifted apart. Say nothing specific rather
+                // than pick a copy and be wrong about what is happening.
+                return .init(
+                    title: "处理中",
+                    detail: "正在处理这一轮。",
+                    accent: .neutral,
+                    showsProgress: true,
                     primaryAction: nil
                 )
             }
-            return .init(
-                title: "可以继续",
-                detail: "这一轮的评价还在生成，你也可以直接开始下一轮。",
-                accent: .neutral,
-                showsProgress: false,
-                primaryAction: .start(title: "开始说话", systemImage: "mic.circle.fill")
-            )
         case .aiSpeaking:
             if usesAutoVAD {
                 return .init(

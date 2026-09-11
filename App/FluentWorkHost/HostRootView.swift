@@ -253,7 +253,6 @@ struct HostRootView: View {
             .padding(.bottom, 8)
         case .connecting, .recording, .waitingUser,
              .processing,
-             .waitingForAIAnswer, .waitingForEvaluation,
              .aiSpeaking, .degradedText:
             // This ends the whole session, not the current turn — the label has
             // to say so, and a mis-tap must not be enough to lose a practice run.

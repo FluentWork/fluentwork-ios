@@ -47,13 +47,15 @@ public enum SpeechSessionMachine {
             state.processingStage = nil
             effects.append(.endSession)
 
+        // The turn is done; the backend scorer is what has not answered. That
+        // is a stage, not a phase — giving it a phase is what let a 20s budget
+        // become user-visible behaviour (F19).
         case (.processing, .aiTurnEnd):
-            state.phase = .waitingForEvaluation
-            state.processingStage = nil
+            state.processingStage = .evaluation
 
         case (.aiSpeaking, .aiTurnEnd) where state.userTurnCount > 0:
-            state.phase = .waitingForEvaluation
-            state.processingStage = nil
+            state.phase = .processing
+            state.processingStage = .evaluation
 
         case (.aiSpeaking, .aiTurnEnd):
             // Greeting / bootstrap turn (DevEcho and Volc Start() send
@@ -61,11 +63,11 @@ public enum SpeechSessionMachine {
             state.phase = .waitingUser
             state.processingStage = nil
 
-        case (.waitingForEvaluation, .evaluationReceived):
+        case (.processing, .evaluationReceived) where state.processingStage == .evaluation:
             state.phase = .waitingUser
             state.processingStage = nil
 
-        case (.waitingForEvaluation, .evaluationTimedOut):
+        case (.processing, .evaluationTimedOut) where state.processingStage == .evaluation:
             // Badge never arrived. Keep the session; end the turn.
             //
             // No `.stopPlayback` here. "Leftover TTS is dropped" was the old
@@ -88,12 +90,18 @@ public enum SpeechSessionMachine {
             state.processingStage = nil
             effects.append(contentsOf: [.stopPlayback, .sendInterrupt])
 
+        // `aiAnswer` (I21's abort landing pad) starts a new turn exactly like
+        // `waitingUser` does — nothing is playing, so nothing needs stopping.
         case (.waitingUser, .vadSpeechStart), (.waitingUser, .holdStart),
-             (.waitingForAIAnswer, .vadSpeechStart), (.waitingForAIAnswer, .holdStart):
+             (.processing, .vadSpeechStart) where state.processingStage == .aiAnswer,
+             (.processing, .holdStart) where state.processingStage == .aiAnswer:
             state.phase = .recording
             state.processingStage = nil
 
-        case (.waitingForEvaluation, .vadSpeechStart), (.waitingForEvaluation, .holdStart):
+        // The evaluation stage is different: the reply may still be playing,
+        // and this path is one of the two that mean barge-in.
+        case (.processing, .vadSpeechStart) where state.processingStage == .evaluation,
+             (.processing, .holdStart) where state.processingStage == .evaluation:
             // Next utterance may overlap leftover TTS after ai.turn.end.
             state.phase = .recording
             state.processingStage = nil
@@ -109,9 +117,16 @@ public enum SpeechSessionMachine {
             // I20 T-I20-1: user still recording after 60s. Abort this turn, keep
             // the session. Do not enter .processing (that would arm B15's 70s
             // collectTurn fallback) and do not emit user.speech.end.
-            // I21: land in waitingForAIAnswer, not waitingUser.
-            state.phase = .waitingForAIAnswer
+            // I21: land in the `aiAnswer` stage, not `waitingUser` — the
+            // aborted turn's answer is still coming.
+            //
+            // Abort *before* setting the destination: `abortOpenRecording`
+            // clears the stage (it ends a turn), so setting it first would be
+            // overwritten and the landing pad would silently read as "no
+            // stage" — the drift the invariant guard exists to catch.
             effects.append(abortOpenRecording(&state, outcome: .timeout))
+            state.phase = .processing
+            state.processingStage = .aiAnswer
 
         // Recording-specific terminals before the catch-alls: an open utterance
         // must not look like `user.speech.end` / outcome=ok.
@@ -178,7 +193,7 @@ public enum SpeechSessionMachine {
         case (_, .networkLost) where isActive(state.phase):
             state.isReconnecting = true
             effects.append(.startReconnectWindow)
-            if state.phase.discardsTurnOnReconnect {
+            if state.discardsTurnOnReconnect {
                 effects.append(.stopPlayback)
             }
 
@@ -238,8 +253,7 @@ public enum SpeechSessionMachine {
 
         // Idempotent: duplicate socketReady while already live.
         case (.aiSpeaking, .socketReady), (.waitingUser, .socketReady), (.recording, .socketReady),
-             (.processing, .socketReady), (.waitingForAIAnswer, .socketReady),
-             (.waitingForEvaluation, .socketReady), (.degradedText, .socketReady):
+             (.processing, .socketReady), (.degradedText, .socketReady):
             state.isReconnecting = false
 
         default:
@@ -283,16 +297,11 @@ public enum SpeechSessionMachine {
              (.connecting, .aiSpeaking),
              (.aiSpeaking, .recording),
              (.waitingUser, .recording),
-             (.waitingForAIAnswer, .recording),
-             (.waitingForEvaluation, .recording),
+             (.processing, .recording),
              (.recording, .processing),
-             (.recording, .waitingForAIAnswer),
+             (.aiSpeaking, .processing),
              (.recording, .waitingUser),
              (.processing, .aiSpeaking),
-             (.processing, .waitingForEvaluation),
-             (.aiSpeaking, .waitingForEvaluation),
-             (.waitingForEvaluation, .waitingUser),
-             (.waitingForAIAnswer, .waitingUser),
              (.aiSpeaking, .waitingUser),
              (.processing, .waitingUser):
             return true
@@ -321,7 +330,7 @@ public enum SpeechSessionMachine {
             state.phase = .aiSpeaking
             return []
         }
-        guard state.phase.discardsTurnOnReconnect else { return [] }
+        guard state.discardsTurnOnReconnect else { return [] }
         state.phase = .waitingUser
         state.processingStage = nil
         return [.stopPlayback]

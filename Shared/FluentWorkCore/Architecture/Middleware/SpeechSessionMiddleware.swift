@@ -1126,7 +1126,9 @@ private func processingTimeoutEffects(
         effects.append(cancelProcessingTimeoutTasks(includeTotalCap: true))
     }
 
-    if previousPhase != .waitingForEvaluation, newPhase == .waitingForEvaluation {
+    // Keyed on the stage: the evaluation wait is no longer a phase, so entering
+    // and leaving it are stage changes inside `.processing`.
+    if previousStage != .evaluation, newStage == .evaluation {
         if evaluationArrival.consume() {
             effects.append(.task {
                 return .speakingRoom(.session(.evaluationReceived))
@@ -1136,7 +1138,7 @@ private func processingTimeoutEffects(
         }
     }
 
-    if previousPhase == .waitingForEvaluation, newPhase != .waitingForEvaluation {
+    if previousStage == .evaluation, newStage != .evaluation {
         effects.append(.cancel(id: SpeechSessionTaskID.evaluationTimeout))
     }
 
@@ -1295,6 +1297,14 @@ private func scheduleProcessingTimeoutTask(
         cancellationID = SpeechSessionTaskID.processingReviewTimeout
         trackEvent = "processing_timeout_review"
         stageName = "review"
+    case .evaluation, .aiAnswer:
+        // The two wait stages have no pipeline budget. `.evaluation` is bounded
+        // by its own `evaluationTimeout`, and `.aiAnswer` deliberately is not
+        // bounded at all — the aborted turn's answer is still coming, and the
+        // turn-level cap already covers the session. Returning inert rather
+        // than inventing a budget: a budget nobody chose is how a timer ends up
+        // owning user-visible behaviour (F19).
+        return .merge([])
     }
     return .task(id: cancellationID) {
         try? await Task.sleep(for: duration)

@@ -54,15 +54,15 @@ import Testing
     #expect(model.startTapIntent == .none)
 }
 
-@Test func speakingRoomWaitingForAIAnswerHidesHoldAfterAbort() {
-    let model = SpeakingRoomViewModel(phase: .waitingForAIAnswer, usesAutoVAD: true)
+@Test func speakingRoomAbortLandingPadHidesHoldAfterAbort() {
+    let model = SpeakingRoomViewModel(phase: .processing, processingStage: .aiAnswer, usesAutoVAD: true)
     #expect(model.controlState.title == "本轮已超时")
     #expect(model.controlState.showsProgress == false)
     #expect(model.controlState.primaryAction == nil)
 }
 
-@Test func speakingRoomWaitingForAIAnswerManualShowsBeginTurn() {
-    let model = SpeakingRoomViewModel(phase: .waitingForAIAnswer)
+@Test func speakingRoomAbortLandingPadManualShowsBeginTurn() {
+    let model = SpeakingRoomViewModel(phase: .processing, processingStage: .aiAnswer)
     #expect(model.controlState.title == "本轮已超时")
     #expect(model.startTapIntent == .beginTurn)
     #expect(
@@ -74,16 +74,16 @@ import Testing
 /// The evaluation wait is not a blocking state — the machine lets the user open
 /// the next turn from here — so it must not show a spinner *and* a start button
 /// at the same time. Progress is reserved for phases with no action to offer.
-@Test func speakingRoomWaitingForEvaluationOffersNextTurnWithoutProgress() {
-    let model = SpeakingRoomViewModel(phase: .waitingForEvaluation, usesAutoVAD: true)
+@Test func speakingRoomEvaluationStageOffersNextTurnWithoutProgress() {
+    let model = SpeakingRoomViewModel(phase: .processing, processingStage: .evaluation, usesAutoVAD: true)
     #expect(model.controlState.title == "可以继续")
     #expect(model.controlState.detail == "这一轮的评价还在生成，也可以直接开口开始下一轮。")
     #expect(model.controlState.showsProgress == false)
     #expect(model.controlState.primaryAction == nil)
 }
 
-@Test func speakingRoomWaitingForEvaluationManualOffersStartButton() {
-    let model = SpeakingRoomViewModel(phase: .waitingForEvaluation)
+@Test func speakingRoomEvaluationStageManualOffersStartButton() {
+    let model = SpeakingRoomViewModel(phase: .processing, processingStage: .evaluation)
     #expect(model.controlState.title == "可以继续")
     #expect(model.controlState.showsProgress == false)
     #expect(

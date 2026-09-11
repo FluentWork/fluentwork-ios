@@ -661,7 +661,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     }
     speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: nil, logID: nil)))
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        store.state.speakingRoom.phase == .waitingForEvaluation
+        store.state.speakingRoom.processingStage == .evaluation
     }
 
     // Second turn → "turn-2". VAD from waitingForEvaluation starts the next recording.
@@ -873,9 +873,10 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     speechClient.emit(.control(.aiTurnEnd(turnID: "turn-7", outcome: nil, logID: nil)))
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        store.state.speakingRoom.phase == .waitingForEvaluation
+        store.state.speakingRoom.processingStage == .evaluation
     }
-    #expect(store.state.speakingRoom.phase == .waitingForEvaluation)
+    #expect(store.state.speakingRoom.phase == .processing)
+    #expect(store.state.speakingRoom.processingStage == .evaluation)
 }
 
 @MainActor

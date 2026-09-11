@@ -53,7 +53,7 @@ import Testing
 /// / `holdStart` from this phase, and from `aiSpeaking` — so silence never
 /// depended on the timer.
 @Test func evaluationTimeoutEndsTheTurnWithoutCuttingPlayback() {
-    var state = SpeechSessionState(phase: .waitingForEvaluation)
+    var state = SpeechSessionState(phase: .processing, processingStage: .evaluation)
     let effects = SpeechSessionMachine.reduce(&state, event: .evaluationTimedOut)
 
     #expect(state.phase == .waitingUser)
@@ -207,8 +207,6 @@ import Testing
         .waitingUser,
         .recording,
         .processing,
-        .waitingForAIAnswer,
-        .waitingForEvaluation,
         .degradedText,
     ]
     for phase in phases {
@@ -237,20 +235,18 @@ import Testing
     #expect(SpeechSessionPhase.connecting.isActive)
     #expect(SpeechSessionPhase.waitingUser.isActive)
     #expect(SpeechSessionPhase.processing.isActive)
-    #expect(SpeechSessionPhase.waitingForAIAnswer.isActive)
-    #expect(SpeechSessionPhase.waitingForEvaluation.isActive)
     #expect(!SpeechSessionPhase.idle.isActive)
     #expect(!SpeechSessionPhase.ended.isActive)
     #expect(!SpeechSessionPhase.failed.isActive)
 }
 
 @Test func speechSessionPhaseLabelsCoverV20WaitsAndExistingStages() {
-    #expect(SpeechSessionPhase.waitingForAIAnswer.label == "waiting_for_ai_answer")
-    #expect(SpeechSessionPhase.waitingForEvaluation.label == "waiting_for_evaluation")
-    #expect(SpeechSessionPhase.waitingForAIAnswer.stageTag == "waiting_for_ai_answer")
-    #expect(SpeechSessionPhase.waitingForEvaluation.stageTag == "waiting_for_evaluation")
-    #expect(!SpeechSessionPhase.waitingForAIAnswer.isProcessing)
-    #expect(!SpeechSessionPhase.waitingForEvaluation.isProcessing)
+    // The evaluation wait and the abort landing pad are stages now. Their
+    // cross-service tags must not change: the backend log is keyed on them.
+    #expect(ProcessingStage.evaluation.stageTag == "waiting_for_evaluation")
+    #expect(ProcessingStage.aiAnswer.stageTag == "waiting_for_ai_answer")
+    #expect(!SpeechSessionPhase.waitingUser.isProcessing)
+    #expect(SpeechSessionPhase.processing.isProcessing)
 
     let labels = Dictionary(uniqueKeysWithValues: SpeechSessionPhase.allCases.map { ($0, $0.label) })
     #expect(labels[.idle] == "idle")
@@ -264,7 +260,7 @@ import Testing
     #expect(ProcessingStage.asr.stageTag == "asr")
     #expect(ProcessingStage.llm.stageTag == "llm")
     #expect(ProcessingStage.review.stageTag == "review")
-    #expect(ProcessingStage.allCases.count == 3)
+    #expect(ProcessingStage.allCases.count == 5)
     #expect(labels[.aiSpeaking] == "tts")
     #expect(labels[.degradedText] == "text_fallback")
     #expect(labels[.ended] == "ended")
@@ -320,19 +316,24 @@ import Testing
     #expect(effects.contains(.trackTransition(from: .aiSpeaking, to: .waitingUser, stage: nil)))
 }
 
-@Test func aiTurnEndAfterUserTurnReturnsToWaitingForEvaluation() {
+@Test func aiTurnEndAfterUserTurnEntersTheEvaluationStage() {
     var state = SpeechSessionState(phase: .aiSpeaking, userTurnCount: 1)
     let effects = SpeechSessionMachine.reduce(&state, event: .aiTurnEnd)
-    #expect(state.phase == .waitingForEvaluation)
-    #expect(effects.contains(.trackTransition(from: .aiSpeaking, to: .waitingForEvaluation, stage: nil)))
+    #expect(state.phase == .processing)
+    #expect(state.processingStage == .evaluation)
+    #expect(effects.contains(.trackTransition(from: .aiSpeaking, to: .processing, stage: .evaluation)))
 }
 
-@Test func aiTurnEndFromProcessingReturnsToWaitingForEvaluation() {
+/// From `.processing` the turn ends **in place**: the phase stays, only the
+/// stage moves to the scorer. Previously this was a phase hop out to
+/// `waitingForEvaluation`, which is what let a backend timer own a phase.
+@Test func aiTurnEndFromProcessingMovesToTheEvaluationStageInPlace() {
     var state = SpeechSessionState(phase: .processing, processingStage: .asr)
     let effects = SpeechSessionMachine.reduce(&state, event: .aiTurnEnd)
-    #expect(state.phase == .waitingForEvaluation)
-    #expect(state.processingStage == nil)
-    #expect(effects.contains(.trackTransition(from: .processing, to: .waitingForEvaluation, stage: nil)))
+
+    #expect(state.phase == .processing)
+    #expect(state.processingStage == .evaluation)
+    #expect(effects.contains(.trackTransition(from: .processing, to: .processing, stage: .evaluation)))
 }
 
 @Test func processingStageReachedMovesLLMToReview() {
@@ -374,13 +375,13 @@ import Testing
     var state = SpeechSessionState(phase: .recording)
     let effects = SpeechSessionMachine.reduce(&state, event: .recordingTimedOut)
 
-    #expect(state.phase == .waitingForAIAnswer)
-    #expect(state.processingStage == nil)
+    #expect(state.phase == .processing)
+    #expect(state.processingStage == .aiAnswer)
     #expect(state.userTurnCount == 1)
     #expect(state.lastTurnOutcome == .timeout)
     #expect(state.failureReason == nil)
     #expect(effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: .timeout)))
-    #expect(effects.contains(.trackTransition(from: .recording, to: .waitingForAIAnswer, stage: nil)))
+    #expect(effects.contains(.trackTransition(from: .recording, to: .processing, stage: .aiAnswer)))
     #expect(!effects.contains(.turnTimeoutExpired))
     #expect(!effects.contains(.endSession))
 }
@@ -391,7 +392,8 @@ import Testing
     #expect(state.suspendedPhase == .recording)
 
     let effects = SpeechSessionMachine.reduce(&state, event: .recordingTimedOut)
-    #expect(state.phase == .waitingForAIAnswer)
+    #expect(state.phase == .processing)
+    #expect(state.processingStage == .aiAnswer)
     #expect(effects.contains(.sendTurnAbort(turnID: "turn-1", outcome: .timeout)))
 }
 
@@ -511,52 +513,53 @@ import Testing
     #expect(replyEffects.isEmpty)
 }
 
-@Test func waitingForAIAnswerAcceptsNextUtterance() {
+@Test func aiAnswerStageAcceptsNextUtterance() {
     var state = SpeechSessionState(phase: .recording)
     _ = SpeechSessionMachine.reduce(&state, event: .recordingTimedOut)
-    #expect(state.phase == .waitingForAIAnswer)
+    #expect(state.phase == .processing)
+    #expect(state.processingStage == .aiAnswer)
 
     let effects = SpeechSessionMachine.reduce(&state, event: .vadSpeechStart)
     #expect(state.phase == .recording)
-    #expect(effects.contains(.trackTransition(from: .waitingForAIAnswer, to: .recording, stage: nil)))
+    #expect(effects.contains(.trackTransition(from: .processing, to: .recording, stage: nil)))
 }
 
-@Test func waitingForAIAnswerEndTapEndsSession() {
-    var state = SpeechSessionState(phase: .waitingForAIAnswer)
+@Test func aiAnswerStageEndTapEndsSession() {
+    var state = SpeechSessionState(phase: .processing, processingStage: .aiAnswer)
     let effects = SpeechSessionMachine.reduce(&state, event: .endTap)
     #expect(state.phase == .ended)
     #expect(effects.contains(.endSession))
-    #expect(effects.contains(.trackTransition(from: .waitingForAIAnswer, to: .ended, stage: nil)))
+    #expect(effects.contains(.trackTransition(from: .processing, to: .ended, stage: nil)))
 }
 
-@Test func evaluationReceivedLeavesWaitingForEvaluation() {
-    var state = SpeechSessionState(phase: .waitingForEvaluation)
+@Test func evaluationReceivedLeavesTheEvaluationStage() {
+    var state = SpeechSessionState(phase: .processing, processingStage: .evaluation)
     let effects = SpeechSessionMachine.reduce(&state, event: .evaluationReceived)
     #expect(state.phase == .waitingUser)
-    #expect(effects.contains(.trackTransition(from: .waitingForEvaluation, to: .waitingUser, stage: nil)))
+    #expect(effects.contains(.trackTransition(from: .processing, to: .waitingUser, stage: nil)))
 }
 
-@Test func waitingForEvaluationEndTapEndsSession() {
-    var state = SpeechSessionState(phase: .waitingForEvaluation)
+@Test func evaluationStageEndTapEndsSession() {
+    var state = SpeechSessionState(phase: .processing, processingStage: .evaluation)
     let effects = SpeechSessionMachine.reduce(&state, event: .endTap)
     #expect(state.phase == .ended)
     #expect(effects.contains(.endSession))
 }
 
-@Test func waitingForEvaluationVadStartsNextTurn() {
-    var state = SpeechSessionState(phase: .waitingForEvaluation)
+@Test func evaluationStageVadStartsNextTurn() {
+    var state = SpeechSessionState(phase: .processing, processingStage: .evaluation)
     let effects = SpeechSessionMachine.reduce(&state, event: .vadSpeechStart)
     #expect(state.phase == .recording)
     #expect(effects.contains(.stopPlayback))
-    #expect(effects.contains(.trackTransition(from: .waitingForEvaluation, to: .recording, stage: nil)))
+    #expect(effects.contains(.trackTransition(from: .processing, to: .recording, stage: nil)))
 }
 
 @Test func evaluationTimedOutReturnsToWaitingUserWithoutFailing() {
-    var state = SpeechSessionState(phase: .waitingForEvaluation)
+    var state = SpeechSessionState(phase: .processing, processingStage: .evaluation)
     let effects = SpeechSessionMachine.reduce(&state, event: .evaluationTimedOut)
     #expect(state.phase == .waitingUser)
     #expect(state.failureReason == nil)
-    #expect(effects.contains(.trackTransition(from: .waitingForEvaluation, to: .waitingUser, stage: nil)))
+    #expect(effects.contains(.trackTransition(from: .processing, to: .waitingUser, stage: nil)))
     #expect(!effects.contains(.endSession))
 
     // This used to assert `.stopPlayback`, under the reasoning that "leftover
@@ -594,21 +597,37 @@ import Testing
     #expect(effects.contains(.stopPlayback))
 }
 
-@Test func reconnectSucceededFromWaitingForAIAnswerKeepsAbortLanding() {
-    var state = SpeechSessionState(phase: .waitingForAIAnswer, isReconnecting: true)
+@Test func reconnectSucceededFromTheAbortLandingPadKeepsIt() {
+    var state = SpeechSessionState(phase: .processing, isReconnecting: true, processingStage: .aiAnswer)
     let effects = SpeechSessionMachine.reduce(&state, event: .reconnectSucceeded)
-    #expect(state.phase == .waitingForAIAnswer)
+    #expect(state.phase == .processing)
+    #expect(state.processingStage == .aiAnswer)
     #expect(state.isReconnecting == false)
     #expect(!effects.contains(.stopPlayback))
 }
 
-@Test func processingPhaseDiscardsTurnOnReconnect() {
-    #expect(SpeechSessionPhase.processing.discardsTurnOnReconnect)
-    #expect(SpeechSessionPhase.aiSpeaking.discardsTurnOnReconnect)
-    #expect(SpeechSessionPhase.waitingForEvaluation.discardsTurnOnReconnect)
-    #expect(!SpeechSessionPhase.waitingForAIAnswer.discardsTurnOnReconnect)
-    #expect(!SpeechSessionPhase.waitingUser.discardsTurnOnReconnect)
-    #expect(!SpeechSessionPhase.recording.discardsTurnOnReconnect)
+/// The reconnect-discard policy is **stage-aware**, and that is the whole
+/// reason it stopped being a phase property.
+///
+/// Before the merge the two things it separates had phases of their own: an
+/// evaluation wait discards the turn, an abort landing pad does not. Merged
+/// into one phase, the distinction has nowhere else to live — and getting it
+/// wrong is not cosmetic: stopping playback on `aiAnswer` cuts off an answer
+/// the user is still owed.
+@Test func reconnectDiscardPolicySeparatesThePipelineFromTheAbortPad() {
+    // Pipeline stages and the evaluation wait belong to a turn that will not
+    // be replayed.
+    #expect(SpeechSessionState(phase: .processing, processingStage: .asr).discardsTurnOnReconnect)
+    #expect(SpeechSessionState(phase: .processing, processingStage: .llm).discardsTurnOnReconnect)
+    #expect(SpeechSessionState(phase: .processing, processingStage: .review).discardsTurnOnReconnect)
+    #expect(SpeechSessionState(phase: .processing, processingStage: .evaluation).discardsTurnOnReconnect)
+    #expect(SpeechSessionState(phase: .aiSpeaking).discardsTurnOnReconnect)
+
+    // I21's abort landing pad does not: the user already abandoned that turn,
+    // so there is nothing left to discard and its answer is still coming.
+    #expect(!SpeechSessionState(phase: .processing, processingStage: .aiAnswer).discardsTurnOnReconnect)
+    #expect(!SpeechSessionState(phase: .waitingUser).discardsTurnOnReconnect)
+    #expect(!SpeechSessionState(phase: .recording).discardsTurnOnReconnect)
 }
 
 @Test func isValidTransitionAcceptsLiveGraphAndRejectsIllegalHops() {
@@ -616,13 +635,14 @@ import Testing
     #expect(SpeechSessionMachine.isValidTransition(from: .waitingUser, to: .recording))
     #expect(SpeechSessionMachine.isValidTransition(from: .recording, to: .processing))
     #expect(SpeechSessionMachine.isValidTransition(from: .processing, to: .aiSpeaking))
-    #expect(SpeechSessionMachine.isValidTransition(from: .aiSpeaking, to: .waitingForEvaluation))
-    #expect(SpeechSessionMachine.isValidTransition(from: .recording, to: .waitingForAIAnswer))
-    #expect(SpeechSessionMachine.isValidTransition(from: .waitingForAIAnswer, to: .ended))
-    #expect(SpeechSessionMachine.isValidTransition(from: .waitingForEvaluation, to: .waitingUser))
-    #expect(SpeechSessionMachine.isValidTransition(from: .waitingForEvaluation, to: .ended))
+    // A finished turn now *enters* `.processing` for its evaluation stage, and
+    // the abort landing pad is reached from `.recording` the same way.
+    #expect(SpeechSessionMachine.isValidTransition(from: .aiSpeaking, to: .processing))
+    #expect(SpeechSessionMachine.isValidTransition(from: .processing, to: .ended))
+    #expect(SpeechSessionMachine.isValidTransition(from: .processing, to: .waitingUser))
+    #expect(SpeechSessionMachine.isValidTransition(from: .processing, to: .ended))
     #expect(!SpeechSessionMachine.isValidTransition(from: .idle, to: .aiSpeaking))
-    #expect(!SpeechSessionMachine.isValidTransition(from: .waitingForEvaluation, to: .idle))
+    #expect(!SpeechSessionMachine.isValidTransition(from: .processing, to: .idle))
     #expect(!SpeechSessionMachine.isValidTransition(from: .ended, to: .waitingUser))
     #expect(!SpeechSessionMachine.isValidTransition(from: .idle, to: .idle))
 }
@@ -673,9 +693,20 @@ import Testing
         // Exit 3: leave `.processing` through the reconnect path.
         ("networkLost", .networkLost),
         ("socketReady while reconnecting", .socketReady),
-        // Exit 4: degrade straight out of a live phase.
+        // Exit 4: the recording cap aborts the turn and lands on the `aiAnswer`
+        // pad — the branch where the stage was being overwritten by the abort
+        // helper.
+        //
+        // Reaching it takes `vadSpeechStart` *from `waitingUser`*: an earlier
+        // version of this script stepped through `degradedText` first, where
+        // `vadSpeechStart` is a no-op, so it never got back to `.recording`
+        // and the branch was never entered. A "walk some events" guard silently
+        // covers only the branches the walk happens to reach.
         ("vadSpeechStart#4", .vadSpeechStart),
-        ("vadSpeechEnd#4", .vadSpeechEnd(turnID: "turn-4")),
+        ("recordingTimedOut from .recording", .recordingTimedOut),
+        // Exit 5: back out of the abort pad into a fresh turn, then degrade.
+        ("vadSpeechStart#5", .vadSpeechStart),
+        ("vadSpeechEnd#5", .vadSpeechEnd(turnID: "turn-5")),
         ("networkDegraded from .processing", .networkDegraded),
         ("endTap", .endTap),
     ]

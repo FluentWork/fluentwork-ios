@@ -419,7 +419,7 @@ struct SpeechSessionMiddlewareB14Tests {
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
 
         store.dispatch(.speakingRoom(.session(.recordingTimedOut)))
-        try await waitForPhase(store, phase: .waitingForAIAnswer, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .aiAnswer, timeout: 1_000_000_000)
         try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
             await speechClient.getTurnAbortCalls().count == 1
         }
@@ -430,13 +430,15 @@ struct SpeechSessionMiddlewareB14Tests {
         #expect(aborts.first?.outcome == .timeout)
         #expect(await speechClient.getEndBoundaries().isEmpty)
         #expect(await speechClient.endSessionCalled == false)
-        #expect(store.state.speakingRoom.phase == .waitingForAIAnswer)
+        #expect(store.state.speakingRoom.phase == .processing)
+        #expect(store.state.speakingRoom.processingStage == .aiAnswer)
         #expect(store.state.speakingRoom.session.failureReason == nil)
 
         audioEngine.emit(.speechEnded)
         try await Task.sleep(for: .milliseconds(100))
         #expect(await speechClient.getEndBoundaries().isEmpty)
-        #expect(store.state.speakingRoom.phase == .waitingForAIAnswer)
+        #expect(store.state.speakingRoom.phase == .processing)
+        #expect(store.state.speakingRoom.processingStage == .aiAnswer)
 
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
@@ -465,7 +467,7 @@ struct SpeechSessionMiddlewareB14Tests {
         try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
 
         speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil)))
-        try await waitForPhase(store, phase: .waitingForEvaluation, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .evaluation, timeout: 1_000_000_000)
 
         speechClient.emit(.control(.feedbackBadge(
             badge: "表达自然",
@@ -540,7 +542,7 @@ struct SpeechSessionMiddlewareB14Tests {
         try await waitForProcessingStage(store, stage: .asr, timeout: 1_000_000_000)
 
         speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil)))
-        try await waitForPhase(store, phase: .waitingForEvaluation, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .evaluation, timeout: 1_000_000_000)
 
         store.dispatch(.speakingRoom(.session(.evaluationTimedOut)))
         try await waitForPhase(store, phase: .waitingUser, timeout: 1_000_000_000)
@@ -1067,7 +1069,7 @@ struct SpeechSessionMiddlewareB14Tests {
         try await waitForPhase(store, phase: .aiSpeaking, timeout: 1_000_000_000)
 
         speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: nil, logID: nil)))
-        try await waitForPhase(store, phase: .waitingForEvaluation, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .evaluation, timeout: 1_000_000_000)
 
         // Second turn
         audioEngine.emit(.speechStarted)
@@ -1319,7 +1321,7 @@ struct I20TurnTelemetryTests {
         try await waitForPhase(store, phase: .recording, timeout: 1_000_000_000)
 
         store.dispatch(.speakingRoom(.session(.recordingTimedOut)))
-        try await waitForPhase(store, phase: .waitingForAIAnswer, timeout: 1_000_000_000)
+        try await waitForProcessingStage(store, stage: .aiAnswer, timeout: 1_000_000_000)
         try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
             await speechClient.getTurnAbortCalls().count == 1
         }
