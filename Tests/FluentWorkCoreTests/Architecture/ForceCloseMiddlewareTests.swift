@@ -97,7 +97,7 @@ private final class StubSpeechSessionClientForForceClose: SpeechSessionClientPro
         self.continuation = pair.continuation
     }
 
-    func startSession() async throws {}
+    func startSession(continueFromSessionID: String?) async throws {}
     func activeSessionID() async -> String? { nil }
     func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {}
     func sendTurnAbort(turnID: String, outcome: TurnOutcome) async throws {}

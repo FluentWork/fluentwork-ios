@@ -1592,6 +1592,60 @@ struct SpeechSessionMiddlewareVoiceProcessingTests {
         #expect(await audioEngine.voiceProcessingValues == [false])
     }
 
+    /// 「从这一场继续」is one id travelling from a screen to a frame, and this
+    /// is every link of it that iOS owns: room entry → state → middleware →
+    /// client. A break at any one of them leaves a room that looks completely
+    /// normal and a model that has never heard of the previous session — the
+    /// failure has no symptom on this side at all, which is why it is pinned
+    /// here rather than left to the device.
+    ///
+    /// The value must survive `sessionStartTap`: the id is written when the
+    /// room opens and read when a session starts, and those are two different
+    /// taps.
+    @MainActor
+    @Test func continuingARoomPassesThePreviousSessionIDToTheClient() async throws {
+        let container = Container()
+        container.reset()
+        let client = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { StubAudioEngineForMiddleware() }
+        container.speechSessionClient.register { client }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.enterRoom(continueFrom: "session-yesterday")))
+        #expect(store.state.speakingRoom.continueFromSessionID == "session-yesterday")
+
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+
+        try await waitUntil(timeoutNanoseconds: 2_000_000_000) {
+            await !client.continueFromValues.isEmpty
+        }
+        #expect(await client.continueFromValues == ["session-yesterday"])
+    }
+
+    /// A plain entry must clear last visit's continuation. Nothing else writes
+    /// this field, so if entering without an id did not, the room would keep
+    /// silently continuing a session the user has since left.
+    @MainActor
+    @Test func enteringWithoutASessionClearsAnyEarlierContinuation() async throws {
+        let container = Container()
+        container.reset()
+        let client = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { StubAudioEngineForMiddleware() }
+        container.speechSessionClient.register { client }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.enterRoom(continueFrom: "session-yesterday")))
+        store.dispatch(.speakingRoom(.enterRoom(continueFrom: nil)))
+        #expect(store.state.speakingRoom.continueFromSessionID == nil)
+
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+
+        try await waitUntil(timeoutNanoseconds: 2_000_000_000) {
+            await !client.continueFromValues.isEmpty
+        }
+        #expect(await client.continueFromValues == [nil])
+    }
+
     /// Waits for the middleware to hand the engine a value at all, and says
     /// why it might never have.
     ///
@@ -1736,8 +1790,14 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
     private let _startSessionCallCount = AsyncValue(0)
     var startSessionCallCount: Int { get async { await _startSessionCallCount.get() } }
 
-    func startSession() async throws {
+    private let _continueFromValues = AsyncValue<[String?]>([])
+    /// Every `continueFromSessionID` a start was asked for, in order. Optional
+    /// elements so "started with nothing" and "never started" stay apart.
+    var continueFromValues: [String?] { get async { await _continueFromValues.get() } }
+
+    func startSession(continueFromSessionID: String?) async throws {
         await _startSessionCallCount.update { $0 + 1 }
+        await _continueFromValues.update { $0 + [continueFromSessionID] }
         if let error = startSessionError {
             throw error
         }

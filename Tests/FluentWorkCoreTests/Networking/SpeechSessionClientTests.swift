@@ -170,7 +170,7 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
         transport: transport
     )
 
-    try await client.startSession()
+    try await client.startSession(continueFromSessionID: nil)
     #expect(try await tokenStore.accessToken() == "access-1")
 
     let calls = await transport.connectCalls
@@ -179,7 +179,7 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
     #expect(calls[0].ticket == "tik")
     let sentControls = await transport.sentControlFrames
     // `session.start` goes first, before the heartbeat exists.
-    #expect(sentControls.first == .sessionStart(.init(scene: "standup")))
+    #expect(sentControls.first == .sessionStart(.init(sceneType: "standup")))
     // Anything behind it is the heartbeat's clock probe — and only ever that.
     // The shape is asserted rather than the exact array because the probe is
     // sent from a detached task: whether it has landed by the time we look is a
@@ -228,7 +228,7 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
         transport: transport
     )
 
-    try await client.startSession()
+    try await client.startSession(continueFromSessionID: nil)
 
     #expect(tokenStore.savedTokenResponse?.accessToken == "fresh-access")
     #expect(try await tokenStore.accessToken() == "fresh-access")
@@ -434,7 +434,7 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
         transport: transport
     )
 
-    try await client.startSession()
+    try await client.startSession(continueFromSessionID: nil)
     let reply = try await client.sendDegradedTextMessage("hi")
     #expect(reply.sessionID == "s-10")
 
@@ -516,7 +516,7 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
         heartbeatInterval: .milliseconds(50)
     )
 
-    try await client.startSession()
+    try await client.startSession(continueFromSessionID: nil)
     try? await Task.sleep(for: .milliseconds(180))
     let controls = await transport.snapshotSentControls()
     #expect(controls.contains { frame in
@@ -569,7 +569,7 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
     )
 
     do {
-        try await client.startSession()
+        try await client.startSession(continueFromSessionID: nil)
         Issue.record("expected start session failure")
     } catch let error as FailingSessionStartTransport.StubError {
         #expect(error == .sessionStartFailed)

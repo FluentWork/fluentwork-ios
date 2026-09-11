@@ -68,7 +68,7 @@ import TGReduxKitTesting
             self.poll = poll
         }
 
-        func startSession() async throws {}
+        func startSession(continueFromSessionID: String?) async throws {}
         func activeSessionID() async -> String? { nil }
         func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {}
         func sendTurnAbort(turnID: String, outcome: TurnOutcome) async throws {}
@@ -129,7 +129,7 @@ import TGReduxKitTesting
             self.readyPayload = readyPayload
         }
 
-        func startSession() async throws {}
+        func startSession(continueFromSessionID: String?) async throws {}
         func activeSessionID() async -> String? { nil }
         func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {}
         func sendTurnAbort(turnID: String, outcome: TurnOutcome) async throws {}

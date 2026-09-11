@@ -171,7 +171,8 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
                 ttsDispatcher: ttsDispatcher,
                 ttsTrace: ttsTrace,
                 usesAutoVAD: store.state.featureFlags.isEnabled(.voiceVadAuto),
-                voiceProcessingEnabled: store.state.featureFlags.isEnabled(.voiceProcessing)
+                voiceProcessingEnabled: store.state.featureFlags.isEnabled(.voiceProcessing),
+                continueFromSessionID: store.state.speakingRoom.continueFromSessionID
             )
         }
         let timeoutEffects = processingTimeoutEffects(
@@ -887,7 +888,8 @@ private func interpretSpeechSessionSideEffect(
     ttsDispatcher: TTSFrameDispatcher,
     ttsTrace: TTSStreamTrace,
     usesAutoVAD: Bool = false,
-    voiceProcessingEnabled: Bool = false
+    voiceProcessingEnabled: Bool = false,
+    continueFromSessionID: String? = nil
 ) -> Effect<AppAction> {
     let audioEngine = container.audioEngine()
     let speechClient = container.speechSessionClient()
@@ -949,7 +951,7 @@ private func interpretSpeechSessionSideEffect(
         return .merge(
             .task {
                 do {
-                    try await speechClient.startSession()
+                    try await speechClient.startSession(continueFromSessionID: continueFromSessionID)
                     await audioEngine.setSpeechBoundaryMode(usesAutoVAD ? .autoVAD : .tapToStart)
                     // Declared before `startCapture()`, not after: voice
                     // processing may only be toggled while the engine is

@@ -69,7 +69,7 @@ private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unche
         self.sendAudioError = sendAudioError
     }
 
-    func startSession() async throws {
+    func startSession(continueFromSessionID: String?) async throws {
         if let startSessionError {
             throw startSessionError
         }

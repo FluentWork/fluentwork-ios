@@ -65,6 +65,17 @@ public struct SpeakingRoomState: Equatable, Sendable, State {
     /// In-session turn timeline (design 22). Display-only; never enters the
     /// SpeechSession machine.
     public var timeline: [TurnTimelineItem]
+    /// The past session this room was entered to continue, if any.
+    ///
+    /// It belongs to the **room entry**, not to the session: it is written when
+    /// the room opens and overwritten by the next entry (nil for a plain one),
+    /// which is why nothing "consumes" it. A one-shot flag would have to be
+    /// cleared at exactly the right moment, and the moment it would have to be
+    /// cleared — a successful session start — is the one thing that can fail.
+    ///
+    /// It is an id, not context. The server decides whether the transcript
+    /// behind it may be read (`77_` P0-10), and the client never sees it.
+    public var continueFromSessionID: String?
 
     public var phase: SpeechSessionPhase { session.phase }
     /// Which backend pipeline step is running, while `phase == .processing`.
@@ -79,7 +90,8 @@ public struct SpeakingRoomState: Equatable, Sendable, State {
         lastBadge: String? = nil,
         badgeHits: Int = 0,
         lastSessionID: String? = nil,
-        timeline: [TurnTimelineItem] = []
+        timeline: [TurnTimelineItem] = [],
+        continueFromSessionID: String? = nil
     ) {
         self.session = session
         self.liveTranscript = liveTranscript
@@ -88,6 +100,7 @@ public struct SpeakingRoomState: Equatable, Sendable, State {
         self.badgeHits = badgeHits
         self.lastSessionID = lastSessionID
         self.timeline = timeline
+        self.continueFromSessionID = continueFromSessionID
     }
 
     /// Test / Host helper mirroring the previous phase-centric initializer.
@@ -104,7 +117,8 @@ public struct SpeakingRoomState: Equatable, Sendable, State {
         badgeHits: Int = 0,
         failureReason: String? = nil,
         lastSessionID: String? = nil,
-        timeline: [TurnTimelineItem] = []
+        timeline: [TurnTimelineItem] = [],
+        continueFromSessionID: String? = nil
     ) {
         self.init(
             session: SpeechSessionState(
@@ -117,7 +131,8 @@ public struct SpeakingRoomState: Equatable, Sendable, State {
             lastBadge: lastBadge,
             badgeHits: badgeHits,
             lastSessionID: lastSessionID,
-            timeline: timeline
+            timeline: timeline,
+            continueFromSessionID: continueFromSessionID
         )
     }
 }
@@ -127,6 +142,10 @@ public enum SpeakingRoomAction: Equatable, Sendable, Action {
     case session(SpeechSessionEvent)
     /// State snapshot applied after Middleware runs the machine.
     case applySession(SpeechSessionState)
+    /// The room was opened. `continueFrom` names a past session to carry into
+    /// the next one — nil for an ordinary entry, which is what every entry
+    /// except the list's 继续 button is.
+    case enterRoom(continueFrom: String?)
     /// I20 Item 4: tap-to-talk. Middleware asks the engine to emit speech boundaries.
     case manualSpeechBegin
     case manualSpeechEnd
@@ -176,6 +195,9 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
 
     case .manualSpeechBegin, .manualSpeechEnd:
         break
+
+    case let .enterRoom(continueFrom):
+        state.continueFromSessionID = continueFrom
 
     case let .applySession(session):
         let enteredConnecting = state.session.phase != .connecting && session.phase == .connecting

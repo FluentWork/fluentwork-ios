@@ -88,25 +88,50 @@ public enum WSControlFrame: Equatable, Sendable {
     /// `.failed` action so the session state machine degrades to `.failed`.
     case error(code: String, message: String?)
 
-    public struct SessionStartPayload: Equatable, Sendable, Codable {
-        public var materialContext: String?
-        public var scene: String?
-        public var voiceID: String?
+    /// What the session is about.
+    ///
+    /// **Every key here is the gateway's, not this file's invention.** Until
+    /// 2026-09-12 this type sent `material_context` / `scene` / `voice_id`
+    /// while `voiceproto.SessionStart` reads `material_id` / `scene_type` /
+    /// `voice` — three fields, zero overlap, and `json.Unmarshal` ignores
+    /// unknown keys without complaining. So the scene the app has been sending
+    /// since it was written never reached the model, and
+    /// `instructionsForSessionStart` has only ever emitted its fixed preamble.
+    ///
+    /// Nothing here enforces that the two sides agree; the backend's
+    /// `voiceproto/frames.go` is the contract and this is a copy of it.
+    /// `sessionStartPayloadKeysMatchTheGateway` in the test suite is what
+    /// notices if the copy drifts again.
+    ///
+    /// **Not `Codable`, and that is not an oversight.** This type is never
+    /// encoded on its own — `WSControlFrame`'s own `CodingKeys` is what writes
+    /// the wire, and it is the only place the spellings live. This type used to
+    /// carry a `CodingKeys` too, spelling the *old, wrong* names; changing it
+    /// changed nothing on the wire, so it read as the contract while being
+    /// unable to affect it. A second copy of a contract that silently does
+    /// nothing is worse than no second copy.
+    public struct SessionStartPayload: Equatable, Sendable {
+        public var materialID: String?
+        public var sceneType: String?
+        public var voice: String?
+        /// Continue a previous session instead of starting from nothing.
+        ///
+        /// An **id, not content**, and the server decides whether it may be
+        /// read: the gateway resolves it through app-server, which compares
+        /// owners and answers "not found" either way. The client cannot seed
+        /// the provider's instructions with text of its own.
+        public var continueFromSessionID: String?
 
         public init(
-            materialContext: String? = nil,
-            scene: String? = nil,
-            voiceID: String? = nil
+            materialID: String? = nil,
+            sceneType: String? = nil,
+            voice: String? = nil,
+            continueFromSessionID: String? = nil
         ) {
-            self.materialContext = materialContext
-            self.scene = scene
-            self.voiceID = voiceID
-        }
-
-        enum CodingKeys: String, CodingKey {
-            case materialContext = "material_context"
-            case scene
-            case voiceID = "voice_id"
+            self.materialID = materialID
+            self.sceneType = sceneType
+            self.voice = voice
+            self.continueFromSessionID = continueFromSessionID
         }
     }
 }
@@ -132,9 +157,14 @@ extension WSControlFrame: Codable {
         case phraseBlockID = "phrase_block_id"
         case tier
         case reason
-        case materialContext = "material_context"
-        case scene
+        case materialID = "material_id"
+        case sceneType = "scene_type"
+        // Two frames, two spellings, and both are the gateway's:
+        // `session.start` reads `voice`, `ai.tts.start` reads `voice_id`.
+        // Collapsing them into one key would break whichever frame lost.
+        case voice
         case voiceID = "voice_id"
+        case continueFromSessionID = "continue_from_session_id"
         case code
         case message
         case serverTsMs = "server_ts_ms"
@@ -167,9 +197,10 @@ extension WSControlFrame: Codable {
         case "session.start":
             self = .sessionStart(
                 .init(
-                    materialContext: try container.decodeIfPresent(String.self, forKey: .materialContext),
-                    scene: try container.decodeIfPresent(String.self, forKey: .scene),
-                    voiceID: try container.decodeIfPresent(String.self, forKey: .voiceID)
+                    materialID: try container.decodeIfPresent(String.self, forKey: .materialID),
+                    sceneType: try container.decodeIfPresent(String.self, forKey: .sceneType),
+                    voice: try container.decodeIfPresent(String.self, forKey: .voice),
+                    continueFromSessionID: try container.decodeIfPresent(String.self, forKey: .continueFromSessionID)
                 )
             )
 
@@ -281,9 +312,10 @@ extension WSControlFrame: Codable {
 
         case let .sessionStart(payload):
             try container.encode("session.start", forKey: .type)
-            try container.encodeIfPresent(payload.materialContext, forKey: .materialContext)
-            try container.encodeIfPresent(payload.scene, forKey: .scene)
-            try container.encodeIfPresent(payload.voiceID, forKey: .voiceID)
+            try container.encodeIfPresent(payload.materialID, forKey: .materialID)
+            try container.encodeIfPresent(payload.sceneType, forKey: .sceneType)
+            try container.encodeIfPresent(payload.voice, forKey: .voice)
+            try container.encodeIfPresent(payload.continueFromSessionID, forKey: .continueFromSessionID)
 
         case .userSpeechStart:
             try container.encode("user.speech.start", forKey: .type)

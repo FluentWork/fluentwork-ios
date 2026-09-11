@@ -181,7 +181,14 @@ public struct VolcengineOpusFrameDecoder: WSAudioFrameDecoder {
 }
 
 public protocol SpeechSessionClientProtocol: Sendable {
-    func startSession() async throws
+    /// Opens a practice session.
+    ///
+    /// `continueFromSessionID` names an earlier session to open *with* —
+    /// the id travels on `session.start` and the server decides whether it
+    /// may be read (it compares owners and answers "not found" either
+    /// way). Nil starts from nothing, which is what every other caller
+    /// wants.
+    func startSession(continueFromSessionID: String?) async throws
     /// The session id currently bound by the client (nil before start / after end).
     func activeSessionID() async -> String?
     /// Sends a `user.speech.start` or `user.speech.end` frame to the backend.
@@ -315,7 +322,7 @@ public final class PlaceholderAudioEngine: AudioEngineProtocol, Sendable {
 public final class PlaceholderSpeechSessionClient: SpeechSessionClientProtocol, Sendable {
     public init() {}
 
-    public func startSession() async throws {}
+    public func startSession(continueFromSessionID: String?) async throws {}
 
     public func activeSessionID() async -> String? { nil }
 

@@ -48,7 +48,7 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         self.heartbeatInterval = heartbeatInterval
     }
 
-    public func startSession() async throws {
+    public func startSession(continueFromSessionID: String?) async throws {
         let deviceID = try await tokens.deviceID()
         let created: CreateSessionResponse
         do {
@@ -91,7 +91,7 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
             )
             try await transport.send(
                 control: .sessionStart(
-                    .init(scene: "standup")
+                    .init(sceneType: "standup", continueFromSessionID: continueFromSessionID)
                 )
             )
         } catch {

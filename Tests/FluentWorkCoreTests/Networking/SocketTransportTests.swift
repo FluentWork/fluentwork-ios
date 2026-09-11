@@ -7,7 +7,7 @@ import Testing
         .auth(ticket: "t-1"),
         .sessionReady(sessionID: "s-1", userID: "u-1"),
         .handshake(ticket: "t-1", sessionID: "s-1"),
-        .sessionStart(.init(materialContext: "ctx", scene: "interview", voiceID: "v1")),
+        .sessionStart(.init(materialID: "ctx", sceneType: "interview", voice: "v1")),
         .userSpeechStart,
         .userSpeechEnd(text: "thank you", turnID: "turn-1"),
         .clientTurnAbort(turnID: "turn-1", outcome: .timeout),

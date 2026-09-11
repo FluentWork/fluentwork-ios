@@ -160,7 +160,17 @@ struct HostRootView: View {
             .safeAreaInset(edge: .bottom) {
                 speakingRoomBottomBar
             }
-            .onAppear { _ = sessionID }
+            .onAppear {
+                // The route's `sessionID` is the session to *continue from*,
+                // and this is where it stops being a route parameter and
+                // becomes state. Dispatching on appear — rather than reading
+                // the route when a session starts — is what makes leaving and
+                // re-entering with a different id take effect.
+                //
+                // A plain entry from the workbench passes nil, which is what
+                // clears a continuation left over from a previous visit.
+                store.dispatch(.speakingRoom(.enterRoom(continueFrom: sessionID)))
+            }
         case let .review(sessionID):
             let effectiveSessionID = sessionID ?? store.state.speakingRoom.lastSessionID
             ReviewRootView(
@@ -242,6 +252,18 @@ struct HostRootView: View {
                 },
                 onRetry: {
                     store.dispatch(.sessionHistory(.detailRequested(sessionID: sessionID)))
+                },
+                onContinue: {
+                    // Presented rather than pushed: the room is a full-screen
+                    // conversational surface everywhere else, and making it a
+                    // pushed page in this one path would give the same screen
+                    // two behaviours depending on where it was opened from.
+                    store.dispatch(
+                        .navigation(.workbench(.present(
+                            .speakingRoom(sessionID: sessionID),
+                            style: .fullScreenCover
+                        )))
+                    )
                 }
             )
         }

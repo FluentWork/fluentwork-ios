@@ -190,48 +190,47 @@ private let backendDevEchoFeedbackBadgeJSON = #"""
         try WSControlFrameCodec.decode(Data(json.utf8))
     }
 }
-
-/// **Pins a defect, deliberately. Do not read the assertions as intent.**
+/// The client's `session.start` keys are the gateway's keys.
 ///
-/// `session.start` is the one frame that carries what the practice session is
-/// *about*, and the two ends do not agree on a single payload field name:
+/// This test used to pin the *opposite* — that they were `material_context` /
+/// `scene` / `voice_id`, none of which `voiceproto.SessionStart` reads — because
+/// fixing the names changes what the model is told, and that is a behaviour
+/// change belonging to the commit that implements session context (meta `77_`
+/// P0-10), not to a passing test. That commit is this one.
 ///
-/// | | client sends (`WSControlFrame.CodingKeys`) | gateway reads (`voiceproto.SessionStart`) |
-/// |---|---|---|
-/// | material | `material_context` | `material_id` |
-/// | scene | `scene` | `scene_type` |
-/// | voice | `voice_id` | `voice` |
-///
-/// The gateway `json.Unmarshal`s into a struct with no matching tags, so all
-/// three land empty and stay empty —
-/// `voicegateway/provider_volc_duplex.go:instructionsForSessionStart` then
-/// emits only its fixed preamble. Every backend test sends
-/// `voiceproto.SessionStart{Type: ...}` with those fields unset, so the
-/// `scene` and `material` branches have never run with a value in CI either.
-///
-/// This test pins the **current** bytes rather than the correct ones on purpose.
-/// Asserting the gateway's names here would mean changing what the model is
-/// told mid-conversation, on a path that is only verifiable on a device — that
-/// is a behaviour change, not a rename, and it belongs in the commit that
-/// implements session context (meta `77_` P1-25), not in a passing test.
-///
-/// When that commit lands, this test **changes** to assert `material_id` /
-/// `scene_type` / `voice`. Failing here is not the goal; being the place the
-/// mismatch is impossible to forget is.
-@Test func sessionStartPayloadKeysDoNotMatchTheGateway() throws {
+/// What it guards now is drift: the contract lives in the backend's
+/// `voiceproto/frames.go`, this is a hand-kept copy of it, and
+/// `json.Unmarshal` on the other side ignores unknown keys in silence — so a
+/// rename here has no symptom other than a field that quietly stops arriving.
+@Test func sessionStartPayloadKeysMatchTheGateway() throws {
     let data = try WSControlFrameCodec.encode(
-        .sessionStart(.init(materialContext: "material-1", scene: "standup", voiceID: "voice-1"))
+        .sessionStart(.init(
+            materialID: "material-1",
+            sceneType: "standup",
+            voice: "voice-1",
+            continueFromSessionID: "session-9"
+        ))
     )
     let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
     #expect(json["type"] as? String == "session.start")
-    #expect(json["material_context"] as? String == "material-1")
-    #expect(json["scene"] as? String == "standup")
-    #expect(json["voice_id"] as? String == "voice-1")
+    #expect(json["material_id"] as? String == "material-1")
+    #expect(json["scene_type"] as? String == "standup")
+    #expect(json["voice"] as? String == "voice-1")
+    #expect(json["continue_from_session_id"] as? String == "session-9")
 
-    // The names the gateway actually reads. All three are absent, which is the
-    // whole defect.
-    #expect(json["material_id"] == nil)
-    #expect(json["scene_type"] == nil)
-    #expect(json["voice"] == nil)
+    // The names this used to send. None of them may come back.
+    #expect(json["material_context"] == nil)
+    #expect(json["scene"] == nil)
+    #expect(json["voice_id"] == nil)
+}
+
+/// Absent means absent. An empty string would read as "continue from the
+/// session whose id is empty", which is not a session.
+@Test func sessionStartOmitsContinuationWhenThereIsNone() throws {
+    let data = try WSControlFrameCodec.encode(
+        .sessionStart(.init(sceneType: "standup"))
+    )
+    let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    #expect(json["continue_from_session_id"] == nil)
 }
