@@ -532,26 +532,22 @@ public extension Container {
     var ttsDecoder: Factory<any TTSDecoder> {
         // Unique so parallel tests do not share a recording mock, and so each
         // middleware instance owns its own decoder for the session lifetime.
-        self {
-            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
-                // Tests drive the dispatcher directly and assert on what was
-                // fed to it; a decoder that plays would need an audio engine
-                // they do not have.
-                return MockTTSDecoder()
-            }
-            // Production plays. This is the path `TTSFrameDispatcher` hands
-            // binary frames to once it has seen an `ai.tts.start` — and until
-            // 2026-09-12 it handed them to a recorder, which is silent. Nothing
-            // noticed, because the gateway sent no `ai.tts.start` and every
-            // frame missed the dispatcher entirely. The gateway is being taught
-            // to send one (`meta docs/30_技术方案/83_`), and the day it does,
-            // the difference between these two lines is whether the assistant
-            // can be heard at all.
-            let engine = self.audioEngine()
-            return EngineBackedTTSDecoder { frame in
-                await engine.play(frame: frame)
-            }
-        }.unique
+        // ROLLED BACK 2026-09-12 to `MockTTSDecoder` for production too.
+        //
+        // `EngineBackedTTSDecoder` is written, tested (ordering, payload
+        // validation) and still in the tree — but wiring it in silenced the
+        // assistant on device the moment the gateway started sending
+        // `ai.tts.start`. The dispatcher claims every frame once it has seen a
+        // start, so the fallback that used to make audio work is gone, and one
+        // of the two changes (this one, or the server's withheld audio) is what
+        // broke it. Both were rolled back; the analysis is in
+        // `meta docs/30_技术方案/84_`.
+        //
+        // Restoring this line is one half of re-landing that work. The other
+        // half is on the gateway, and the two must be re-landed together with a
+        // device check between them — the failure mode is silence, which no
+        // unit test here can see.
+        self { MockTTSDecoder() }.unique
     }
 
     var speechSessionClient: Factory<SpeechSessionClientProtocol> {
