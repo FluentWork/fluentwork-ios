@@ -308,7 +308,7 @@ public final class PlaceholderSpeechSessionClient: SpeechSessionClientProtocol, 
 
 public extension Container {
     var featureFlagResolver: Factory<FeatureFlagResolver> {
-        self { FeatureFlagResolverFactory.makeFirstWaveResolver() }.singleton
+        self { FeatureFlagResolverFactory.makeFirstWaveResolver() }.cached
     }
 
     var bootstrapClient: Factory<BootstrapClientProtocol> {
@@ -319,7 +319,7 @@ public extension Container {
                 sessionAPI: self.sessionAPIClient(),
                 tokenStore: self.authTokenStore()
             )
-        }.singleton
+        }.cached
     }
 
     var preferredSurfaceProvider: Factory<@Sendable () -> WorkspaceSurface> {
@@ -327,16 +327,16 @@ public extension Container {
             // Production default: speakingRoom
             // Debug builds can override via `container.preferredSurfaceProvider.register { { .workbench } }`
             { .speakingRoom }
-        }.singleton
+        }.cached
     }
 
     var socketTransport: Factory<SocketTransportProtocol> {
         // Factory erase-to-protocol; actor is created once per container scope.
-        self { URLSessionSocketTransport() as SocketTransportProtocol }.singleton
+        self { URLSessionSocketTransport() as SocketTransportProtocol }.cached
     }
 
     var networkPluginFactory: Factory<NetworkPluginFactoryProtocol> {
-        self { DefaultNetworkPluginFactory() }.singleton
+        self { DefaultNetworkPluginFactory() }.cached
     }
 
     var networkClient: Factory<NetworkClientProtocol> {
@@ -346,7 +346,7 @@ public extension Container {
                 baseClient: baseClient,
                 tokenRefreshCoordinator: self.tokenRefreshCoordinator()
             )
-        }.singleton
+        }.cached
     }
 
     var sessionAPIClient: Factory<SessionAPIClientProtocol> {
@@ -359,7 +359,7 @@ public extension Container {
                 network: baseClient,
                 baseURL: self.appEnvironment().apiBaseURL
             )
-        }.singleton
+        }.cached
     }
 
     var corpusAPIClient: Factory<CorpusAPIClientProtocol> {
@@ -368,7 +368,7 @@ public extension Container {
                 network: self.networkClient(),
                 baseURL: self.appEnvironment().apiBaseURL
             )
-        }.singleton
+        }.cached
     }
 
     var dailyReadAPIClient: Factory<DailyReadAPIClientProtocol> {
@@ -377,7 +377,7 @@ public extension Container {
                 network: self.networkClient(),
                 baseURL: self.appEnvironment().apiBaseURL
             )
-        }.singleton
+        }.cached
     }
 
     var authTokenStore: Factory<AuthTokenStoreProtocol> {
@@ -386,7 +386,7 @@ public extension Container {
                 storage: self.secureStorage(),
                 idGenerator: self.idGenerator()
             )
-        }.singleton
+        }.cached
     }
 
     var tokenRefreshCoordinator: Factory<TokenRefreshCoordinator> {
@@ -396,27 +396,27 @@ public extension Container {
                 sessionAPI: self.sessionAPIClient(),
                 expiryBuffer: 5 * 60  // 5 minutes
             )
-        }.singleton
+        }.cached
     }
 
     var corpusCacheStore: Factory<CorpusCacheStoreProtocol> {
-        self { JSONCorpusCacheStore() }.singleton
+        self { JSONCorpusCacheStore() }.cached
     }
 
     var corpusOutboxStore: Factory<CorpusOutboxStoreProtocol> {
-        self { JSONCorpusOutboxStore() }.singleton
+        self { JSONCorpusOutboxStore() }.cached
     }
 
     var corpusSyncMetadataStore: Factory<CorpusSyncMetadataStoreProtocol> {
-        self { JSONCorpusSyncMetadataStore() }.singleton
+        self { JSONCorpusSyncMetadataStore() }.cached
     }
 
     var networkMonitor: Factory<NetworkMonitorProtocol> {
-        self { NWPathNetworkMonitor() }.singleton
+        self { NWPathNetworkMonitor() }.cached
     }
 
     var audioSessionManager: Factory<AudioSessionManaging> {
-        self { DefaultAudioSessionManager() }.singleton
+        self { DefaultAudioSessionManager() }.cached
     }
 
     var backgroundTaskPort: Factory<BackgroundTaskPorting> {
@@ -429,7 +429,7 @@ public extension Container {
             #else
             return NoOpBackgroundTaskPort()
             #endif
-        }.singleton
+        }.cached
     }
 
     var audioEngine: Factory<AudioEngineProtocol> {
@@ -457,7 +457,7 @@ public extension Container {
     }
 
     var wsAudioFrameDecoder: Factory<any WSAudioFrameDecoder> {
-        self { RawPCM16FrameDecoder() }.singleton
+        self { RawPCM16FrameDecoder() }.cached
     }
 
     var ttsDecoder: Factory<any TTSDecoder> {
@@ -506,11 +506,11 @@ public extension Container {
     }
 
     var featurePluginRegistry: Factory<FeaturePluginRegistryProtocol> {
-        self { StaticFeaturePluginRegistry() }.singleton
+        self { StaticFeaturePluginRegistry() }.cached
     }
 
     var logger: Factory<LoggingProtocol> {
-        self { OSLogLogger() }.singleton
+        self { OSLogLogger() }.cached
     }
 
     var tracker: Factory<TrackerClientProtocol> {
@@ -521,11 +521,11 @@ public extension Container {
     }
 
     var secureStorage: Factory<SecureStorageProtocol> {
-        self { KeychainSecureStorage() }.singleton
+        self { KeychainSecureStorage() }.cached
     }
 
     var clock: Factory<ClockProtocol> {
-        self { SystemClock() }.singleton
+        self { SystemClock() }.cached
     }
 
     /// B15 total cap and the per-stage processing budgets.
@@ -534,7 +534,7 @@ public extension Container {
     /// and observe an overrun in milliseconds. Waiting out the real 15s ASR
     /// budget in `swift test` is why the overrun path had no coverage.
     var processingTimeouts: Factory<ProcessingTimeouts> {
-        // Deliberately **not** `.singleton`. This is a stateless value type, so
+        // Deliberately **not** `.cached`. This is a stateless value type, so
         // caching buys nothing — but it does make the registration sticky
         // process-wide, and a test that injects a short budget to exercise a
         // timeout then leaks it into every test running concurrently. Measured:
@@ -544,10 +544,10 @@ public extension Container {
     }
 
     var idGenerator: Factory<IDGeneratorProtocol> {
-        self { SystemIDGenerator() }.singleton
+        self { SystemIDGenerator() }.cached
     }
 
     var appEnvironment: Factory<AppEnvironment> {
-        self { AppEnvironment.current }.singleton
+        self { AppEnvironment.current }.cached
     }
 }
