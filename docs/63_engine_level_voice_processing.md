@@ -61,6 +61,20 @@
 
 默认关是刻意的：VPIO 带来多声道路径与「输出节点进 VP 模式」，两条都没在真机上跑过；在 T4 给结论前默认开，等于把未验证的变更推给用户，而它不达标时的现象（自激）恰好就是 P0-2 要消除的那个。代价写在 T4 里：**T4 需要一个把 flag 打开的构建**。
 
+## 3.1 差点就这么发出去的：extension-only 方法到不了引擎
+
+第一版把 `setVoiceProcessingEnabled` **只加进了 `AudioEngineProtocol` 的 extension，没加进 protocol 自己的 requirement 列表**。其余四个同类方法（`setSpeechBoundaryMode` / `beginManualSpeech` / `endManualSpeech` / `reconfigureForRouteChange`）都在 requirement 列表里，加的时候漏了这一个。
+
+后果不是编译错误，是**整个特性死掉**：
+
+> 只在 extension 里声明的方法，通过 `any AudioEngineProtocol` 调用时是**静态派发**的。
+
+中间件持有的正是 `any AudioEngineProtocol`。所以跑的是 extension 里那个空实现，`LiveAudioEngine.setVoiceProcessingEnabled` **一次都不会被调用** —— flag 永远到不了音频路径，真机上 T4 会看到「开关是关的」，而**所有直接拿具体类型 `LiveAudioEngine` 写的单测照样全绿**。
+
+抓它的是那条**接线测试**（middleware 那条），不是引擎侧的任何测试 —— 引擎侧的 7 条全绿，因为它们构造的是具体类型。这条正是「测试替身与生产行为不同」的那一类：替身和真实现都实现了这个方法，谁都没被调到。
+
+修法是把 `func setVoiceProcessingEnabled(_ enabled: Bool) async` 加回 requirement 列表（extension 里保留默认实现，所以 5 个 conformer 一个都不用改）。
+
 ## 4. 顺序上的两条硬约束
 
 **① `attemptEnable` 必须按引擎状态给，`startCapture()` 也不例外。**
@@ -81,7 +95,9 @@
 
 ## 6. 测试
 
-7 条，全部密闭、不碰音频硬件（`docs/19` §4.2）。
+9 条，全部密闭、不碰音频硬件（`docs/19` §4.2）：**引擎侧 7 条**（格式决策 + 顺序 + 降级 + 报告措辞）+ **中间件侧 2 条**（flag → 引擎的接线）。
+
+中间件那 2 条不是凑数：§3.1 那个 bug 只有它们能抓到。**引擎侧测试全绿而生产路径是死的**，这是本票最值得记的一课 —— 只测具体类型，测不出经过存在类型的调用。
 
 CI 的关键约束：`swift test` 跑在没有音频输入设备的 macOS runner 上，`inputFormat` 是 0Hz/0ch，所以 `startCapture()` **在格式守卫处就停住**，之后一行都不执行。**不能靠 `try? startCapture()` 去够被测代码**——仓里既有的那条 `startCapture()` 测试在 CI 里就是空的。所以本票的断言分两类：
 
@@ -120,10 +136,23 @@ CI 的关键约束：`swift test` 跑在没有音频输入设备的 macOS runner
 
 第 ③ 条是评审**质疑过强度**的那条（它证的是「enable 在格式守卫之前被调用」，不是「enable 在格式读取之前」）。红验证确认它有牙：去掉调用就红，且红在 `recorder.calls` 上。
 
+**④ 把 `setVoiceProcessingEnabled` 从 requirement 列表拿掉、只留在 extension 里**（即 §3.1 那个 bug 的原状）——
+
+```
+✘ Test sessionStartPassesTheVoiceProcessingFlagToTheEngine() recorded an issue at
+  SpeechSessionMiddlewareTests.swift:1600:25: Issue recorded
+↳ The engine was never told about voice processing. Check that
+  `setVoiceProcessingEnabled` is a requirement of `AudioEngineProtocol`, not only a
+  defaulted extension method — extension-only methods are dispatched statically
+  through the existential and never reach the real engine.
+```
+
+这条的失败信息是刻意写长的：`waitUntil` 超时本身只会给一个 `TimeoutError`，说不清任何事情，而这里的成因非常具体、而且**已经发生过一次**。
+
 ### 门禁
 
 ```bash
-swift test          # 473 tests passed  (466 + 7)
+swift test          # 475 tests passed  (466 + 9)
 xcodebuild -project FluentWorkHost.xcodeproj -scheme FluentWorkHost \
   -configuration Debug -destination 'generic/platform=iOS Simulator' build   # BUILD SUCCEEDED
 ```

@@ -1538,6 +1538,78 @@ struct I20TurnTelemetryTests {
     }
 }
 
+@Suite("SpeechSessionMiddleware Engine Voice Processing")
+struct SpeechSessionMiddlewareVoiceProcessingTests {
+
+    /// The flag is the whole reason the engine-level switch is switchable: T4
+    /// compares two builds that differ only in whether `voiceProcessing` is in
+    /// `firstWave`. If the middleware stopped passing it through, both builds
+    /// would run with the unit off and the comparison would silently become
+    /// "off vs off" — the A/B would look like a clean result and mean nothing.
+    @MainActor
+    @Test func sessionStartPassesTheVoiceProcessingFlagToTheEngine() async throws {
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { StubSpeechSessionClientForMiddleware() }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.featureFlags(.setLocalOverride(flag: .voiceProcessing, isEnabled: true)))
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+
+        await expectTheEngineWasTold(audioEngine)
+        #expect(await audioEngine.voiceProcessingValues == [true])
+    }
+
+    /// The shipped default. Pinned separately from the case above because
+    /// "we never told the engine anything" and "we told it off" are different
+    /// facts to the engine, and only the second one is deliberate.
+    @MainActor
+    @Test func sessionStartTellsTheEngineVoiceProcessingIsOffByDefault() async throws {
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { StubSpeechSessionClientForMiddleware() }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+
+        await expectTheEngineWasTold(audioEngine)
+        #expect(await audioEngine.voiceProcessingValues == [false])
+    }
+
+    /// Waits for the middleware to hand the engine a value at all, and says
+    /// why it might never have.
+    ///
+    /// A bare `waitUntil` would surface this as `TimeoutError`, which says
+    /// nothing about the cause. The cause is specific and has already happened
+    /// once: `setVoiceProcessingEnabled` was declared only in the
+    /// `AudioEngineProtocol` extension, and an extension-only method is
+    /// dispatched **statically** through `any AudioEngineProtocol` — so the
+    /// default no-op ran, the real engine was never told, and every unit test
+    /// that exercised `LiveAudioEngine` directly still passed.
+    @MainActor
+    private func expectTheEngineWasTold(_ audioEngine: StubAudioEngineForMiddleware) async {
+        do {
+            try await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+                await !audioEngine.voiceProcessingValues.isEmpty
+            }
+        } catch {
+            Issue.record(
+                """
+                The engine was never told about voice processing. Check that \
+                `setVoiceProcessingEnabled` is a requirement of \
+                `AudioEngineProtocol`, not only a defaulted extension method — \
+                extension-only methods are dispatched statically through the \
+                existential and never reach the real engine.
+                """
+            )
+        }
+    }
+}
+
 // MARK: - Test Helpers
 
 private enum StubError: Error {
@@ -1555,6 +1627,12 @@ private final class StubAudioEngineForMiddleware: AudioEngineProtocol, @unchecke
     var interruptCalls: Int { get async { await _interruptCalls.get() } }
     private let _reconfigureCalls = AsyncValue(0)
     var reconfigureCalls: Int { get async { await _reconfigureCalls.get() } }
+    /// Every value `setVoiceProcessingEnabled` was handed, in order. Recorded
+    /// rather than ignored because the default protocol implementation is a
+    /// no-op — without this, a middleware that stopped passing the flag through
+    /// would look exactly like one that passes `false`.
+    private let _voiceProcessingValues = AsyncValue<[Bool]>([])
+    var voiceProcessingValues: [Bool] { get async { await _voiceProcessingValues.get() } }
 
     init() {
         let pair = AsyncStream.makeStream(of: AudioEngineEvent.self)
@@ -1563,6 +1641,10 @@ private final class StubAudioEngineForMiddleware: AudioEngineProtocol, @unchecke
     }
 
     func startCapture() async throws {}
+
+    func setVoiceProcessingEnabled(_ enabled: Bool) async {
+        await _voiceProcessingValues.update { $0 + [enabled] }
+    }
     func stopCapture() async {
         await _stopCaptureCalled.set(true)
     }

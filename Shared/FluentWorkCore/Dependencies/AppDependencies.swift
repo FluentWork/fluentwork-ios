@@ -55,6 +55,16 @@ public protocol AudioEngineProtocol: Sendable {
     /// Used by I20 recording abort so middleware does not send `user.speech.end`.
     func discardActiveSpeech() async
     func setSpeechBoundaryMode(_ mode: SpeechBoundaryMode) async
+    /// Declares whether the session should run engine-level voice processing
+    /// (AEC). Applied when the capture graph is built, since the unit may only
+    /// be toggled while the engine is stopped.
+    ///
+    /// A **requirement**, not just a defaulted extension method. An
+    /// extension-only method is dispatched statically when called through
+    /// `any AudioEngineProtocol` — the default would run, the real engine's
+    /// implementation would not, and the switch would never reach the audio
+    /// path while every test that used the concrete type still passed.
+    func setVoiceProcessingEnabled(_ enabled: Bool) async
     /// Emit `.speechStarted` for tap-to-talk. No-op if speech is already open.
     func beginManualSpeech() async
     /// Emit `.speechEnded` for tap-to-talk. No-op if speech is not open.
