@@ -24,6 +24,8 @@ public enum AppRoute: TGRoute, Codable {
     /// The conversation list. Takes no `sessionID` — it is the thing that
     /// hands one out.
     case sessionHistory
+    /// One past session, pushed from the list. Read-only.
+    case sessionDetail(sessionID: String)
 
     /// Stable path shared with `FeaturePluginDescriptor.entryRoute`.
     public var entryRoute: String {
@@ -36,6 +38,8 @@ public enum AppRoute: TGRoute, Codable {
             return "/daily-read"
         case .sessionHistory:
             return "/sessions"
+        case .sessionDetail(let sessionID):
+            return "/sessions/\(sessionID)"
         }
     }
 
@@ -50,6 +54,11 @@ public enum AppRoute: TGRoute, Codable {
             self = .dailyRead(sessionID: sessionID)
         case "/sessions":
             self = .sessionHistory
+        // Note what is *not* here: `/sessions/<id>`. That path exists on the
+        // server, but on this side the detail is only ever reached by tapping a
+        // row, which builds the route from the id it already has. Parsing it
+        // back out of a string would add a second way to construct the same
+        // route and a way to get it wrong.
         default:
             return nil
         }
@@ -61,7 +70,7 @@ public enum AppRoute: TGRoute, Codable {
         switch self {
         case .speakingRoom, .review:
             return .workbench(.present(self, style: .fullScreenCover))
-        case .dailyRead, .sessionHistory:
+        case .dailyRead, .sessionHistory, .sessionDetail:
             return .workbench(.push(self))
         }
     }

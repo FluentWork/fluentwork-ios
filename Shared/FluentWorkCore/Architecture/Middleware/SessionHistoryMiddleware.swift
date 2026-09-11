@@ -83,9 +83,38 @@ public func sessionHistoryMiddleware(container: Container? = nil) -> Middleware<
                 }
             )
 
-        case .loadSucceeded, .loadFailed:
+        case .detailRequested(let sessionID):
+            let base = next(action)
+            return .merge(
+                base,
+                // One task id for every session, so opening B cancels A's
+                // request instead of racing it. The reducer's
+                // `requestedSessionID` check would catch that race anyway; this
+                // is what stops the wasted round trip and the late write.
+                .task(id: AppTaskID.sessionHistoryDetail) {
+                    await loadDetail(client: client, sessionID: sessionID)
+                }
+            )
+
+        case .loadSucceeded, .loadFailed, .detailSucceeded, .detailFailed:
             return next(action)
         }
+    }
+}
+
+private func loadDetail(
+    client: SessionHistoryClientProtocol,
+    sessionID: String
+) async -> AppAction? {
+    do {
+        let detail = try await client.sessionDetail(sessionID: sessionID)
+        guard !Task.isCancelled else { return nil }
+        return .sessionHistory(.detailSucceeded(detail))
+    } catch is CancellationError {
+        return nil
+    } catch {
+        guard !Task.isCancelled else { return nil }
+        return .sessionHistory(.detailFailed(error.localizedDescription))
     }
 }
 

@@ -226,6 +226,22 @@ struct HostRootView: View {
                 },
                 onLoadMore: {
                     store.dispatch(.sessionHistory(.loadMoreRequested))
+                },
+                onSelect: { sessionID in
+                    store.dispatch(.navigation(.workbench(.push(.sessionDetail(sessionID: sessionID)))))
+                }
+            )
+        case let .sessionDetail(sessionID):
+            SessionDetailView(
+                model: makeSessionDetailViewModel(from: store.state.sessionHistory.detail),
+                onAppear: {
+                    // Re-requesting on appear is what makes back-and-forth
+                    // work: the state holds one session, and coming back to a
+                    // different row must not show the previous one.
+                    store.dispatch(.sessionHistory(.detailRequested(sessionID: sessionID)))
+                },
+                onRetry: {
+                    store.dispatch(.sessionHistory(.detailRequested(sessionID: sessionID)))
                 }
             )
         }
@@ -515,6 +531,67 @@ struct HostRootView: View {
             isLoadingMore: state.isLoadingMore,
             errorMessage: state.errorMessage
         )
+    }
+
+    /// State → the detail screen's plain model.
+    ///
+    /// `isUser` comes from the wire's `speaker` string compared against
+    /// `"user"`, and anything else — known-unknown or genuinely new — renders
+    /// as the other side with its own label rather than being dropped. A
+    /// transcript that silently loses turns is worse than one that labels them
+    /// oddly.
+    private func makeSessionDetailViewModel(
+        from state: SessionHistoryDetailState
+    ) -> SessionDetailViewModel {
+        let phase: SessionDetailViewPhase
+        switch state.phase {
+        case .idle:
+            phase = .idle
+        case .loading:
+            phase = .loading
+        case .ready:
+            phase = .ready
+        case .failed:
+            phase = .failed
+        }
+
+        guard let detail = state.detail else {
+            return SessionDetailViewModel(phase: phase)
+        }
+
+        let now = Date()
+        let subtitle = [
+            SessionHistoryFormatting.startedAt(detail.startedAt, now: now),
+            SessionHistoryFormatting.duration(detail.durationSec),
+        ].joined(separator: " · ")
+
+        return SessionDetailViewModel(
+            phase: phase,
+            subtitleText: subtitle,
+            turns: detail.utterances
+                .sorted { $0.seq < $1.seq }
+                .map { utterance in
+                    SessionDetailTurnViewData(
+                        id: utterance.seq,
+                        isUser: utterance.speaker == "user",
+                        speakerLabel: Self.speakerLabel(utterance.speaker),
+                        text: utterance.text
+                    )
+                },
+            errorMessage: state.phase.errorMessage
+        )
+    }
+
+    /// `user` / `ai` are the two the backend sends. A third one keeps its own
+    /// name instead of being folded into "AI" — the transcript is the one place
+    /// where every turn has to be attributable to somebody, and mislabelling
+    /// one is worse than showing a word the reader has not seen before.
+    private static func speakerLabel(_ speaker: String) -> String {
+        switch speaker {
+        case "user": return "我"
+        case "ai": return "AI"
+        default: return speaker
+        }
     }
 
     private func makeBadgeFeedbackViewModel(

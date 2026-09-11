@@ -1,8 +1,9 @@
-# 会话列表：接通读路径，暂不进入
+# 会话列表与只读重现
 
 **日期**：2026-09-12
-**状态**：代码与测试已齐。列表**能列出真实数据**；**点进去是下一步**（`79_` 本票 · 2），本片刻意不做。
-**对应**：meta `79_` **本票 · 1**（会话列表）
+**状态**：代码与测试已齐。列表列出真实数据，**点开某一场能看到当时的对话**。
+**它仍然进不了房间** —— 见 §2，那是有意的。
+**对应**：meta `79_` **本票 · 1**（会话列表）+ **本票 · 2**（进入旧房间，**只做到了「重现」，没做到「进入」**，理由见 §2）
 
 ## 1. 为什么是这个形状
 
@@ -10,13 +11,22 @@
 
 拆片的理由不是工程量，是**第 2 片会让第 1 片的形状反过来**：进入旧房间要读 `SessionDetail.utterances`，而那一场**服务端恢复不了**（`77_` P1-15 已核实）。所以「进入」是**只读重现 + 另开一场新的**，不是续接。先把列表做出来、把这件事说清楚，比一次性做一个点进去会清空的入口要好。
 
-## 2. 一个刻意的缺失：行**不可点**
+## 2. 行点亮了，但它去的是**记录**，不是房间
 
-这是本片最需要解释的决定。
+这是本片最需要解释的决定，也是它和票面措辞的**唯一一处分歧**。
 
-今天把行点亮，唯一能去的地方是 speaking room，而 speaking room 会**开一场全新的服务端会话**。用户点「昨天那场」，落进一个空房间 —— 那正是这张票要消除的现象本身（「结束会话后再次进入，之前的对话内容都没了」）。
+票面第 2 片写的是「**进入旧房间** —— 用 `SessionDetail.utterances` 把那一场渲染出来」。落地时把这一句拆成了两半：
 
-所以行**不做成可点的**，列表底部用一句普通话说明现状，而不是留一行看起来能点、点了没反应、或者更糟——点了清空的东西。进入的那一下，和第 2 片一起上。
+| | 做没做 |
+|---|---|
+| **把那一场渲染出来** | ✅ 做了 —— 点开行 → `GET /sessions/:id` → 那一场的完整对话，只读 |
+| **进入房间** | ❌ 没做，且**刻意** |
+
+理由是：speaking room 会**开一场全新的服务端会话**（§约束 1：服务端恢复不了）。用户点「昨天那场」，如果那一行通向房间，他会落进一个空房间 —— 那正是这张票要消除的现象本身（「结束会话后再次进入，之前的对话内容都没了」）。
+
+**一个通向空房间的入口比一个只读的记录页更糟**：只读页至少给了用户他要的东西（当时的对话），而空房间会让他以为修好了、然后发现没有。所以这一片交付的是**记录**，房间入口留给第 3 片（连同 §设计 3 那条「清空条件从『进入 `.connecting`』改为『明确新建会话』」一起 —— 那条不改，房间里放什么都会被下一次进入清掉）。
+
+列表底部用一句普通话把这件事说清楚，而不是让用户自己发现。
 
 ## 3. 进房间的入口（本片的入口是**进列表**）
 
@@ -57,7 +67,26 @@ reducer 在应用 `.appear` 时**就会**把 `didRequestInitialLoad` 翻成 true
 
 `.appear` 有 `didRequestInitialLoad` 守卫，**失败之后它不会再触发**。于是「失败页上的重试按钮」走的是 `.refreshRequested`——如果它不改相位，重试按钮看起来什么也没发生，直到响应回来。这就是 §4.3 同一类问题的另一半：**只有列表非空时，refresh 才该保持内容不动**。
 
-### 4.5 格式化放在 core，不放 view
+### 4.5 详情：**只解 `utterances`，不碰 `review`**
+
+`SessionDetail` 契约里还有 `materials` 与 `review`，客户端**一个都没解码**：
+
+- `materials` 在契约注释里自己写着是 B21 占位，恒空。
+- `review` 已经有一整页 —— 回顾页渲染的就是它，而从房间里一步可达。**在这里再解一份，等于「这一场得了多少分」有两个会漂移的地方。**
+
+只解 `utterances`，是因为「重现那一场」指的就是它。
+
+### 4.6 详情页防的是**串台**，不是加载失败
+
+详情状态里唯一不那么显然的字段是 `requestedSessionID`。它**在请求发出时**写、不在响应到达时写，因为它是唯一能区分「用户刚离开那一场的迟到响应」和「用户正在看那一场」的东西 —— 两者都是 `SessionDetail`，`detailSucceeded` 没有别的东西可比。
+
+两道防线，各自可独立测：
+1. **任务 id**（`AppTaskID.sessionHistoryDetail`）—— 打开 B 会**取消** A 的请求，省掉一次往返。
+2. **reducer 的 `guard detail.sessionID == requestedSessionID`** —— 万一任务与派发分了家，这一道还在。
+
+`.detailRequested` 里还**主动清掉 `detail`**：不清的话，上一个会话的转录会挂在新那一行的标题下继续显示 —— 那是这个屏幕**唯一能撒谎**的方式，其它失败都只是「还没做完」。
+
+### 4.7 格式化放在 core，不放 view
 
 `FluentWorkUI` 至今**没有任何 `DateFormatter`**，本片维持这一点。`SessionHistoryFormatting` 在 core，纯函数，三个入口：`duration` / `startedAt` / `status`。
 
@@ -69,7 +98,8 @@ reducer 在应用 `.appear` 时**就会**把 `didRequestInitialLoad` 翻成 true
 ## 5. 已知缺口（**不是**没做完）
 
 1. **列表项没有可读标题。** 契约只有 `session_id / scene_type / status / started_at / duration_sec / material_id`，一个人靠「2 分 34 秒、今天 14:32」选不出会话。所以行**只能**以时间和时长开头。标题的正主是 A1 提炼的主题（`80_`），落地的位置是：后端契约 → `SessionHistoryItem` → `SessionHistoryRowViewData` → 行 ——**四处一起改**，注释里已写明。
-2. **行不可点**（§2），与第 2 片一起上。
+2. **点开是只读的，进不了房间**（§2）。第 3 片。
+3. **详情页没有 `review`**（§4.5）：评估内容仍在回顾页，一处。
 
 ## 6. 红验证与门禁
 
@@ -79,9 +109,11 @@ reducer 在应用 `.appear` 时**就会**把 `didRequestInitialLoad` 翻成 true
 | `appending ? items + page.items : page.items` → `page.items` | `aSecondPageAppends`（`["c"] != ["a","b","c"]`）+ 两条中间件测试 |
 | 删掉 refresh 的 `if items.isEmpty { phase = .loading }` | `refreshShowsTheSpinnerWhenThereIsNothingToKeep` |
 | 今天/昨天改成 24 小时间隔 | `todayAndYesterdayAreCalendarDaysNotTwentyFourHours` |
+| 删掉 `guard detail.sessionID == requestedSessionID` | `aDetailResponseForADifferentSessionIsDropped` |
+| 删掉 `.detailRequested` 里的 `state.detail.detail = nil` | `openingAnotherSessionClearsTheOneOnScreen` |
 
 ```
-swift test                                    # 506 passed  (495 + 11)
+swift test                                    # 510 passed  (495 + 15)
 xcodebuild -scheme FluentWorkHost -configuration Debug \
   -destination 'generic/platform=iOS' build   # BUILD SUCCEEDED
 ```
@@ -97,12 +129,13 @@ xcodebuild -scheme FluentWorkHost -configuration Debug \
 
 | | 归属 |
 |---|---|
-| 点进旧房间、重现 `utterances` | `79_` 本票 · 2 |
+| **真的进入房间**（§2：只读页不是房间）+ §设计 3 的清空条件改动 | `79_` 本票 · 3 |
 | 明确的新会话入口（不是「进房间」的副作用） | `79_` 本票 · 3 |
 | 列表标题字段 | 后端契约变更；正主是 A1（`80_`）|
 | 「AI 记得上一场」 | `77_` **P0-9**（另一件事，`79_` §约束 2 已要求分开报）|
 | 转录的本地缓存 | 不做 —— 服务端是唯一真相 |
 
-> 本片交付的是**一条接通的读路径**：真数据、真分页、真空态、真失败态。
-> 它**不**交付「回到昨天那场」—— 那需要服务端能恢复一场会话，而它不能（`77_` P1-15）。
-> 把这两件事混着说，就是 `79_` 存在的那个误会本身。
+> 本片交付的是**两条接通的读路径**：列表（`GET /sessions`）与详情（`GET /sessions/:id`）。
+> 它**不**交付「回到昨天那场继续聊」—— 那需要服务端能恢复一场会话，而它不能（`77_` P1-15）。
+> **「看到当时的对话」和「回到那一场」是两件事**，本片只做了前一件，并且刻意不让它们
+> 长得一样 —— 把这两件事混着说，就是 `79_` 存在的那个误会本身。

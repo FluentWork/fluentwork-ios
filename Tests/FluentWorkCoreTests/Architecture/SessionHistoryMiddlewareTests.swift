@@ -29,20 +29,55 @@ private struct SessionHistoryStubFailure: Error, LocalizedError {
 /// cursor — and a stub that only returns data cannot tell them apart.
 private final class StubSessionHistoryClient: SessionHistoryClientProtocol, @unchecked Sendable {
     typealias Responder = @Sendable (String?) throws -> SessionHistoryPage
+    typealias DetailResponder = @Sendable (String) throws -> SessionDetail
 
     private let responder: Responder
+    private let detailResponder: DetailResponder
     private let storage = OSAllocatedUnfairLock<[String?]>(initialState: [])
+    private let detailStorage = OSAllocatedUnfairLock<[String]>(initialState: [])
 
-    init(responder: @escaping Responder) {
+    init(
+        responder: @escaping Responder,
+        detailResponder: @escaping DetailResponder = { sessionID in
+            SessionDetail(
+                sessionID: sessionID,
+                sceneType: "voice",
+                status: "ended",
+                startedAt: Date(timeIntervalSince1970: 1_789_142_524),
+                durationSec: 154
+            )
+        }
+    ) {
         self.responder = responder
+        self.detailResponder = detailResponder
     }
 
     var requestedCursors: [String?] { storage.withLock { $0 } }
+    var requestedDetailIDs: [String] { detailStorage.withLock { $0 } }
 
     func listSessions(cursor: String?, size: Int?) async throws -> SessionHistoryPage {
         storage.withLock { $0.append(cursor) }
         return try responder(cursor)
     }
+
+    func sessionDetail(sessionID: String) async throws -> SessionDetail {
+        detailStorage.withLock { $0.append(sessionID) }
+        return try detailResponder(sessionID)
+    }
+}
+
+private func makeDetail(
+    _ sessionID: String,
+    utterances: [SessionUtterance] = []
+) -> SessionDetail {
+    SessionDetail(
+        sessionID: sessionID,
+        sceneType: "voice",
+        status: "ended",
+        startedAt: Date(timeIntervalSince1970: 1_789_142_524),
+        durationSec: 154,
+        utterances: utterances
+    )
 }
 
 @MainActor
@@ -221,6 +256,84 @@ private func makeStore(
         store.state.sessionHistory.items.map(\.sessionID) == ["s-9"]
     }
     #expect(client.requestedCursors == [nil])
+}
+
+/// The whole point of the detail screen: the transcript comes back and is
+/// reachable in state. Everything above this is plumbing.
+@MainActor
+@Test func detailRequestedLoadsThatSessionsTranscript() async throws {
+    let client = StubSessionHistoryClient(
+        responder: { _ in
+            SessionHistoryPage(items: [], nextCursor: nil, size: 20)
+        },
+        detailResponder: { sessionID in
+            makeDetail(
+                sessionID,
+                utterances: [
+                    SessionUtterance(seq: 1, speaker: "user", text: "How do I say 限流?"),
+                    SessionUtterance(seq: 2, speaker: "ai", text: "Rate limiting."),
+                ]
+            )
+        }
+    )
+    let (store, _) = makeStore(client: client)
+
+    store.dispatch(.sessionHistory(.detailRequested(sessionID: "s-1")))
+
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
+        store.state.sessionHistory.detail.phase == .ready
+    }
+    #expect(client.requestedDetailIDs == ["s-1"])
+    #expect(
+        store.state.sessionHistory.detail.detail?.utterances.map(\.text)
+            == ["How do I say 限流?", "Rate limiting."]
+    )
+}
+
+/// A response for a session the user has already navigated away from must not
+/// land. The task-id cancels the request, so this is the second line of
+/// defence — and the reducer is the half that can be tested without racing two
+/// real requests.
+@MainActor
+@Test func aDetailResponseForADifferentSessionIsDropped() async throws {
+    let client = StubSessionHistoryClient(
+        responder: { _ in SessionHistoryPage(items: [], nextCursor: nil, size: 20) },
+        detailResponder: { _ in makeDetail("s-1") }
+    )
+    let (store, _) = makeStore(
+        client: client,
+        state: SessionHistoryState(
+            phase: .ready,
+            items: [makeSessionItem("s-1"), makeSessionItem("s-2")],
+            didRequestInitialLoad: true,
+            detail: SessionHistoryDetailState(requestedSessionID: "s-2", phase: .loading)
+        )
+    )
+
+    store.dispatch(.sessionHistory(.detailSucceeded(makeDetail("s-1"))))
+
+    #expect(
+        store.state.sessionHistory.detail.detail == nil,
+        "the session the user left must not appear under the one they are looking at"
+    )
+    #expect(store.state.sessionHistory.detail.phase == .loading)
+}
+
+@MainActor
+@Test func aFailedDetailSurfacesItsMessage() async throws {
+    let client = StubSessionHistoryClient(
+        responder: { _ in SessionHistoryPage(items: [], nextCursor: nil, size: 20) },
+        detailResponder: { _ in throw SessionHistoryStubFailure() }
+    )
+    let (store, _) = makeStore(client: client)
+
+    store.dispatch(.sessionHistory(.detailRequested(sessionID: "s-1")))
+
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
+        if case .failed = store.state.sessionHistory.detail.phase { return true }
+        return false
+    }
+    #expect(store.state.sessionHistory.detail.phase.errorMessage != nil)
 }
 
 @MainActor

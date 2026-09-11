@@ -21,6 +21,7 @@ public enum AppTaskID {
     public static let dailyReadAudioObserver: CancellationID = "daily-read.audio-observer"
     public static let sessionHistoryLoad: CancellationID = "session-history.load"
     public static let sessionHistoryLoadMore: CancellationID = "session-history.load-more"
+    public static let sessionHistoryDetail: CancellationID = "session-history.detail"
 
     public static func reviewAccept(cardID: String) -> CancellationID {
         CancellationID("review.accept.\(cardID)")

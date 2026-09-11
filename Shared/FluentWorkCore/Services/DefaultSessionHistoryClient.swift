@@ -4,6 +4,7 @@ import Foundation
 /// The conversation list, behind auth.
 public protocol SessionHistoryClientProtocol: Sendable {
     func listSessions(cursor: String?, size: Int?) async throws -> SessionHistoryPage
+    func sessionDetail(sessionID: String) async throws -> SessionDetail
 }
 
 public final class DefaultSessionHistoryClient: SessionHistoryClientProtocol, Sendable {
@@ -27,6 +28,11 @@ public final class DefaultSessionHistoryClient: SessionHistoryClientProtocol, Se
     ) async throws -> SessionHistoryPage {
         let accessToken = try await requireAccessToken()
         return try await api.listSessions(accessToken: accessToken, cursor: cursor, size: size)
+    }
+
+    public func sessionDetail(sessionID: String) async throws -> SessionDetail {
+        let accessToken = try await requireAccessToken()
+        return try await api.getSessionDetail(sessionID: sessionID, accessToken: accessToken)
     }
 
     // Both helpers are duplicated per client in this repository rather than

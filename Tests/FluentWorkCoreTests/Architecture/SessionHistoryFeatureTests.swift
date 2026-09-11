@@ -120,6 +120,31 @@ struct SessionHistoryFeatureTests {
         #expect(loaded.items.map(\.sessionID) == ["a"])
     }
 
+    /// Opening a second row must not leave the first one's transcript on
+    /// screen. It would render under the new row's title, which is the one way
+    /// this screen can tell a lie rather than just look unfinished.
+    @Test func openingAnotherSessionClearsTheOneOnScreen() {
+        var state = SessionHistoryState()
+        sessionHistoryReducer(&state, .detailRequested(sessionID: "a"))
+        sessionHistoryReducer(&state, .detailSucceeded(
+            SessionDetail(
+                sessionID: "a",
+                sceneType: "voice",
+                status: "ended",
+                startedAt: Date(timeIntervalSince1970: 1_789_142_524),
+                durationSec: 154,
+                utterances: [SessionUtterance(seq: 1, speaker: "user", text: "hello")]
+            )
+        ))
+        #expect(state.detail.phase == .ready)
+
+        sessionHistoryReducer(&state, .detailRequested(sessionID: "b"))
+
+        #expect(state.detail.detail == nil, "the previous session's transcript must not linger")
+        #expect(state.detail.phase == .loading)
+        #expect(state.detail.requestedSessionID == "b")
+    }
+
     /// With no cursor there is nothing more to ask for, and asking would loop.
     @Test func loadMoreIsRefusedWhenThereIsNoCursor() {
         var state = SessionHistoryState()

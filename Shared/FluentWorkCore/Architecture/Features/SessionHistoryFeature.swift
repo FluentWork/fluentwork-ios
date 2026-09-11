@@ -15,6 +15,44 @@ public enum SessionListPhase: Equatable, Sendable {
     case failed(String)
 }
 
+/// Where one past session is. No `empty` case, unlike the list: a session with
+/// nothing said in it is still *a* session, and "there is nothing on this
+/// screen" is not the same thing to say as "you have no sessions".
+public enum SessionDetailPhase: Equatable, Sendable {
+    case idle
+    case loading
+    case ready
+    case failed(String)
+
+    public var errorMessage: String? {
+        if case let .failed(message) = self { return message }
+        return nil
+    }
+}
+
+public struct SessionHistoryDetailState: Equatable, Sendable, State {
+    /// Which session was asked for.
+    ///
+    /// Set when the request goes out, not when the response arrives, and that
+    /// is the point: it is the only thing that can tell a late response for the
+    /// session the user just left from one for the session they are looking at.
+    /// Both are `SessionDetail`, and `detailSucceeded` has nothing else to
+    /// compare against.
+    public var requestedSessionID: String?
+    public var phase: SessionDetailPhase
+    public var detail: SessionDetail?
+
+    public init(
+        requestedSessionID: String? = nil,
+        phase: SessionDetailPhase = .idle,
+        detail: SessionDetail? = nil
+    ) {
+        self.requestedSessionID = requestedSessionID
+        self.phase = phase
+        self.detail = detail
+    }
+}
+
 public struct SessionHistoryState: Equatable, Sendable, State {
     public var phase: SessionListPhase
     public var items: [SessionHistoryItem]
@@ -30,6 +68,10 @@ public struct SessionHistoryState: Equatable, Sendable, State {
     /// from one that loaded nothing, and the user's next move — tap it again —
     /// would be a guess.
     public var errorMessage: String?
+    /// The pushed detail screen's state, kept here rather than in its own
+    /// top-level `AppState` field: it is reached only from this list, and it is
+    /// meaningless without it.
+    public var detail: SessionHistoryDetailState
 
     public var hasMore: Bool { nextCursor != nil }
 
@@ -39,7 +81,8 @@ public struct SessionHistoryState: Equatable, Sendable, State {
         nextCursor: String? = nil,
         isLoadingMore: Bool = false,
         didRequestInitialLoad: Bool = false,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        detail: SessionHistoryDetailState = SessionHistoryDetailState()
     ) {
         self.phase = phase
         self.items = items
@@ -47,6 +90,7 @@ public struct SessionHistoryState: Equatable, Sendable, State {
         self.isLoadingMore = isLoadingMore
         self.didRequestInitialLoad = didRequestInitialLoad
         self.errorMessage = errorMessage
+        self.detail = detail
     }
 }
 
@@ -56,6 +100,9 @@ public enum SessionHistoryAction: Equatable, Sendable, Action {
     case loadMoreRequested
     case loadSucceeded(SessionHistoryPage, appending: Bool)
     case loadFailed(String)
+    case detailRequested(sessionID: String)
+    case detailSucceeded(SessionDetail)
+    case detailFailed(String)
 }
 
 public let sessionHistoryReducer: Reducer<SessionHistoryState, SessionHistoryAction> = { state, action in
@@ -103,5 +150,25 @@ public let sessionHistoryReducer: Reducer<SessionHistoryState, SessionHistoryAct
         if state.items.isEmpty {
             state.phase = .failed(message)
         }
+
+    case let .detailRequested(sessionID):
+        state.detail.requestedSessionID = sessionID
+        state.detail.phase = .loading
+        // Drop whatever was on screen. Leaving the previous session's
+        // transcript up while a new one loads would show it under the new
+        // row's title, which is the one way this screen can lie.
+        state.detail.detail = nil
+
+    case let .detailSucceeded(detail):
+        // A response for a session the user has already navigated away from.
+        // The task-id cancels the request itself, so this is the second line of
+        // defence — and the one that still holds if the task and the dispatch
+        // ever get separated.
+        guard detail.sessionID == state.detail.requestedSessionID else { return }
+        state.detail.detail = detail
+        state.detail.phase = .ready
+
+    case let .detailFailed(message):
+        state.detail.phase = .failed(message)
     }
 }

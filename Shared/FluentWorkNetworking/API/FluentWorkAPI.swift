@@ -26,6 +26,8 @@ public enum FluentWorkAPI: FluentWorkTargetType {
   )
   /// `GET /api/v1/sessions` — the conversation list (backend B24).
   case listSessions(accessToken: String, cursor: String? = nil, size: Int? = nil)
+  /// `GET /api/v1/sessions/:id` — one past session, with its transcript.
+  case getSessionDetail(sessionID: String, accessToken: String)
   case batchAcceptCorpusBlocks(
     accessToken: String,
     sourceSessionID: String,
@@ -69,6 +71,8 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       return "/corpus/blocks"
     case .listSessions:
       return "/sessions"
+    case .getSessionDetail(let sessionID, _):
+      return "/sessions/\(sessionID)"
     case .batchAcceptCorpusBlocks:
       return "/corpus/blocks/batch-accept"
     case .updateCorpusBlock(_, let blockID, _),
@@ -85,7 +89,8 @@ public enum FluentWorkAPI: FluentWorkTargetType {
 
   public var method: Moya.Method {
     switch self {
-    case .getDailyReadToday, .getSessionReview, .listCorpusBlocks, .listSessions:
+    case .getDailyReadToday, .getSessionReview, .listCorpusBlocks, .listSessions,
+      .getSessionDetail:
       return .get
     case .deleteCorpusBlock:
       return .delete
@@ -129,7 +134,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
         return .requestPlain
       }
       return .requestParameters(parameters: parameters, encoding: JSONEncoding.default)
-    case .getSessionReview:
+    case .getSessionReview, .getSessionDetail:
       return .requestPlain
     case .sendSessionMessage(_, _, let text, let channel):
       return .requestParameters(
@@ -224,6 +229,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       .sendSessionMessage(_, let token, _, _),
       .listCorpusBlocks(let token, _, _, _, _, _, _, _),
       .listSessions(let token, _, _),
+      .getSessionDetail(_, let token),
       .batchAcceptCorpusBlocks(let token, _, _),
       .updateCorpusBlock(let token, _, _),
       .deleteCorpusBlock(let token, _),

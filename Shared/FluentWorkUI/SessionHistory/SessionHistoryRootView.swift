@@ -61,29 +61,30 @@ public struct SessionHistoryViewModel: Equatable, Sendable {
 
 /// The conversation list.
 ///
-/// **Rows are not tappable, on purpose.** Entering one would today open the
-/// speaking room, and the speaking room starts a fresh server session — the
-/// server cannot resume one (`79_` §约束 1) — so a tap would land the user in
-/// an empty room. That is the exact complaint this list exists to answer, so
-/// the tap arrives with the slice that renders a past session's utterances,
-/// not before it. The footer says so in the meantime rather than leaving a row
-/// that looks interactive and is not.
+/// A row opens **that session's transcript** (`SessionDetailView`), pushed onto
+/// the same stack. It deliberately does *not* open the speaking room: the server
+/// cannot resume a session (`79_` §约束 1), so a row that dropped the user into
+/// the room would land them in an empty one — which is the exact complaint this
+/// list exists to answer.
 public struct SessionHistoryRootView: View {
     private let model: SessionHistoryViewModel
     private let onAppear: () -> Void
     private let onRefresh: () -> Void
     private let onLoadMore: () -> Void
+    private let onSelect: (String) -> Void
 
     public init(
         model: SessionHistoryViewModel,
         onAppear: @escaping () -> Void,
         onRefresh: @escaping () -> Void,
-        onLoadMore: @escaping () -> Void
+        onLoadMore: @escaping () -> Void,
+        onSelect: @escaping (String) -> Void
     ) {
         self.model = model
         self.onAppear = onAppear
         self.onRefresh = onRefresh
         self.onLoadMore = onLoadMore
+        self.onSelect = onSelect
     }
 
     public var body: some View {
@@ -125,18 +126,25 @@ public struct SessionHistoryRootView: View {
             case .ready:
                 Section {
                     ForEach(model.rows) { row in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(row.startedAtText)
-                                .font(.headline)
-                            HStack(spacing: 6) {
-                                Text(row.durationText)
-                                Text("·")
-                                Text(row.statusText)
+                        Button {
+                            onSelect(row.id)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(row.startedAtText)
+                                    .font(.headline)
+                                HStack(spacing: 6) {
+                                    Text(row.durationText)
+                                    Text("·")
+                                    Text(row.statusText)
+                                }
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                             }
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                         }
-                        .padding(.vertical, 2)
+                        .buttonStyle(.plain)
                     }
 
                     if model.canLoadMore {
@@ -149,7 +157,7 @@ public struct SessionHistoryRootView: View {
             }
 
             Section {
-                Text("这一版只列出历史会话。进入某一场、把当时的对话重新显示出来，是下一步接上的事。")
+                Text("点开任意一场可以看到当时的对话。要接着那场继续聊，得另开一场新的 —— 服务端不保存可以续接的会话。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
