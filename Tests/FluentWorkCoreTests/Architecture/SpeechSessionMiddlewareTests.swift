@@ -399,6 +399,43 @@ struct SpeechSessionMiddlewareB14Tests {
         #expect(await speechClient.getBoundaryCallCount() == boundariesAfterVAD)
     }
 
+    /// 2026-09-12: 长 TTS 还在播时点说话。audioEventPump 先发 `user.speech.start`，
+    /// 再 dispatch `vadSpeechStart`（那边才 fireAndForget `interrupt`）。网关 start
+    /// 会清掉上一轮的 deliveredText，所以 interrupt 日志永远是 delivered_chars: 0。
+    @MainActor
+    @Test func bargeInFromAISpeakingSendsInterruptBeforeUserSpeechStart() async throws {
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking)
+
+        audioEngine.emit(.speechStarted)
+        try await waitForPhase(store, phase: .recording)
+        try await waitUntil() {
+            let order = await speechClient.wireOrder()
+            return order.contains("interrupt") && order.contains("user.speech.start")
+        }
+
+        let order = await speechClient.wireOrder()
+        let interruptAt = order.firstIndex(of: "interrupt")
+        let startAt = order.firstIndex(of: "user.speech.start")
+        #expect(interruptAt != nil, "barge-in must send interrupt, got \(order)")
+        #expect(startAt != nil, "barge-in must still open the speech window, got \(order)")
+        guard let interruptAt, let startAt else { return }
+        #expect(
+            interruptAt < startAt,
+            "interrupt must precede user.speech.start so the gateway does not wipe deliveredText; got \(order)"
+        )
+    }
+
     @MainActor
     @Test func recordingTimeoutSendsClientTurnAbortAndKeepsSessionAlive() async throws {
         let container = Container()
@@ -1826,6 +1863,7 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
     private let _degradedTextMessageSent = AsyncValue(false)
     var degradedTextMessageSent: Bool { get async { await _degradedTextMessageSent.get() } }
     private let _sessionID = AsyncValue<String?>(nil)
+    private let _wireOrder = AsyncValue<[String]>([])
 
     private var sendDegradedResult: Result<PostMessageResponse, Error> = .success(
         PostMessageResponse(sessionID: "s-1", reply: "", channel: "text", generator: "stub")
@@ -1871,6 +1909,7 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
             newCalls.append(call)
             return newCalls
         }
+        await _wireOrder.update { $0 + [started ? "user.speech.start" : "user.speech.end"] }
     }
 
     func sendTurnAbort(turnID: String, outcome: TurnOutcome) async throws {
@@ -1882,7 +1921,11 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
     }
 
     func sendAudioPCM(_ data: Data) async throws {}
-    func submitTranscript(_ text: String) async {}
+    func submitTranscript(_ text: String) async {
+        if text == "__interrupt__" {
+            await _wireOrder.update { $0 + ["interrupt"] }
+        }
+    }
 
     /// Counted so a test can assert the reader is built once per store rather
     /// than once per session. The stream itself is a single process-lifetime
@@ -1933,6 +1976,10 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
 
     func getTurnAbortCalls() async -> [AbortCall] {
         await _turnAbortCalls.get()
+    }
+
+    func wireOrder() async -> [String] {
+        await _wireOrder.get()
     }
 }
 

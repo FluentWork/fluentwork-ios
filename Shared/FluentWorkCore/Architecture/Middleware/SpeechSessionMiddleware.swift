@@ -60,6 +60,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
     // loop never has to reach into the @MainActor store from a Sendable
     // closure.
     let turnCounter = TurnCountBox()
+    let phaseBox = SessionPhaseBox()
     let timings = SpeechSessionTimingsRecorder(
         tracker: resolvedContainer.tracker(),
         clock: resolvedContainer.clock().now
@@ -120,6 +121,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
                     container: resolvedContainer,
                     dispatch: { store.dispatch($0) },
                     turnCounter: turnCounter,
+                    phaseBox: phaseBox,
                     timings: timings,
                     speechCaptureGate: speechCaptureGate
                 )
@@ -143,6 +145,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
         // this is the same value the machine's reduce will use to do the
         // transition's count increment, so the two never drift.
         turnCounter.set(session.userTurnCount)
+        phaseBox.set(session.phase)
 
         // B15: flag to start the turn timeout when we enter .processing from
         // .recording. Sub-stage timers are scheduled as `.task(id:)` so they
@@ -235,6 +238,19 @@ internal final class TurnCountBox: @unchecked Sendable {
 
     func get() -> Int { storage.withLock { $0 } }
     func set(_ newValue: Int) { storage.withLock { $0 = newValue } }
+}
+
+/// Last applied session phase, readable from the audio pump.
+///
+/// `speechStarted` is handled in the pump *before* it dispatches
+/// `vadSpeechStart`. Barge-in from `.aiSpeaking` has to send `interrupt`
+/// before `user.speech.start` (2026-09-12); the pump can only know that if
+/// it can see the phase the machine is already in.
+internal final class SessionPhaseBox: @unchecked Sendable {
+    private let storage = OSAllocatedUnfairLock<SpeechSessionPhase>(initialState: .idle)
+
+    func get() -> SpeechSessionPhase { storage.withLock { $0 } }
+    func set(_ newValue: SpeechSessionPhase) { storage.withLock { $0 = newValue } }
 }
 
 /// Tracks whether the current user utterance is still open on the wire.
@@ -364,6 +380,7 @@ private func audioEventPump(
     container: Container,
     dispatch: @escaping @MainActor (AppAction) -> Void,
     turnCounter: TurnCountBox,
+    phaseBox: SessionPhaseBox,
     timings: SpeechSessionTimingsRecorder,
     speechCaptureGate: SpeechCaptureGate
 ) -> Effect<AppAction> {
@@ -387,7 +404,16 @@ private func audioEventPump(
                         pcmBuffer.removeAll()
                         isCapturingSpeech = true
                         speechCaptureGate.beginSpeech()
-    
+
+                        // Barge-in from AI speech: interrupt the in-flight
+                        // reply *before* opening the next speech window.
+                        // Sending start first is what made gateway
+                        // delivered_chars: 0 on 2026-09-12 — start resets
+                        // the previous turn's interrupt accounting.
+                        if phaseBox.get() == .aiSpeaking {
+                            await speechClient.submitTranscript("__interrupt__")
+                        }
+
                         // No turnID on start — backend uses the next
                         // user.speech.end's turnID as the dedupe scope.
                         try await speechClient.sendSpeechBoundary(
