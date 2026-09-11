@@ -24,6 +24,8 @@ public enum FluentWorkAPI: FluentWorkTargetType {
     limit: Int? = nil,
     favoriteOnly: Bool = false
   )
+  /// `GET /api/v1/sessions` — the conversation list (backend B24).
+  case listSessions(accessToken: String, cursor: String? = nil, size: Int? = nil)
   case batchAcceptCorpusBlocks(
     accessToken: String,
     sourceSessionID: String,
@@ -65,6 +67,8 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       return "/sessions/\(sessionID)/messages"
     case .listCorpusBlocks:
       return "/corpus/blocks"
+    case .listSessions:
+      return "/sessions"
     case .batchAcceptCorpusBlocks:
       return "/corpus/blocks/batch-accept"
     case .updateCorpusBlock(_, let blockID, _),
@@ -81,7 +85,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
 
   public var method: Moya.Method {
     switch self {
-    case .getDailyReadToday, .getSessionReview, .listCorpusBlocks:
+    case .getDailyReadToday, .getSessionReview, .listCorpusBlocks, .listSessions:
       return .get
     case .deleteCorpusBlock:
       return .delete
@@ -161,6 +165,18 @@ public enum FluentWorkAPI: FluentWorkTargetType {
         return .requestPlain
       }
       return .requestParameters(parameters: parameters, encoding: URLEncoding.queryString)
+    case .listSessions(_, let cursor, let size):
+      var parameters: [String: Any] = [:]
+      if let cursor, !cursor.isEmpty {
+        parameters["cursor"] = cursor
+      }
+      if let size {
+        parameters["size"] = size
+      }
+      if parameters.isEmpty {
+        return .requestPlain
+      }
+      return .requestParameters(parameters: parameters, encoding: URLEncoding.queryString)
     case .batchAcceptCorpusBlocks(_, let sourceSessionID, let blocks):
       return .requestJSONEncodable(
         CorpusBatchAcceptRequest(
@@ -207,6 +223,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       .getSessionReview(_, let token),
       .sendSessionMessage(_, let token, _, _),
       .listCorpusBlocks(let token, _, _, _, _, _, _, _),
+      .listSessions(let token, _, _),
       .batchAcceptCorpusBlocks(let token, _, _),
       .updateCorpusBlock(let token, _, _),
       .deleteCorpusBlock(let token, _),
