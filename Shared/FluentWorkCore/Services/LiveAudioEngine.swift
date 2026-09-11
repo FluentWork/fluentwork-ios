@@ -185,6 +185,48 @@ struct AudioPlaybackGate: Sendable {
     }
 }
 
+/// The order in which one session's audio graph is torn down.
+///
+/// Pure, and split out from `stopCapture()` for exactly one reason: **the order
+/// is the part that can be wrong, and it was untestable.**
+/// `AVAudioEngine` cannot be driven in CI (no audio device — the same reason
+/// `startCapture()` never gets past its format guard), so a teardown sequence
+/// embedded in an actor was a sequence nobody could assert anything about.
+///
+/// The rule the order has to obey: **`detach` mutates a live render graph.**
+/// Changing an `AVAudioEngine`'s graph while it is running is the F14/F15 family
+/// — this repository has paid for it three times, and its own lesson is "build
+/// the graph before `engine.start()`, do not rearrange it after".
+/// `engine.detach(_:)` is an `NSException`-raising call, not a throwing one, so
+/// getting it wrong takes the process down rather than returning an error.
+enum PlaybackTeardown {
+    enum Step: Equatable, Sendable {
+        case stopPlayer
+        case stopEngine
+        case detachPlayer
+    }
+
+    /// The steps to run, in order, for the state capture is being stopped from.
+    ///
+    /// `stopEngine` is emitted whenever the engine is running, whether or not a
+    /// player is attached: a session that never played anything still has a
+    /// running engine, and leaving it running is what makes the *next*
+    /// session's graph work against a stale one.
+    static func steps(playerAttached: Bool, engineRunning: Bool) -> [Step] {
+        var steps: [Step] = []
+        if playerAttached {
+            steps.append(.stopPlayer)
+        }
+        if engineRunning {
+            steps.append(.stopEngine)
+        }
+        if playerAttached {
+            steps.append(.detachPlayer)
+        }
+        return steps
+    }
+}
+
 public actor LiveAudioEngine: AudioEngineProtocol {
     private final class ConversionConsumptionState: @unchecked Sendable {
         var consumed = false
@@ -589,13 +631,19 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // graph below is about to be torn down, and `playerAttached` would go on
         // claiming the node is fine. See `playbackRetired`.
         playbackRetired = true
-        if playerAttached {
-            playerNode.stop()
-            engine.detach(playerNode)
-            playerAttached = false
-        }
-        if engine.isRunning {
-            engine.stop()
+        for step in PlaybackTeardown.steps(
+            playerAttached: playerAttached,
+            engineRunning: engine.isRunning
+        ) {
+            switch step {
+            case .stopPlayer:
+                playerNode.stop()
+            case .stopEngine:
+                engine.stop()
+            case .detachPlayer:
+                engine.detach(playerNode)
+                playerAttached = false
+            }
         }
 
         if let emitted = speechTracker.reset() {

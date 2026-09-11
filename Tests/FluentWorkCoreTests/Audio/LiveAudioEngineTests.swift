@@ -1069,3 +1069,50 @@ final class VoiceProcessingRecorder: @unchecked Sendable {
         queue.sync { recordedCalls }
     }
 }
+
+// MARK: - Teardown order
+
+/// **The rule: `detach` may not run while the engine is running.**
+///
+/// `engine.detach(_:)` rearranges a live render graph, and rearranging an
+/// `AVAudioEngine`'s graph underneath a running engine is the F14/F15 family —
+/// this repository has paid for it three times, and its own conclusion was
+/// "build the whole graph before `engine.start()`, do not move it afterwards".
+/// `detach` raises an `NSException` rather than returning an error, so getting
+/// this wrong ends the process.
+///
+/// The user-visible symptom that started this: tapping 结束练习 left a few
+/// bursts of noise after the confirmation. The order below is the part of
+/// `stopCapture()` that could produce it, and until `PlaybackTeardown` existed
+/// the order lived inside an actor that CI cannot drive — so nothing could
+/// assert anything about it.
+@Test func teardownNeverMutatesTheGraphWhileTheEngineIsRunning() {
+    let steps = PlaybackTeardown.steps(playerAttached: true, engineRunning: true)
+
+    let stopEngine = steps.firstIndex(of: .stopEngine)
+    let detachPlayer = steps.firstIndex(of: .detachPlayer)
+
+    #expect(detachPlayer != nil, "the node has to be detached, or the next session re-attaches against a torn-down graph")
+    #expect(
+        stopEngine != nil && stopEngine! < detachPlayer!,
+        """
+        the engine must be stopped before the player is detached, or the graph \
+        is rearranged underneath a running engine. Got \(steps).
+        """
+    )
+    #expect(
+        steps.firstIndex(of: .stopPlayer)! < stopEngine!,
+        "the player is silenced before the engine stops, so no partial buffer is left to drain"
+    )
+}
+
+/// Nothing to detach, nothing to stop the player for — but a running engine is
+/// still a running engine, and leaving it that way is what makes the next
+/// session build its graph against a stale one.
+@Test func teardownStopsARunningEngineEvenWithNoPlayer() {
+    #expect(
+        PlaybackTeardown.steps(playerAttached: false, engineRunning: true) == [.stopEngine]
+    )
+    #expect(PlaybackTeardown.steps(playerAttached: true, engineRunning: false) == [.stopPlayer, .detachPlayer])
+    #expect(PlaybackTeardown.steps(playerAttached: false, engineRunning: false).isEmpty)
+}
