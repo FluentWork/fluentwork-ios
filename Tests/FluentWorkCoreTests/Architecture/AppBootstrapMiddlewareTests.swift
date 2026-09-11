@@ -1,5 +1,6 @@
 import Foundation
 import FactoryKit
+import FluentWorkDiagnostics
 import FluentWorkFeatureFlags
 import FluentWorkNetworking
 import Testing
@@ -35,6 +36,40 @@ private func makeIsolatedContainer(
     }
     container.bootstrapClient.register { bootstrapClient }
     return container
+}
+
+/// The device id keys everything scoped per install, and the one thing that
+/// needs it day to day is corpus seeding: `dev-up.sh` seeds a fixed
+/// `corpus-seed-dev-device`, a physical device authenticates as its own guest,
+/// and the corpus is scoped by user — so badge hits on a real phone silently
+/// never fire until corpus is seeded against *that* id, with nothing anywhere
+/// saying why (`docs/62` §0 item 4).
+///
+/// It was reachable only from the Keychain. This pins that a launch says it out
+/// loud, because "where do I read the device id" is a question every device run
+/// asks and the answer used to be "from the Keychain".
+@MainActor
+@Test func appLaunchLogsTheDeviceIdentity() async {
+    let tracker = CapturingTracker()
+    let container = makeIsolatedContainer(
+        bootstrapClient: MockBootstrapClient(
+            snapshot: BootstrapSnapshot(
+                featureFlags: .firstWave,
+                preferredSurface: .speakingRoom
+            ),
+            authInfo: AuthInfo(userID: "user-1", isGuest: true, deviceID: "DA87E7D4-TESTDEVICE")
+        )
+    )
+    container.tracker.register { tracker }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.lifecycle(.appLaunched))
+    await waitForBootstrap(store)
+
+    let identity = tracker.events.first { $0.name == "device_identity" }
+    #expect(identity?.properties["device_id"] == "DA87E7D4-TESTDEVICE")
+    #expect(identity?.properties["user_id"] == "user-1")
+    #expect(identity?.properties["is_guest"] == "true")
 }
 
 @MainActor

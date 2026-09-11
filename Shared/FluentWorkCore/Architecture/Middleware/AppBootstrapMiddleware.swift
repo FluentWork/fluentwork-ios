@@ -1,4 +1,5 @@
 import FactoryKit
+import FluentWorkDiagnostics
 import FluentWorkNetworking
 import Foundation
 import os
@@ -62,6 +63,7 @@ public func appBootstrapMiddleware(container: Container? = nil) -> Middleware<Ap
                 do {
                     let result = try await bootstrapClient.loadBootstrap()
                     guard !Task.isCancelled else { return nil }
+                    logDeviceIdentity(result.authInfo, tracker: resolvedContainer.tracker())
                     return .lifecycle(.bootstrapSucceeded(
                         snapshot: result.snapshot,
                         authInfo: result.authInfo
@@ -75,6 +77,33 @@ public func appBootstrapMiddleware(container: Container? = nil) -> Middleware<Ap
             }
         )
     }
+}
+
+/// Prints the install's identity, on one line, once per launch.
+///
+/// The device id keys everything scoped per install, and the one thing that
+/// makes it matter day to day is corpus seeding: `dev-up.sh` seeds a fixed
+/// `corpus-seed-dev-device`, a physical device authenticates as its own guest,
+/// and the corpus is scoped by user — so badge hits on a real phone silently
+/// never fire until corpus is seeded against *that* id, with nothing anywhere
+/// saying why (`docs/62` §0 item 4).
+///
+/// It was reachable only from the Keychain, which is not where anyone looks
+/// when a device run needs it. One line at startup is the difference between
+/// "badges are broken" and "seed the corpus for this id".
+///
+/// Not `#if DEBUG`-gated here: `ConsoleTracker` already prints only in DEBUG,
+/// so a release build stays silent without a second condition to keep in sync.
+private func logDeviceIdentity(_ authInfo: AuthInfo?, tracker: any TrackerClientProtocol) {
+    guard let authInfo else { return }
+    tracker.track(
+        event: "device_identity",
+        properties: [
+            "device_id": authInfo.deviceID,
+            "user_id": authInfo.userID,
+            "is_guest": String(authInfo.isGuest),
+        ]
+    )
 }
 
 /// Prevents overlapping `loadBootstrap` tasks when `.appLaunched` races
