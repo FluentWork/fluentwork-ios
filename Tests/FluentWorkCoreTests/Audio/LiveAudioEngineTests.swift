@@ -134,15 +134,18 @@ import Testing
 /// `stopCapture()` runs on `endSession`, which tears down the engine the player
 /// node is attached to — but the socket still holds assistant audio in flight,
 /// and cancelling the transport task is not instant. Those frames must not reach
-/// `play()`: with the node detached and the engine stopped, `play()` raises an
-/// uncaught `NSException` ("player started when in a disconnected state") and
-/// terminates the app. Capture and playback share one graph, so ending the
-/// session has to retire both.
+/// `playerNode.play()`: with the node detached and the engine stopped, `play()`
+/// raises an uncaught `NSException` ("player started when in a disconnected
+/// state") and terminates the app. Capture and playback share one graph, so
+/// ending the session has to retire both.
+///
+/// The retired frame is dropped, not surfaced as `.failed`. The audio pump
+/// treats `.failed` as fatal (`docs/49`); see
+/// `stopCaptureDropsLateFramesWithoutFailingTheEngine`.
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineRetiresPlaybackWhenCaptureStops() async {
     let decoder = CapturingFrameDecoder(log: CallLog(), samplesPerFrame: 4)
     let engine = LiveAudioEngine(decoder: decoder)
-    let stream = engine.events()
 
     // Live session: playback works.
     await engine.play(frame: WSAudioFrame(sequence: 1, opusPayload: Data(repeating: 0x01, count: 8)))
@@ -156,14 +159,6 @@ import Testing
         await engine._testPlaybackStarted() == false,
         "a frame that outlives its session must not start a node whose graph is gone"
     )
-
-    let failure = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
-        if case .failed = event { return event } else { return nil }
-    }
-    guard case .failed = failure else {
-        Issue.record("expected the retired frame to surface as .failed, got \(String(describing: failure))")
-        return
-    }
 }
 
 /// `setSpeechBoundaryMode` owns the tracker's configuration, and `startCapture()`
@@ -1072,38 +1067,75 @@ final class VoiceProcessingRecorder: @unchecked Sendable {
 
 // MARK: - Teardown order
 
-/// **The rule: `detach` may not run while the engine is running.**
+/// **The rule: the graph may not be mutated while the engine is running.**
 ///
-/// `engine.detach(_:)` rearranges a live render graph, and rearranging an
-/// `AVAudioEngine`'s graph underneath a running engine is the F14/F15 family —
-/// this repository has paid for it three times, and its own conclusion was
-/// "build the whole graph before `engine.start()`, do not move it afterwards".
-/// `detach` raises an `NSException` rather than returning an error, so getting
-/// this wrong ends the process.
+/// `engine.detach(_:)` and `inputNode.removeTap` both rearrange a live render
+/// graph. Rearranging an `AVAudioEngine` underneath a running engine is the
+/// F14/F15 family — this repository has paid for it three times, and its own
+/// conclusion was "build the whole graph before `engine.start()`, do not move
+/// it afterwards". `detach` raises an `NSException` rather than returning an
+/// error, so getting this wrong ends the process. `removeTap` on a running
+/// engine is the quieter cousin: it does not crash, it leaves a burst of
+/// static in the speaker.
 ///
-/// The user-visible symptom that started this: tapping 结束练习 left a few
-/// bursts of noise after the confirmation. The order below is the part of
-/// `stopCapture()` that could produce it, and until `PlaybackTeardown` existed
+/// The user-visible symptom that started this: tapping 结束练习 *while TTS is
+/// still playing* left a hiss after the confirmation. Stopping the player
+/// without `reset()` also leaves scheduled PCM to drain through `engine.stop()`,
+/// which is the same hiss from the other end. Until `PlaybackTeardown` existed
 /// the order lived inside an actor that CI cannot drive — so nothing could
 /// assert anything about it.
 @Test func teardownNeverMutatesTheGraphWhileTheEngineIsRunning() {
-    let steps = PlaybackTeardown.steps(playerAttached: true, engineRunning: true)
+    // The 结束练习-during-TTS path: capture tap is in, player has buffers queued,
+    // engine is running. All three have to come apart, and in this order.
+    let steps = PlaybackTeardown.steps(
+        playerAttached: true,
+        engineRunning: true,
+        tapInstalled: true
+    )
+
+    #expect(
+        steps == [.stopPlayer, .resetPlayer, .stopEngine, .removeTap, .detachPlayer],
+        "got \(steps)"
+    )
 
     let stopEngine = steps.firstIndex(of: .stopEngine)
     let detachPlayer = steps.firstIndex(of: .detachPlayer)
+    let removeTap = steps.firstIndex(of: .removeTap)
+    let resetPlayer = steps.firstIndex(of: .resetPlayer)
 
     #expect(detachPlayer != nil, "the node has to be detached, or the next session re-attaches against a torn-down graph")
-    #expect(
-        stopEngine != nil && stopEngine! < detachPlayer!,
-        """
-        the engine must be stopped before the player is detached, or the graph \
-        is rearranged underneath a running engine. Got \(steps).
-        """
-    )
-    #expect(
-        steps.firstIndex(of: .stopPlayer)! < stopEngine!,
-        "the player is silenced before the engine stops, so no partial buffer is left to drain"
-    )
+    #expect(removeTap != nil, "an installed tap is a graph mutation, same family as detach")
+    #expect(resetPlayer != nil, "stop() without reset() leaves scheduled PCM to drain as static")
+    if let stopEngine, let detachPlayer {
+        #expect(
+            stopEngine < detachPlayer,
+            """
+            the engine must be stopped before the player is detached, or the graph \
+            is rearranged underneath a running engine. Got \(steps).
+            """
+        )
+    }
+    if let stopEngine, let removeTap {
+        #expect(
+            stopEngine < removeTap,
+            """
+            the engine must be stopped before the tap is removed, or the graph \
+            is rearranged underneath a running engine. Got \(steps).
+            """
+        )
+    }
+    if let resetPlayer, let stopPlayer = steps.firstIndex(of: .stopPlayer) {
+        #expect(
+            stopPlayer < resetPlayer,
+            "reset dumps the queue; it has to follow stop so a playing node is not reset mid-render"
+        )
+    }
+    if let resetPlayer, let stopEngine {
+        #expect(
+            resetPlayer < stopEngine,
+            "the player is emptied before the engine stops, so no partial buffer is left to drain"
+        )
+    }
 }
 
 /// Nothing to detach, nothing to stop the player for — but a running engine is
@@ -1111,8 +1143,42 @@ final class VoiceProcessingRecorder: @unchecked Sendable {
 /// session build its graph against a stale one.
 @Test func teardownStopsARunningEngineEvenWithNoPlayer() {
     #expect(
-        PlaybackTeardown.steps(playerAttached: false, engineRunning: true) == [.stopEngine]
+        PlaybackTeardown.steps(playerAttached: false, engineRunning: true, tapInstalled: false) == [.stopEngine]
     )
-    #expect(PlaybackTeardown.steps(playerAttached: true, engineRunning: false) == [.stopPlayer, .detachPlayer])
-    #expect(PlaybackTeardown.steps(playerAttached: false, engineRunning: false).isEmpty)
+    #expect(
+        PlaybackTeardown.steps(playerAttached: true, engineRunning: false, tapInstalled: false)
+            == [.stopPlayer, .resetPlayer, .detachPlayer]
+    )
+    #expect(
+        PlaybackTeardown.steps(playerAttached: false, engineRunning: false, tapInstalled: false).isEmpty
+    )
+    #expect(
+        PlaybackTeardown.steps(playerAttached: false, engineRunning: true, tapInstalled: true)
+            == [.stopEngine, .removeTap]
+    )
+}
+
+/// `stopCapture()` retires playback so leftover TTS frames from a socket that
+/// has not closed yet have nowhere to go. Yielding `.failed` for those frames
+/// is the wrong signal: the audio pump treats `.failed` as fatal and exits
+/// for the rest of the process (`docs/49`), so "ended while the assistant was
+/// still speaking" used to kill 「开始说话」 on the next session.
+@available(iOS 17, macOS 14, *)
+@Test func stopCaptureDropsLateFramesWithoutFailingTheEngine() async {
+    let log = CallLog()
+    let decoder = CapturingFrameDecoder(log: log, samplesPerFrame: 4)
+    let engine = LiveAudioEngine(decoder: decoder)
+    let stream = engine.events()
+
+    await engine.play(frame: WSAudioFrame(sequence: 1, opusPayload: Data(repeating: 0x01, count: 8)))
+    await engine.stopCapture()
+    await engine.play(frame: WSAudioFrame(sequence: 2, opusPayload: Data(repeating: 0x02, count: 8)))
+
+    let captured = await log.snapshot()
+    #expect(captured.map(\.sequence) == [1], "late frames after stopCapture must not reach the decoder; got \(captured.map(\.sequence))")
+
+    let failure = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        if case .failed = event { return event } else { return nil }
+    }
+    #expect(failure == nil, "dropping a late frame must not fail the engine; got \(String(describing: failure))")
 }

@@ -193,16 +193,20 @@ struct AudioPlaybackGate: Sendable {
 /// `startCapture()` never gets past its format guard), so a teardown sequence
 /// embedded in an actor was a sequence nobody could assert anything about.
 ///
-/// The rule the order has to obey: **`detach` mutates a live render graph.**
-/// Changing an `AVAudioEngine`'s graph while it is running is the F14/F15 family
-/// — this repository has paid for it three times, and its own lesson is "build
-/// the graph before `engine.start()`, do not rearrange it after".
-/// `engine.detach(_:)` is an `NSException`-raising call, not a throwing one, so
-/// getting it wrong takes the process down rather than returning an error.
+/// The rule the order has to obey: **graph mutations may not run while the
+/// engine is running.** Changing an `AVAudioEngine`'s graph while it is running
+/// is the F14/F15 family — this repository has paid for it three times, and
+/// its own lesson is "build the graph before `engine.start()`, do not rearrange
+/// it after". `engine.detach(_:)` is an `NSException`-raising call, not a
+/// throwing one, so getting it wrong takes the process down rather than
+/// returning an error. `inputNode.removeTap` is the same mutation with a
+/// quieter failure: a burst of static in the speaker after 结束练习.
 enum PlaybackTeardown {
     enum Step: Equatable, Sendable {
         case stopPlayer
+        case resetPlayer
         case stopEngine
+        case removeTap
         case detachPlayer
     }
 
@@ -212,13 +216,25 @@ enum PlaybackTeardown {
     /// player is attached: a session that never played anything still has a
     /// running engine, and leaving it running is what makes the *next*
     /// session's graph work against a stale one.
-    static func steps(playerAttached: Bool, engineRunning: Bool) -> [Step] {
+    ///
+    /// Graph mutations (`removeTap`, `detach`) come *after* `stopEngine`.
+    /// `resetPlayer` sits between `stopPlayer` and `stopEngine` so scheduled
+    /// TTS buffers are dumped instead of draining as static through the stop.
+    static func steps(
+        playerAttached: Bool,
+        engineRunning: Bool,
+        tapInstalled: Bool = false
+    ) -> [Step] {
         var steps: [Step] = []
         if playerAttached {
             steps.append(.stopPlayer)
+            steps.append(.resetPlayer)
         }
         if engineRunning {
             steps.append(.stopEngine)
+        }
+        if tapInstalled {
+            steps.append(.removeTap)
         }
         if playerAttached {
             steps.append(.detachPlayer)
@@ -618,11 +634,14 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
     public func stopCapture() async {
         stopInterruptionObservation()
+        // Retire before anything that yields or mutates the graph. Leftover
+        // TTS frames from a socket that has not closed yet still call
+        // `play(frame:)`; once this flag is set they drop instead of
+        // restarting the player (and instead of `.failed`, which would kill
+        // the process-lifetime audio pump — `docs/49`).
+        playbackRetired = true
         let shouldRemoveTap = hasInstalledTap
         hasInstalledTap = false
-        if shouldRemoveTap {
-            engine.inputNode.removeTap(onBus: 0)
-        }
         // Also stop any in-flight AI playback so a session end always leaves
         // the engine silent on both directions, and detach the node so the next
         // session re-attaches it against a graph that actually exists.
@@ -630,16 +649,20 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // Leaving it attached is what makes the *next* `play()` dangerous: the
         // graph below is about to be torn down, and `playerAttached` would go on
         // claiming the node is fine. See `playbackRetired`.
-        playbackRetired = true
         for step in PlaybackTeardown.steps(
             playerAttached: playerAttached,
-            engineRunning: engine.isRunning
+            engineRunning: engine.isRunning,
+            tapInstalled: shouldRemoveTap
         ) {
             switch step {
             case .stopPlayer:
                 playerNode.stop()
+            case .resetPlayer:
+                playerNode.reset()
             case .stopEngine:
                 engine.stop()
+            case .removeTap:
+                engine.inputNode.removeTap(onBus: 0)
             case .detachPlayer:
                 engine.detach(playerNode)
                 playerAttached = false
@@ -675,7 +698,9 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // frames in flight, and the first one to land here used to take the
         // process down.
         guard !playbackRetired else {
-            continuation.yield(.failed("playback retired; dropped audio frame"))
+            // Expected: `session.end` cancels the transport, but cancellation
+            // is not instant. A leftover TTS frame is not an engine failure,
+            // and `.failed` here used to exit the process-lifetime audio pump.
             return
         }
         if case let .droppedAtOrBelowInterruptWatermark(watermark) = playbackGate.shouldAccept(frame) {
@@ -702,10 +727,10 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             continuation.yield(.failed("scheduling dropped: PCM length \(pcm.count) not a multiple of 2"))
             return
         }
-        // Local barge-in: even after `interruptNow()` is requested we want the
-        // already-scheduled chunks to drain, but a fresh `play(frame:)` after
-        // a fresh `interruptNow()` should resume cleanly because the gate has
-        // been reset by `startCapture`/session re-enter.
+        // Local barge-in: `interruptNow()` stop+reset dumps the queue so the
+        // interrupted reply does not keep talking over the user. A later
+        // `play(frame:)` of a *fresh* sequence (past the watermark) starts
+        // the node again — that is the next turn's audio, not a drain.
         enqueueWithoutWaiting(buffer)
     }
 
@@ -794,6 +819,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         _ = playbackGate.markInterrupted()
         if playerAttached {
             playerNode.stop()
+            playerNode.reset()
         }
     }
 
