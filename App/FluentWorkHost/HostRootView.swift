@@ -336,15 +336,32 @@ struct HostRootView: View {
             .tint(.red)
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
+            // This dialog is attached to a button that only exists while a
+            // session is live, and `showsEndSessionConfirmation` is `@State` on
+            // the host — which outlives it. Tapping 结束练习 moves the phase to
+            // `.ended`, so the button presenting the dialog **is destroyed while
+            // the dialog is up**: the dismissal never reaches the binding, the
+            // flag stays `true`, and the next time this branch appears (starting
+            // another session) the dialog presents again. That is the "弹出两次"
+            // the user hit.
+            //
+            // Clearing the flag in the actions is the honest fix at this level:
+            // once the user has answered, the flag is false, whatever happens to
+            // the view that asked. Moving the dialog to a presenter that
+            // outlives the phase change is the sturdier version, and worth doing
+            // if this recurs — but it moves UI, and this does not.
             .confirmationDialog(
                 "结束这次练习？",
                 isPresented: $showsEndSessionConfirmation,
                 titleVisibility: .visible
             ) {
                 Button("结束练习", role: .destructive) {
+                    showsEndSessionConfirmation = false
                     store.dispatch(.speakingRoom(.session(.endTap)))
                 }
-                Button("继续练习", role: .cancel) {}
+                Button("继续练习", role: .cancel) {
+                    showsEndSessionConfirmation = false
+                }
             } message: {
                 Text("会话会结束并生成回顾，本轮要点会保留。")
             }
