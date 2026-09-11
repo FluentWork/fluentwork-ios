@@ -31,6 +31,16 @@ public enum AppFeatureFlag: String, CaseIterable, Codable, Hashable, Sendable, F
     /// the assistant hearing itself — is the one thing a stale default would
     /// keep. Flip it only after `ios docs/62` T4 passes.
     case voiceProcessing
+    /// The conversation list — every past practice session, most recent first
+    /// (`GET /api/v1/sessions`, backend B24).
+    ///
+    /// On by default, unlike the flags around it, because it is a product
+    /// surface rather than an experiment. It is a flag at all so that the
+    /// settings screen has something to switch off if it misbehaves on a
+    /// device build: the list ships with a known gap — it has no readable
+    /// title until the backend adds one (`79_` §约束 3) — and a kill switch is
+    /// cheaper than a revert once it is on someone's phone.
+    case sessionHistory
 
     public var defaultValue: FeatureFlagValue {
         .bool(false)
@@ -61,6 +71,7 @@ public struct FeatureFlagSnapshot: Equatable, Sendable {
             .workspaceReview,
             .degradedTextMode,
             .dailyRead,
+            .sessionHistory,
         ]
     )
 }

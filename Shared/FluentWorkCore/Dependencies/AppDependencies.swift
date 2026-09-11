@@ -425,6 +425,15 @@ public extension Container {
         }.cached
     }
 
+    var sessionHistoryAPIClient: Factory<SessionHistoryAPIClientProtocol> {
+        self {
+            SessionHistoryAPIClient(
+                network: self.networkClient(),
+                baseURL: self.appEnvironment().apiBaseURL
+            )
+        }.cached
+    }
+
     var authTokenStore: Factory<AuthTokenStoreProtocol> {
         self {
             SecureAuthTokenStore(
@@ -547,6 +556,16 @@ public extension Container {
                 return StubDailyReadAudioPlayer()
             }
             return DailyReadAudioPlayer()
+        }.shared
+    }
+
+    var sessionHistoryClient: Factory<SessionHistoryClientProtocol> {
+        self {
+            DefaultSessionHistoryClient(
+                api: self.sessionHistoryAPIClient(),
+                sessionAPI: self.sessionAPIClient(),
+                tokens: self.authTokenStore()
+            )
         }.shared
     }
 

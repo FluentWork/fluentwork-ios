@@ -115,7 +115,10 @@ private func waitForBootstrap(
     #expect(featureFlags.state.isEnabled(.speakingRoom))
     #expect(workspace.state.activeSurface == .speakingRoom)
     #expect(workspace.state.isBootstrapComplete)
-    #expect(workspace.state.availableModules.map(\.moduleName) == ["SpeakingRoom", "Review", "DailyRead"])
+    #expect(
+        workspace.state.availableModules.map(\.moduleName)
+            == ["SpeakingRoom", "Review", "DailyRead", "SessionHistory"]
+    )
     #expect(speakingRoom.state.isBootstrapReady)
     #expect(store.state.network.isConnected)
 }

@@ -88,6 +88,36 @@ struct SessionHistoryFeatureTests {
         #expect(withItems.items.map(\.sessionID) == ["a"], "the list the user is reading survives")
         #expect(withItems.phase == .ready)
         #expect(!withItems.isLoadingMore, "the spinner must stop even when the page failed")
+        #expect(
+            withItems.errorMessage == "offline",
+            "a failure that did not take the screen still has to be sayable"
+        )
+    }
+
+    /// Retry after a failed first page goes through `.refreshRequested`,
+    /// because `.appear` will never fire again — `didRequestInitialLoad` is
+    /// already true. If the reducer left the phase on `.failed`, the retry
+    /// button would look like it did nothing at all until the response came
+    /// back, which is the same as being broken.
+    @Test func refreshShowsTheSpinnerWhenThereIsNothingToKeep() {
+        var failed = SessionHistoryState()
+        sessionHistoryReducer(&failed, .loadFailed("offline"))
+
+        sessionHistoryReducer(&failed, .refreshRequested)
+        #expect(failed.phase == .loading)
+        #expect(failed.errorMessage == nil, "the old failure must not outlive the retry")
+
+        // ...but a list the user is reading keeps rendering while the new page
+        // one is in flight — blanking out on a pull-to-refresh reads as a
+        // failure, not a refresh.
+        var loaded = SessionHistoryState()
+        sessionHistoryReducer(&loaded, .loadSucceeded(
+            SessionHistoryPage(items: [item("a")], nextCursor: "c1", size: 20),
+            appending: false
+        ))
+        sessionHistoryReducer(&loaded, .refreshRequested)
+        #expect(loaded.phase == .ready)
+        #expect(loaded.items.map(\.sessionID) == ["a"])
     }
 
     /// With no cursor there is nothing more to ask for, and asking would loop.

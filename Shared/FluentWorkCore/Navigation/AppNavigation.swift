@@ -21,6 +21,9 @@ public enum AppRoute: TGRoute, Codable {
     case speakingRoom(sessionID: String?)
     case review(sessionID: String?)
     case dailyRead(sessionID: String?)
+    /// The conversation list. Takes no `sessionID` — it is the thing that
+    /// hands one out.
+    case sessionHistory
 
     /// Stable path shared with `FeaturePluginDescriptor.entryRoute`.
     public var entryRoute: String {
@@ -31,6 +34,8 @@ public enum AppRoute: TGRoute, Codable {
             return "/review"
         case .dailyRead:
             return "/daily-read"
+        case .sessionHistory:
+            return "/sessions"
         }
     }
 
@@ -43,6 +48,8 @@ public enum AppRoute: TGRoute, Codable {
             self = .review(sessionID: sessionID)
         case "/daily-read":
             self = .dailyRead(sessionID: sessionID)
+        case "/sessions":
+            self = .sessionHistory
         default:
             return nil
         }
@@ -54,7 +61,7 @@ public enum AppRoute: TGRoute, Codable {
         switch self {
         case .speakingRoom, .review:
             return .workbench(.present(self, style: .fullScreenCover))
-        case .dailyRead:
+        case .dailyRead, .sessionHistory:
             return .workbench(.push(self))
         }
     }

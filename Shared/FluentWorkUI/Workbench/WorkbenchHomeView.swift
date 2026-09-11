@@ -13,6 +13,7 @@ public struct WorkbenchHomeViewModel: Equatable, Sendable {
             case speakingRoom
             case review
             case dailyRead
+            case sessionHistory
             case unsupported
         }
 
@@ -243,7 +244,7 @@ public struct WorkbenchHomeView: View {
         switch kind {
         case .speakingRoom, .review:
             return "全屏"
-        case .dailyRead:
+        case .dailyRead, .sessionHistory:
             return "页内"
         case .unsupported:
             return "未开放"

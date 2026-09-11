@@ -60,6 +60,11 @@ public enum FeaturePluginCatalog {
             entryRoute: "/daily-read"
         ),
         FeaturePluginDescriptor(
+            feature: .sessionHistory,
+            moduleName: "SessionHistory",
+            entryRoute: "/sessions"
+        ),
+        FeaturePluginDescriptor(
             feature: .drill,
             moduleName: "Drill",
             entryRoute: "/drill"

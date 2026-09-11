@@ -59,6 +59,9 @@ public struct AppState: Equatable, Sendable, State {
   public var review: ReviewState
   public var corpus: CorpusState
   public var dailyRead: DailyReadState
+  /// The conversation list. Read-only and cursor-paged; see
+  /// `SessionHistoryFeature` for why it keeps no cache.
+  public var sessionHistory: SessionHistoryState
   public var workspace: WorkspaceState
   public var badgeFeedback: BadgeFeedbackState
   public var network: NetworkConnectivityState
@@ -73,6 +76,7 @@ public struct AppState: Equatable, Sendable, State {
     review: ReviewState = ReviewState(),
     corpus: CorpusState = CorpusState(),
     dailyRead: DailyReadState = DailyReadState(),
+    sessionHistory: SessionHistoryState = SessionHistoryState(),
     workspace: WorkspaceState = WorkspaceState(),
     badgeFeedback: BadgeFeedbackState = BadgeFeedbackState(),
     network: NetworkConnectivityState = NetworkConnectivityState(),
@@ -86,6 +90,7 @@ public struct AppState: Equatable, Sendable, State {
     self.review = review
     self.corpus = corpus
     self.dailyRead = dailyRead
+    self.sessionHistory = sessionHistory
     self.workspace = workspace
     self.badgeFeedback = badgeFeedback
     self.network = network
@@ -115,6 +120,7 @@ public enum AppAction: Equatable, Sendable, Action {
   case review(ReviewAction)
   case corpus(CorpusAction)
   case dailyRead(DailyReadAction)
+  case sessionHistory(SessionHistoryAction)
   case workspace(WorkspaceAction)
   case badgeFeedback(BadgeFeedbackAction)
   case network(NetworkConnectivityAction)

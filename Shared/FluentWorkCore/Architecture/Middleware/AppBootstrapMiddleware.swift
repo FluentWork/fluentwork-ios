@@ -19,6 +19,8 @@ public enum AppTaskID {
     public static let dailyReadFollowRead: CancellationID = "daily-read.follow-read"
     public static let dailyReadAudio: CancellationID = "daily-read.audio"
     public static let dailyReadAudioObserver: CancellationID = "daily-read.audio-observer"
+    public static let sessionHistoryLoad: CancellationID = "session-history.load"
+    public static let sessionHistoryLoadMore: CancellationID = "session-history.load-more"
 
     public static func reviewAccept(cardID: String) -> CancellationID {
         CancellationID("review.accept.\(cardID)")
@@ -32,6 +34,7 @@ public func makeAppMiddlewares(container: Container? = nil) -> [Middleware<AppSt
         reviewMiddleware(container: resolvedContainer),
         dailyReadMiddleware(container: resolvedContainer),
         dailyReadAudioObserver(container: resolvedContainer),
+        sessionHistoryMiddleware(container: resolvedContainer),
         speechSessionMiddleware(container: resolvedContainer),
         appBootstrapMiddleware(container: resolvedContainer),
         appNetworkMonitorMiddleware(container: resolvedContainer),

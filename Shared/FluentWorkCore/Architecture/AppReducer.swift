@@ -59,6 +59,15 @@ public let appReducer: Reducer<AppState, AppAction> = combineReducers(
     }
   ),
   pullback(
+    sessionHistoryReducer,
+    state: \.sessionHistory,
+    action: AppAction.sessionHistory,
+    extract: {
+      guard case .sessionHistory(let action) = $0 else { return nil }
+      return action
+    }
+  ),
+  pullback(
     workspaceReducer,
     state: \.workspace,
     action: AppAction.workspace,
@@ -164,6 +173,12 @@ public let appCrossCuttingReducer: Reducer<AppState, AppAction> = { state, actio
 
   case .auth(.signedInAsGuest), .auth(.mergedIntoRegistered):
     state.corpus = CorpusState()
+    // Same reason as corpus — the list is per-user, so showing the previous
+    // account's sessions after a promotion would be plainly wrong. Clearing it
+    // wholesale also resets `didRequestInitialLoad`, which is what lets the
+    // list fetch again for the new identity; resetting only `items` would
+    // leave `.appear` permanently deciding it had already loaded.
+    state.sessionHistory = SessionHistoryState()
 
   default:
     break

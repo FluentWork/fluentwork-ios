@@ -1,0 +1,241 @@
+import FactoryKit
+import FluentWorkNetworking
+import Foundation
+import Testing
+import TGReduxKit
+import os
+@testable import FluentWorkCore
+
+private func makeSessionItem(
+    _ id: String,
+    duration: Int = 154,
+    status: String = "ended"
+) -> SessionHistoryItem {
+    SessionHistoryItem(
+        sessionID: id,
+        sceneType: "voice",
+        status: status,
+        startedAt: Date(timeIntervalSince1970: 1_789_142_524),
+        durationSec: duration
+    )
+}
+
+private struct SessionHistoryStubFailure: Error, LocalizedError {
+    var errorDescription: String? { "offline" }
+}
+
+/// Records every cursor it was asked for, because the interesting assertions in
+/// this file are about *which* request was made — page one versus the stored
+/// cursor — and a stub that only returns data cannot tell them apart.
+private final class StubSessionHistoryClient: SessionHistoryClientProtocol, @unchecked Sendable {
+    typealias Responder = @Sendable (String?) throws -> SessionHistoryPage
+
+    private let responder: Responder
+    private let storage = OSAllocatedUnfairLock<[String?]>(initialState: [])
+
+    init(responder: @escaping Responder) {
+        self.responder = responder
+    }
+
+    var requestedCursors: [String?] { storage.withLock { $0 } }
+
+    func listSessions(cursor: String?, size: Int?) async throws -> SessionHistoryPage {
+        storage.withLock { $0.append(cursor) }
+        return try responder(cursor)
+    }
+}
+
+@MainActor
+private func makeStore(
+    client: StubSessionHistoryClient,
+    state: SessionHistoryState = SessionHistoryState()
+) -> (Store<AppState, AppAction>, StubSessionHistoryClient) {
+    let container = Container()
+    container.reset()
+    container.sessionHistoryClient.register { client }
+    var initialState = AppState.initial
+    initialState.sessionHistory = state
+    return (AppStoreFactory.make(container: container, initialState: initialState), client)
+}
+
+/// The list's whole job. If `.appear` did not reach the network the screen
+/// would sit on a spinner forever, and nothing above the middleware would say
+/// why.
+@MainActor
+@Test func appearLoadsTheFirstPage() async throws {
+    let client = StubSessionHistoryClient { cursor in
+        #expect(cursor == nil, "the first page is asked for with no cursor")
+        return SessionHistoryPage(
+            items: [makeSessionItem("s-1"), makeSessionItem("s-2")],
+            nextCursor: "c1",
+            size: 20
+        )
+    }
+    let (store, _) = makeStore(client: client)
+
+    store.dispatch(.sessionHistory(.appear))
+
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
+        store.state.sessionHistory.phase == .ready
+    }
+    #expect(store.state.sessionHistory.items.map(\.sessionID) == ["s-1", "s-2"])
+    #expect(store.state.sessionHistory.nextCursor == "c1")
+    #expect(client.requestedCursors == [nil])
+}
+
+/// Switching tabs away and back re-dispatches `.appear`, and that must not
+/// re-fetch page one and throw away whatever was paged in since.
+///
+/// The two dispatches are issued back to back rather than with a wait between
+/// them, and that is deliberate: the claim under test is a *negative* — no
+/// request goes out — so a test that waited for the first one to land would
+/// need a sleep to give the second one time to be wrong, and a sleep is both
+/// slow and a flake waiting to happen. Dispatching immediately is the stronger
+/// test anyway, because the reducer has already set `didRequestInitialLoad` by
+/// the time the second one is handled, which is exactly the state a returning
+/// tab is in.
+///
+/// What it pins is the middleware's *own* copy of that guard, and specifically
+/// that it is read **before** `next(action)`. Read after, `didRequestInitialLoad`
+/// is already true whatever happened, so the guard answers "not the first one"
+/// every time and the list never loads at all — the failure is not a wasted
+/// request, it is an empty screen with a spinner on it forever.
+@MainActor
+@Test func aSecondAppearNeitherRefetchesNorDiscardsPages() async throws {
+    let client = StubSessionHistoryClient { cursor in
+        if cursor == nil {
+            return SessionHistoryPage(items: [makeSessionItem("s-1")], nextCursor: "c1", size: 20)
+        }
+        return SessionHistoryPage(items: [makeSessionItem("s-2")], nextCursor: nil, size: 20)
+    }
+    let (store, _) = makeStore(client: client)
+
+    // Page one, then leave and come back, then page two — all before anything
+    // has had a chance to complete.
+    store.dispatch(.sessionHistory(.appear))
+    store.dispatch(.sessionHistory(.appear))
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
+        store.state.sessionHistory.phase == .ready
+    }
+    store.dispatch(.sessionHistory(.loadMoreRequested))
+
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
+        store.state.sessionHistory.items.count == 2
+    }
+    #expect(
+        client.requestedCursors == [nil, "c1"],
+        "the second appear must not have asked again, and the paged-in row must survive"
+    )
+    #expect(store.state.sessionHistory.items.map(\.sessionID) == ["s-1", "s-2"])
+}
+
+/// Paging is the difference between a list and a page. The cursor the second
+/// request carries comes from state, not from the caller — that is the whole
+/// reason `nextCursor` is stored.
+@MainActor
+@Test func loadMoreCarriesTheStoredCursorAndAppends() async throws {
+    let client = StubSessionHistoryClient { cursor in
+        #expect(cursor == "c1")
+        return SessionHistoryPage(items: [makeSessionItem("s-2")], nextCursor: nil, size: 20)
+    }
+    let (store, _) = makeStore(
+        client: client,
+        state: SessionHistoryState(
+            phase: .ready,
+            items: [makeSessionItem("s-1")],
+            nextCursor: "c1"
+        )
+    )
+
+    store.dispatch(.sessionHistory(.loadMoreRequested))
+
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
+        store.state.sessionHistory.items.count == 2
+    }
+    #expect(store.state.sessionHistory.items.map(\.sessionID) == ["s-1", "s-2"])
+    #expect(!store.state.sessionHistory.hasMore)
+}
+
+/// A failed first page owns the screen; a failed later page must not. Both
+/// halves matter: replacing a list the user is reading with an error page is
+/// the wrong trade, and silently swallowing the failure leaves a 加载更多
+/// button that stops spinning and looks like it loaded nothing.
+@MainActor
+@Test func failureTakesOverAnEmptyScreenAndOnlyShowsWhenThereIsAList() async throws {
+    let firstPageFails = StubSessionHistoryClient { _ in
+        throw SessionHistoryStubFailure()
+    }
+    let (emptyStore, _) = makeStore(client: firstPageFails)
+
+    emptyStore.dispatch(.sessionHistory(.appear))
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
+        if case .failed = emptyStore.state.sessionHistory.phase { return true }
+        return false
+    }
+    #expect(emptyStore.state.sessionHistory.errorMessage != nil)
+
+    let laterPageFails = StubSessionHistoryClient { _ in
+        throw SessionHistoryStubFailure()
+    }
+    let (loadedStore, _) = makeStore(
+        client: laterPageFails,
+        state: SessionHistoryState(
+            phase: .ready,
+            items: [makeSessionItem("s-1")],
+            nextCursor: "c1"
+        )
+    )
+
+    loadedStore.dispatch(.sessionHistory(.loadMoreRequested))
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
+        loadedStore.state.sessionHistory.errorMessage != nil
+    }
+
+    #expect(loadedStore.state.sessionHistory.items.map(\.sessionID) == ["s-1"])
+    #expect(loadedStore.state.sessionHistory.phase == .ready)
+    #expect(!loadedStore.state.sessionHistory.isLoadingMore)
+}
+
+/// Refresh is page one again, replacing. Paged-in rows are the *older* ones and
+/// stay on the server, so dropping them from the screen is correct — but a
+/// refresh that asked for the stored cursor instead would silently fetch the
+/// wrong page, which is the failure this pins.
+@MainActor
+@Test func refreshAsksForPageOneAndReplaces() async throws {
+    let client = StubSessionHistoryClient { cursor in
+        #expect(cursor == nil)
+        return SessionHistoryPage(items: [makeSessionItem("s-9")], nextCursor: nil, size: 20)
+    }
+    let (store, _) = makeStore(
+        client: client,
+        state: SessionHistoryState(
+            phase: .ready,
+            items: [makeSessionItem("s-1"), makeSessionItem("s-2")],
+            nextCursor: "c1"
+        )
+    )
+
+    store.dispatch(.sessionHistory(.refreshRequested))
+
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
+        store.state.sessionHistory.items.map(\.sessionID) == ["s-9"]
+    }
+    #expect(client.requestedCursors == [nil])
+}
+
+@MainActor
+private func waitUntil(
+    timeoutNanoseconds: UInt64,
+    pollIntervalNanoseconds: UInt64 = 10_000_000,
+    condition: @escaping @MainActor () -> Bool
+) async throws {
+    let start = DispatchTime.now().uptimeNanoseconds
+    while !condition() {
+        if DispatchTime.now().uptimeNanoseconds - start >= timeoutNanoseconds {
+            throw SessionHistoryTestTimeout()
+        }
+        try await Task.sleep(nanoseconds: pollIntervalNanoseconds)
+    }
+}
+
+private struct SessionHistoryTestTimeout: Error {}

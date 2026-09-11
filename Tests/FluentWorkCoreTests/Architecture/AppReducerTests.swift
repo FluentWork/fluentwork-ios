@@ -35,6 +35,11 @@ import TGReduxKitTesting
             moduleName: "DailyRead",
             entryRoute: "/daily-read"
         ),
+        FeaturePluginDescriptor(
+            feature: .sessionHistory,
+            moduleName: "SessionHistory",
+            entryRoute: "/sessions"
+        ),
     ]
     expected.featureFlags.snapshot = .firstWave
     expected.featureFlags.isRemoteLoaded = true
@@ -122,6 +127,11 @@ import TGReduxKitTesting
             feature: .dailyRead,
             moduleName: "DailyRead",
             entryRoute: "/daily-read"
+        ),
+        FeaturePluginDescriptor(
+            feature: .sessionHistory,
+            moduleName: "SessionHistory",
+            entryRoute: "/sessions"
         ),
     ]
     store.send(.featureFlags(.setLocalOverride(flag: .speakingRoom, isEnabled: false)))

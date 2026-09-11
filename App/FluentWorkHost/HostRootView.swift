@@ -215,6 +215,19 @@ struct HostRootView: View {
                 }
             )
             .onAppear { _ = sessionID }
+        case .sessionHistory:
+            SessionHistoryRootView(
+                model: makeSessionHistoryViewModel(from: store.state.sessionHistory),
+                onAppear: {
+                    store.dispatch(.sessionHistory(.appear))
+                },
+                onRefresh: {
+                    store.dispatch(.sessionHistory(.refreshRequested))
+                },
+                onLoadMore: {
+                    store.dispatch(.sessionHistory(.loadMoreRequested))
+                }
+            )
         }
     }
 
@@ -465,6 +478,45 @@ struct HostRootView: View {
         )
     }
 
+    /// State → the list's plain model.
+    ///
+    /// `now` is read **once** and handed to every row: a list of thirty rows
+    /// that each called `Date()` could straddle midnight and disagree about
+    /// which rows are 今天.
+    private func makeSessionHistoryViewModel(
+        from state: SessionHistoryState
+    ) -> SessionHistoryViewModel {
+        let phase: SessionHistoryViewPhase
+        switch state.phase {
+        case .idle:
+            phase = .idle
+        case .loading:
+            phase = .loading
+        case .ready:
+            phase = .ready
+        case .empty:
+            phase = .empty
+        case .failed:
+            phase = .failed
+        }
+
+        let now = Date()
+        return SessionHistoryViewModel(
+            phase: phase,
+            rows: state.items.map { item in
+                SessionHistoryRowViewData(
+                    id: item.sessionID,
+                    startedAtText: SessionHistoryFormatting.startedAt(item.startedAt, now: now),
+                    durationText: SessionHistoryFormatting.duration(item.durationSec),
+                    statusText: SessionHistoryFormatting.status(item.status)
+                )
+            },
+            canLoadMore: state.hasMore,
+            isLoadingMore: state.isLoadingMore,
+            errorMessage: state.errorMessage
+        )
+    }
+
     private func makeBadgeFeedbackViewModel(
         from state: BadgeFeedbackState,
         now: Date
@@ -641,6 +693,8 @@ struct HostRootView: View {
             return "回顾"
         case "/daily-read":
             return "每日一读"
+        case "/sessions":
+            return "练习历史"
         default:
             return moduleName
         }
@@ -654,6 +708,8 @@ struct HostRootView: View {
             return "查看评价、对照表达与炼句卡片，保持会话式全屏沉浸。"
         case "/daily-read":
             return "在工作台导航栈内进入阅读页，继续停留在当前 Tab。"
+        case "/sessions":
+            return "按时间回看每一场练习。列表按页加载，停留在当前 Tab。"
         default:
             return "该模块尚未接入当前 MVP 导航。"
         }
@@ -667,6 +723,8 @@ struct HostRootView: View {
             return "text.quote"
         case "/daily-read":
             return "book.fill"
+        case "/sessions":
+            return "clock.arrow.circlepath"
         default:
             return "square.grid.2x2"
         }
@@ -680,6 +738,8 @@ struct HostRootView: View {
             return .review
         case "/daily-read":
             return .dailyRead
+        case "/sessions":
+            return .sessionHistory
         default:
             return .unsupported
         }

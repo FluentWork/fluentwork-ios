@@ -97,7 +97,7 @@ private func waitForSpeakingRoomPhase(
     let catalog = FeaturePluginCatalog.firstWave
     for descriptor in catalog {
         switch descriptor.feature {
-        case .speakingRoom, .workspaceReview, .dailyRead:
+        case .speakingRoom, .workspaceReview, .dailyRead, .sessionHistory:
             #expect(AppRoute(entryRoute: descriptor.entryRoute) != nil)
         default:
             #expect(AppRoute(entryRoute: descriptor.entryRoute) == nil)
@@ -123,7 +123,8 @@ private func waitForSpeakingRoomPhase(
     #expect(store.state.speakingRoom.isBootstrapReady)
     #expect(store.state.network.isConnected)
     #expect(
-        store.state.workspace.availableModules.map(\.moduleName) == ["SpeakingRoom", "Review", "DailyRead"]
+        store.state.workspace.availableModules.map(\.moduleName)
+            == ["SpeakingRoom", "Review", "DailyRead", "SessionHistory"]
     )
 
     let speakingEntry = store.state.workspace.availableModules.first {
