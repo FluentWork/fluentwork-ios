@@ -238,6 +238,12 @@ public enum SpeechSessionMachine {
             state.processingStage = nil
             effects.append(.endSession)
 
+        case (_, .endSessionConfirmShown) where state.phase.isActive:
+            effects.append(.pausePlayback)
+
+        case (_, .endSessionConfirmCancelled) where state.phase.isActive:
+            effects.append(.resumePlayback)
+
         case (_, .failed(let message)) where state.phase != .ended:
             state.phase = .failed
             state.failureReason = message

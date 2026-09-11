@@ -240,6 +240,32 @@ import Testing
     #expect(!SpeechSessionPhase.failed.isActive)
 }
 
+/// 结束练习确认框挂在只在 live 相位存在的按钮上时，`.ended` 会拆掉呈现者，
+/// `isPresented` 留在 true。下一场 `connecting` 的按钮一出现，框就再弹一次。
+/// Host 必须在相位离开 live 时把 flag **写回 false**，不能只靠计算属性。
+@Test func endSessionConfirmationDoesNotResurfaceOnTheNextLivePhase() {
+    #expect(SpeechSessionPhase.aiSpeaking.presentingEndSessionConfirmation(true))
+    #expect(!SpeechSessionPhase.aiSpeaking.presentingEndSessionConfirmation(false))
+
+    var presented = true
+    presented = SpeechSessionPhase.ended.presentingEndSessionConfirmation(presented)
+    #expect(!presented)
+
+    presented = SpeechSessionPhase.connecting.presentingEndSessionConfirmation(presented)
+    #expect(!presented)
+
+    #expect(!SpeechSessionPhase.idle.presentingEndSessionConfirmation(true))
+    #expect(!SpeechSessionPhase.failed.presentingEndSessionConfirmation(true))
+}
+
+/// 2026-09-12 真机：confirmationDialog 挂在随 `.ended` 重建的 bottom bar 后面，
+/// 会闪出第二个框再自动消失。合法挂点是封面内部、且包在相位相关 chrome *之前* 的房间 destination。
+@Test func endSessionConfirmationDialogMustSitInsideTheCover() {
+    #expect(!EndSessionConfirmationDialogSite.liveSessionButton.isValid)
+    #expect(!EndSessionConfirmationDialogSite.fullScreenCoverPresenter.isValid)
+    #expect(EndSessionConfirmationDialogSite.speakingRoomDestination.isValid)
+}
+
 @Test func speechSessionPhaseLabelsCoverV20WaitsAndExistingStages() {
     // The evaluation wait and the abort landing pad are stages now. Their
     // cross-service tags must not change: the backend log is keyed on them.
@@ -544,6 +570,33 @@ import Testing
     let effects = SpeechSessionMachine.reduce(&state, event: .endTap)
     #expect(state.phase == .ended)
     #expect(effects.contains(.endSession))
+}
+
+/// 结束练习确认框打开时只暂停 TTS，不结束会话。取消要能继续听。
+/// `interruptNow` / `.stopPlayback` 会倒掉队列，取消后接不上。
+@Test func endSessionConfirmShownPausesPlaybackWithoutEndingTheSession() {
+    var state = SpeechSessionState(phase: .aiSpeaking)
+    let effects = SpeechSessionMachine.reduce(&state, event: .endSessionConfirmShown)
+    #expect(state.phase == .aiSpeaking)
+    #expect(effects.contains(.pausePlayback))
+    #expect(!effects.contains(.endSession))
+    #expect(!effects.contains(.stopPlayback))
+}
+
+@Test func endSessionConfirmCancelledResumesPlayback() {
+    var state = SpeechSessionState(phase: .aiSpeaking)
+    _ = SpeechSessionMachine.reduce(&state, event: .endSessionConfirmShown)
+    let effects = SpeechSessionMachine.reduce(&state, event: .endSessionConfirmCancelled)
+    #expect(state.phase == .aiSpeaking)
+    #expect(effects.contains(.resumePlayback))
+    #expect(!effects.contains(.endSession))
+}
+
+@Test func endSessionConfirmShownFromIdleIsIgnored() {
+    var state = SpeechSessionState.initial
+    let effects = SpeechSessionMachine.reduce(&state, event: .endSessionConfirmShown)
+    #expect(state == SpeechSessionState.initial)
+    #expect(effects.isEmpty)
 }
 
 @Test func evaluationStageVadStartsNextTurn() {

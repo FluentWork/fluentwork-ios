@@ -66,6 +66,10 @@ public enum SpeechSessionEvent: Equatable, Sendable {
     case systemInterruptEnded
     case textMessageSent
     case textReplyReceived
+    /// Confirmation for 结束练习 is on screen. Pause TTS; do not end the session.
+    case endSessionConfirmShown
+    /// User cancelled 结束练习. Resume TTS from the pause point.
+    case endSessionConfirmCancelled
     case endTap
     case failed(String)
     /// Immediate teardown; middleware must not wait on network replies.

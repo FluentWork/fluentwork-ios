@@ -9,6 +9,10 @@ public enum SpeechSessionSideEffect: Equatable, Sendable {
     /// Does not end the session and must not be folded into `.turnTimeoutExpired`.
     case sendTurnAbort(turnID: String, outcome: TurnOutcome)
     case stopPlayback
+    /// Hold TTS without dumping the queue. Cancel of 结束练习 must be able to continue.
+    case pausePlayback
+    /// Release a `.pausePlayback` hold.
+    case resumePlayback
     case startReconnectWindow
     /// B15: turn-level timeout fired (backend 60s collectTurn expired).
     /// Middleware cancels the transport task and ends the session.

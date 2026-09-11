@@ -437,6 +437,33 @@ struct SpeechSessionMiddlewareB14Tests {
     }
 
     @MainActor
+    @Test func endSessionConfirmShownPausesPlaybackAndCancelResumes() async throws {
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting)
+        store.dispatch(.speakingRoom(.session(.socketReady)))
+        try await waitForPhase(store, phase: .aiSpeaking)
+
+        store.dispatch(.speakingRoom(.session(.endSessionConfirmShown)))
+        try await waitUntil() { await audioEngine.pauseCalls == 1 }
+        #expect(store.state.speakingRoom.phase == .aiSpeaking)
+        #expect(await audioEngine.stopCaptureCalled == false)
+        #expect(await audioEngine.interruptCalls == 0)
+
+        store.dispatch(.speakingRoom(.session(.endSessionConfirmCancelled)))
+        try await waitUntil() { await audioEngine.resumeCalls == 1 }
+        #expect(store.state.speakingRoom.phase == .aiSpeaking)
+        #expect(await audioEngine.stopCaptureCalled == false)
+    }
+
+    @MainActor
     @Test func recordingTimeoutSendsClientTurnAbortAndKeepsSessionAlive() async throws {
         let container = Container()
         container.reset()
@@ -1786,6 +1813,10 @@ private final class StubAudioEngineForMiddleware: AudioEngineProtocol, @unchecke
     var stopCaptureCalled: Bool { get async { await _stopCaptureCalled.get() } }
     private let _interruptCalls = AsyncValue(0)
     var interruptCalls: Int { get async { await _interruptCalls.get() } }
+    private let _pauseCalls = AsyncValue(0)
+    var pauseCalls: Int { get async { await _pauseCalls.get() } }
+    private let _resumeCalls = AsyncValue(0)
+    var resumeCalls: Int { get async { await _resumeCalls.get() } }
     private let _reconfigureCalls = AsyncValue(0)
     var reconfigureCalls: Int { get async { await _reconfigureCalls.get() } }
     /// Every value `setVoiceProcessingEnabled` was handed, in order. Recorded
@@ -1812,6 +1843,12 @@ private final class StubAudioEngineForMiddleware: AudioEngineProtocol, @unchecke
     func play(frame: WSAudioFrame) async {}
     func interruptNow() async {
         await _interruptCalls.update { $0 + 1 }
+    }
+    func pausePlayback() async {
+        await _pauseCalls.update { $0 + 1 }
+    }
+    func resumePlayback() async {
+        await _resumeCalls.update { $0 + 1 }
     }
     func discardActiveSpeech() async {}
     func reconfigureForRouteChange() async {

@@ -74,8 +74,38 @@ public enum SpeechSessionPhase: String, Equatable, Sendable, CaseIterable {
         }
     }
 
+    /// Whether the 结束练习 confirmation should still be on screen.
+    ///
+    /// Live chrome (the red button) is destroyed when the phase leaves
+    /// `isActive`. A leftover `true` re-presents the dialog the next time
+    /// that chrome appears. Host must **write the flag back** through this
+    /// function on every phase change — a computed `get` that still leaves
+    /// `@State == true` will pop the dialog again on `.connecting`.
+    public func presentingEndSessionConfirmation(_ isPresented: Bool) -> Bool {
+        isPresented && isActive
+    }
+
     /// True while the machine is processing the user's last turn.
     public var isProcessing: Bool { self == .processing }
+}
+
+/// Where the host may attach the 结束练习 alert.
+///
+/// The speaking room is a workbench `fullScreenCover`. SwiftUI presents one
+/// thing at a time from a given presenter:
+///
+/// - `liveSessionButton` is destroyed on `.ended` → flag leaks, dialog twice
+/// - `fullScreenCoverPresenter` is the view that *presents* the cover
+///   (HostRootView). A second presentation from there **dismisses the room**
+/// - `speakingRoomDestination` sits inside the cover. The alert must wrap the
+///   room ZStack *before* the phase-dependent bottom bar, or `.ended` rebuilds
+///   the presenter and a second dialog flashes and auto-dismisses.
+public enum EndSessionConfirmationDialogSite: Equatable, Sendable {
+    case liveSessionButton
+    case fullScreenCoverPresenter
+    case speakingRoomDestination
+
+    public var isValid: Bool { self == .speakingRoomDestination }
 }
 
 /// Where the **backend pipeline** is, while the phase is `.processing`.

@@ -309,6 +309,11 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// never called `stopCapture()` behaves exactly as before.
     private var playbackRetired = false
 
+    /// 结束练习 confirmation is on screen. The player is paused and incoming
+    /// TTS still schedules, but `play()` is not called until `resumePlayback()`.
+    /// Dumping the queue here would make cancel unable to continue the reply.
+    private var playbackPaused = false
+
     // Barge-in timing — captured at the moment `interruptNow()` is requested so
     // tests can assert the local-silence budget (≤ 200 ms) without depending on
     // hardware audio output.
@@ -541,6 +546,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // cleared once the start succeeded — a session that failed to come up
         // must not advertise a graph it does not have.
         playbackRetired = false
+        playbackPaused = false
         startInterruptionObservation()
     }
 
@@ -640,6 +646,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // restarting the player (and instead of `.failed`, which would kill
         // the process-lifetime audio pump — `docs/49`).
         playbackRetired = true
+        playbackPaused = false
         let shouldRemoveTap = hasInstalledTap
         hasInstalledTap = false
         // Also stop any in-flight AI playback so a session end always leaves
@@ -799,6 +806,10 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             playerAttached = false
             return false
         }
+        if playbackPaused {
+            // Schedule-only: cancel of 结束练习 must continue from here.
+            return true
+        }
         if !playerNode.isPlaying {
             // `play()` raises rather than returning when the node has nothing to
             // play into, and "has nothing to play into" is not a state this
@@ -816,11 +827,34 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
     public func interruptNow() async {
         lastInterruptRequestedAt = clock.now
+        playbackPaused = false
         _ = playbackGate.markInterrupted()
         if playerAttached {
             playerNode.stop()
             playerNode.reset()
         }
+    }
+
+    public func pausePlayback() async {
+        playbackPaused = true
+        if playerAttached {
+            playerNode.pause()
+        }
+    }
+
+    public func resumePlayback() async {
+        guard !playbackRetired else { return }
+        playbackPaused = false
+        guard playerAttached, engine.isRunning, playerNode.engine === engine else { return }
+        if !playerNode.isPlaying {
+            var raised: NSError?
+            _ = FWTryCatch({ self.playerNode.play() }, &raised)
+        }
+    }
+
+    /// Snapshot for tests: confirmation-dialog pause must hold without retiring playback.
+    public func isPlaybackPaused() -> Bool {
+        playbackPaused
     }
 
     public func discardActiveSpeech() async {

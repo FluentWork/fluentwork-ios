@@ -76,6 +76,10 @@ public protocol AudioEngineProtocol: Sendable {
     func stopCapture() async
     func play(frame: WSAudioFrame) async
     func interruptNow() async
+    /// Hold TTS without dumping scheduled buffers. Cancel of 结束练习 resumes.
+    func pausePlayback() async
+    /// Release a `pausePlayback()` hold and continue scheduled TTS.
+    func resumePlayback() async
     /// Drop in-progress VAD speech without emitting `.speechEnded`.
     /// Used by I20 recording abort so middleware does not send `user.speech.end`.
     func discardActiveSpeech() async
@@ -112,6 +116,8 @@ extension AudioEngineProtocol {
     public func beginManualSpeech() async {}
     public func endManualSpeech() async {}
     public func reconfigureForRouteChange() async {}
+    public func pausePlayback() async {}
+    public func resumePlayback() async {}
 }
 
 /// Decodes an inbound `WSAudioFrame` (Opus payload) into 16 kHz mono

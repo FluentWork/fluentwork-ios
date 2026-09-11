@@ -65,6 +65,13 @@ struct HostRootView: View {
             didLaunch = true
             store.dispatch(.lifecycle(.appLaunched))
         }
+        // Flag write-back lives here so it still runs if the room destination
+        // identity flickers. The *dialog* must not: HostRootView presents the
+        // speaking room as a fullScreenCover, and a second presentation from
+        // this same presenter dismisses that cover (TTS keeps playing).
+        .onChange(of: store.state.speakingRoom.phase) { _, phase in
+            showsEndSessionConfirmation = phase.presentingEndSessionConfirmation(showsEndSessionConfirmation)
+        }
     }
 
     @ViewBuilder
@@ -128,10 +135,6 @@ struct HostRootView: View {
                 )
                 .navigationTitle("说的房间")
 
-                // `I11` lightweight badge feedback — non-modal, top of the
-                // surface, renders only the entries currently inside the
-                // visible window. The wrapper uses TimelineView so expired
-                // entries fade without forcing a state dispatch.
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     BadgeFeedbackOverlay(
                         model: makeBadgeFeedbackViewModel(
@@ -142,6 +145,21 @@ struct HostRootView: View {
                     .allowsHitTesting(false)
                 }
                 .padding(.top, 4)
+            }
+            // Alert wraps the ZStack *before* the phase-dependent bottom bar.
+            // confirmationDialog after `safeAreaInset` was rebuilt on `.ended`
+            // and flashed a second dialog that auto-dismissed.
+            .alert("结束这次练习？", isPresented: $showsEndSessionConfirmation) {
+                Button("确定", role: .destructive) {
+                    showsEndSessionConfirmation = false
+                    store.dispatch(.speakingRoom(.session(.endTap)))
+                }
+                Button("取消", role: .cancel) {
+                    showsEndSessionConfirmation = false
+                    store.dispatch(.speakingRoom(.session(.endSessionConfirmCancelled)))
+                }
+            } message: {
+                Text("会话会结束并生成回顾，本轮要点会保留。")
             }
             .overlay(alignment: .topLeading) {
                 Button {
@@ -325,6 +343,7 @@ struct HostRootView: View {
             // This ends the whole session, not the current turn — the label has
             // to say so, and a mis-tap must not be enough to lose a practice run.
             Button {
+                store.dispatch(.speakingRoom(.session(.endSessionConfirmShown)))
                 showsEndSessionConfirmation = true
             } label: {
                 Label("结束练习", systemImage: "xmark.circle.fill")
@@ -336,35 +355,8 @@ struct HostRootView: View {
             .tint(.red)
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
-            // This dialog is attached to a button that only exists while a
-            // session is live, and `showsEndSessionConfirmation` is `@State` on
-            // the host — which outlives it. Tapping 结束练习 moves the phase to
-            // `.ended`, so the button presenting the dialog **is destroyed while
-            // the dialog is up**: the dismissal never reaches the binding, the
-            // flag stays `true`, and the next time this branch appears (starting
-            // another session) the dialog presents again. That is the "弹出两次"
-            // the user hit.
-            //
-            // Clearing the flag in the actions is the honest fix at this level:
-            // once the user has answered, the flag is false, whatever happens to
-            // the view that asked. Moving the dialog to a presenter that
-            // outlives the phase change is the sturdier version, and worth doing
-            // if this recurs — but it moves UI, and this does not.
-            .confirmationDialog(
-                "结束这次练习？",
-                isPresented: $showsEndSessionConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button("结束练习", role: .destructive) {
-                    showsEndSessionConfirmation = false
-                    store.dispatch(.speakingRoom(.session(.endTap)))
-                }
-                Button("继续练习", role: .cancel) {
-                    showsEndSessionConfirmation = false
-                }
-            } message: {
-                Text("会话会结束并生成回顾，本轮要点会保留。")
-            }
+            // Alert is on the ZStack, before this bar. Opening pauses TTS;
+            // 确定 ends the session; 取消 resumes.
         }
     }
 
@@ -866,6 +858,7 @@ struct HostRootView: View {
     }
 
     private func closeSpeakingRoom() {
+        showsEndSessionConfirmation = false
         if store.state.speakingRoom.phase != .idle && store.state.speakingRoom.phase != .ended {
             store.dispatch(.speakingRoom(.session(.endTap)))
         }

@@ -1182,3 +1182,37 @@ final class VoiceProcessingRecorder: @unchecked Sendable {
     }
     #expect(failure == nil, "dropping a late frame must not fail the engine; got \(String(describing: failure))")
 }
+
+/// 结束练习弹窗打开时只 pause，不 teardown。迟到帧仍可进解码器（取消要接着播），
+/// 但不得把 player 重新 play() 起来。确定之后才走 stopCapture。
+@available(iOS 17, macOS 14, *)
+@Test func pausePlaybackHoldsThePlayerWithoutRetiringIt() async {
+    let log = CallLog()
+    let decoder = CapturingFrameDecoder(log: log, samplesPerFrame: 4)
+    let engine = LiveAudioEngine(decoder: decoder)
+    let stream = engine.events()
+
+    await engine.play(frame: WSAudioFrame(sequence: 1, opusPayload: Data(repeating: 0x01, count: 8)))
+    await engine.pausePlayback()
+    #expect(await engine.isPlaybackPaused())
+
+    await engine.play(frame: WSAudioFrame(sequence: 2, opusPayload: Data(repeating: 0x02, count: 8)))
+    let captured = await log.snapshot()
+    #expect(captured.map(\.sequence) == [1, 2], "paused playback must still queue incoming TTS; got \(captured.map(\.sequence))")
+    #expect(await engine.isPlaybackPaused())
+
+    let failure = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        if case .failed = event { return event } else { return nil }
+    }
+    #expect(failure == nil, "queueing while paused must not fail the engine; got \(String(describing: failure))")
+
+    await engine.resumePlayback()
+    #expect(await engine.isPlaybackPaused() == false)
+
+    await engine.pausePlayback()
+    await engine.stopCapture()
+    #expect(await engine.isPlaybackPaused() == false)
+    await engine.play(frame: WSAudioFrame(sequence: 3, opusPayload: Data(repeating: 0x03, count: 8)))
+    let afterStop = await log.snapshot()
+    #expect(afterStop.map(\.sequence) == [1, 2], "stopCapture after pause must retire leftover frames")
+}

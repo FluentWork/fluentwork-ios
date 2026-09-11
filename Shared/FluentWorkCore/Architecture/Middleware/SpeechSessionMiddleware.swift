@@ -967,6 +967,10 @@ private func interpretSpeechSessionSideEffect(
         emitTurnOutcome(container: container, sessionID: nil, turnID: turnID, outcome: outcome)
     case .stopPlayback:
         timings.mark(event: "playback_stop")
+    case .pausePlayback:
+        timings.mark(event: "playback_pause")
+    case .resumePlayback:
+        timings.mark(event: "playback_resume")
     case .startReconnectWindow:
         timings.mark(event: "reconnect_window_start")
     case .turnTimeoutExpired:
@@ -1070,6 +1074,16 @@ private func interpretSpeechSessionSideEffect(
                 properties: ["turn_id": turnID]
             )
             await audioEngine.interruptNow()
+        }
+
+    case .pausePlayback:
+        return .fireAndForget {
+            await audioEngine.pausePlayback()
+        }
+
+    case .resumePlayback:
+        return .fireAndForget {
+            await audioEngine.resumePlayback()
         }
 
     // **A degrade timer, not a reconnect wait.**
