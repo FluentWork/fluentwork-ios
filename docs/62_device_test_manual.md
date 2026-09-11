@@ -42,6 +42,13 @@ go run ./cmd/corpus-seed -device-id <真机 device_id>
 
 `device_id` 从 iOS 日志或 Keychain 取（历史上形如 `DA87E7D4-1371-4984-AD3F-D6D70B4D17D2`）。
 
+> **⚠️ 这一项有个先有鸡还是先有蛋**：`device_id` 只有在**真机连过一次后端**之后才存在，
+> 而它又是灌语料的前提。所以开工顺序其实是：
+>
+> **① 装包 → ② 连一次（能进说的房间即可）→ ③ 从 iOS 日志抄下 `device_id` → ④ 灌语料 → ⑤ 才开始跑 T1–T5。**
+>
+> 直接开跑 **T2** 会是空的（徽章永不出现且不报错，正是下面说的那个坑），而 **T5 的转录原文**也需要它落库。
+
 **灌进去的 10 条锚点（说左边 → 命中右边）**：
 
 | 说 | 命中徽章 |
@@ -161,11 +168,11 @@ go run ./cmd/corpus-seed -device-id <真机 device_id>
 | **前置** | ①后端日志可读 ②**一个把 flag 打开的构建**（见下） |
 | **第 0 步** | 把 `FeatureFlagSnapshot.firstWave`（`Shared/FluentWorkFeatureFlags/FeatureFlags.swift`）加进 `.voiceProcessing`，重新构建。**不做这步，T4 测的是「AEC 关着」的状态，结论无意义** |
 | **做什么** | 让 AI 说一段**含独特短语**的话（例如引它说 `bottom line` 那句），**你全程不出声**。**重复 3 次** |
-| **先看** | 日志里的 `[Tracker] timing_audio_voice_processing`。四种取值：`on, tap=…` / `on, alreadyOn, …` / `off, tap=…` / `unavailable: …`。**不是 `on` 就先别往下判** —— 开关没生效时，「AEC 不行」与「AEC 根本没开」在现象上完全同形，而后者是可修的 |
+| **先看** | **iOS 端**日志（Xcode 控制台 / Console.app，**不是**后端日志）里的 `[Tracker] timing_audio_voice_processing`。四种取值：`on, tap=…` / `on, alreadyOn, …` / `off, tap=…` / `unavailable: …`。**不是 `on` 就先别往下判** —— 开关没生效时，「AEC 不行」与「AEC 根本没开」在现象上完全同形，而后者是可修的 |
 | **判据** | **该轮 transcript 为空 / 没有触发新一轮** |
 | **工具** | 静默一轮之后跑：`./scripts/check-aec.py /tmp/fluentwork-backend.log`（exit 0 = 无自激；1 = 发现自激） |
 | **还要看** | 三个自激信号：①转录里出现 **AI 自己刚说过的话** ②**没开口却触发新一轮** ③**`interrupt` 自触发**（AI 被自己的声音打断） |
-| **记什么** | 三次各自的：`timing_audio_voice_processing` 原文 + transcript 内容 + `check-aec.py` 的 exit code + 有没有自触发新一轮。**还要记构建哈希**——A/B 是两个构建，不记哈希就分不清哪次是哪个 |
+| **记什么** | 三次各自的：`timing_audio_voice_processing` 原文 + transcript 内容 + `check-aec.py` 的 exit code + 有没有自触发新一轮。**还要写「构建 B」**——见执行顺序那节的说明，两次构建的提交哈希是同一个 |
 | **⚠️** | VP 默认带 **AGC**，而 VAD 阈值是按原始麦克风能量标定的。若出现**没说话却触发新一轮**，先怀疑它，别先怀疑回声。另外 VPIO 会同时处理输出侧，**AI 的声音会更小更"电话腔"** —— 这是预期内的，不是缺陷 |
 | **不过的话** | **不是回去调参，是走退路**：把 flag 关掉（即撤掉第 0 步那行）并重新构建，先上半双工（播放时停上行，barge-in 暂时降级为按钮触发），见 meta `77_` §3.4 |
 
@@ -174,6 +181,12 @@ go run ./cmd/corpus-seed -device-id <真机 device_id>
 > 不通过 → **不是回去调 VPIO 参数**，把 flag 撤回默认关，**直接上兜底**（半双工）。
 >
 > **A/B 就是两个构建**：上面第 0 步加一行 / 撤一行各出一个包。仓里没有 feature flag 的调试入口，不要指望同一个包上开关。
+>
+> **⚠️ 本项要看的是两本不同的日志**，别拿错：
+> - `[Tracker] timing_audio_voice_processing` → **iOS 端**（Xcode 控制台 / Console.app），且只在 **DEBUG 构建**里打印
+> - `check-aec.py` 的输入 → **后端**日志 `/tmp/fluentwork-backend.log`
+>
+> 后端日志里**永远不会有** `[Tracker]` 那行，`ConsoleTracker` 是客户端进程里 `print` 出来的。
 
 ---
 
