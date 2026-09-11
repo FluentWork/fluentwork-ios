@@ -191,6 +191,53 @@ import TGReduxKitTesting
     #expect(acceptedFresh == .accept)
 }
 
+/// **This is a characterisation, not a reproduction. It was written while
+/// trying to reproduce P0-11 and it did _not_ reproduce it.**
+///
+/// What prompted it: the backend log for the 2026-09-12 03:14 session streams
+/// turns 1–9 normally (`collect_turn` lasts 1467–5807 ms) and then changes hard
+/// at **turn-10** — from there every turn drains in **6–48 ms** with
+/// `asr_started_ms == asr_done_ms`, i.e. the vendor's whole reply including its
+/// audio arrives as one burst. In a burst, an interrupt lands while the
+/// interrupted turn's own frames are still in flight, which is a case the gate
+/// was never built for.
+///
+/// What it rules out: `docs/60` says the watermark exists for **sequence
+/// resets** (F18 — a transparent reopen restarts the provider's numbering at 1
+/// while the client's watermark sits in the hundreds). It rejects frames at or
+/// below a number the client has *already seen*. A frame still in flight has a
+/// **higher** number than anything accepted, so it is not below anything and
+/// the gate passes it. That is correct for the job the gate has; it also means
+/// the gate is not what drops a live turn's audio after an interrupt.
+///
+/// What it does not rule out: a burst is 6–48 ms wide and a tap is not, so this
+/// cannot be the mechanism behind a symptom a person triggered by tapping. The
+/// search moved on; this is kept because the limitation is real and the next
+/// person to suspect the gate should not have to rediscover it.
+@Test func playbackGateCannotTellAnInFlightFrameFromTheNextTurnsFrame() {
+    var gate = AudioPlaybackGate()
+    // Turn N arrives as a burst — the first half lands before the user can
+    // react and tap.
+    for sequence in UInt32(100)...110 {
+        #expect(gate.shouldAccept(WSAudioFrame(sequence: sequence, opusPayload: Data([0x01]))) == .accept)
+    }
+
+    // The tap. This is what `LiveAudioEngine.interruptNow()` does.
+    #expect(gate.markInterrupted() == 110)
+
+    // The rest of the same burst arrives. These frames belong to the turn the
+    // user just interrupted — they are the answer they cut off — and nothing
+    // in the gate says so: the verdict is `accept`, and `play(frame:)` will
+    // schedule them and start the player for them.
+    let tail = (UInt32(111)...120).map {
+        gate.shouldAccept(WSAudioFrame(sequence: $0, opusPayload: Data([0x01])))
+    }
+    #expect(
+        tail.allSatisfy { $0 == .accept },
+        "if this ever fails, the gate gained a way to tell an in-flight frame of the interrupted turn from the next turn's first frame"
+    )
+}
+
 @Test func audioPlaybackGateResetClearsInterruptWatermark() {
     var gate = AudioPlaybackGate()
     let acceptedBeforeInterrupt = gate.shouldAccept(
