@@ -229,13 +229,21 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
     /// contract, and it cannot be reached through the public protocol.
     func receiveLoop(_ source: any SocketMessageSource) async {
         while !Task.isCancelled {
-            let receivedAt = ContinuousClock.now
             do {
                 let message = try await source.receive()
-                let decodedAt = ContinuousClock.now
-                let receiveElapsedMs = Self.elapsedMs(from: receivedAt, to: decodedAt)
+                // Both samples bracket the work, not the wait. Sampling the
+                // start *before* `receive()` made the interval whatever the
+                // socket had been idle — nearly all of it on a healthy
+                // connection — and sampling the end before `handle()` left
+                // out decode and dispatch, which is the cost this marker
+                // exists to expose.
+                let receivedAt = ContinuousClock.now
                 try handle(message: message)
-                logReceiveLatency(message: message, elapsedMs: receiveElapsedMs)
+                let handledAt = ContinuousClock.now
+                logReceiveLatency(
+                    message: message,
+                    elapsedMs: Self.elapsedMs(from: receivedAt, to: handledAt)
+                )
             } catch is CancellationError {
                 break
             } catch {
@@ -403,6 +411,37 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         }
     }
 
+    /// The value of a control frame's `type` discriminator, for the latency
+    /// marker's `frame_type` column.
+    ///
+    /// Read from the raw JSON rather than from a decoded frame on purpose: a
+    /// frame whose type this client does not recognise is skipped without ever
+    /// becoming a `WSControlFrame`, and those are exactly the frames worth
+    /// seeing in the log next to their cost.
+    ///
+    /// The previous scan returned the text between the first two quotes, which
+    /// is the *key* — so every control frame reported `frame_type = "type"`,
+    /// a constant, in a column whose stated purpose is to be filtered on. The
+    /// audio path was unaffected and reported `audio_binary` correctly, which
+    /// is why the broken half stayed plausible.
+    ///
+    /// Returns `nil` when there is no `type` string to read; the caller labels
+    /// that `"unknown"` rather than inventing a name.
+    static func controlFrameType(in text: String) -> String? {
+        guard let key = text.range(of: "\"type\"") else { return nil }
+
+        var index = key.upperBound
+        while index < text.endIndex, text[index] == ":" || text[index].isWhitespace {
+            index = text.index(after: index)
+        }
+        guard index < text.endIndex, text[index] == "\"" else { return nil }
+
+        let valueStart = text.index(after: index)
+        guard let valueEnd = text[valueStart...].firstIndex(of: "\"") else { return nil }
+        let value = String(text[valueStart..<valueEnd])
+        return value.isEmpty ? nil : value
+    }
+
     /// Emits a transport-level timing marker (`timing_socket_receive`)
     /// once per inbound frame so the iOS log shows the wall-clock time
     /// between `URLSessionWebSocketTask.receive()` returning and `handle()`
@@ -416,11 +455,7 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         let (frameType, sizeBytes): (String, Int) = {
             switch message {
             case let .string(text):
-                let firstQuote = text.firstIndex(of: "\"") ?? text.startIndex
-                let afterQuote = text.index(after: firstQuote)
-                let endQuote = text[afterQuote...].firstIndex(of: "\"") ?? text.endIndex
-                let type = String(text[afterQuote..<endQuote])
-                return (type.isEmpty ? "unknown" : type, text.utf8.count)
+                return (Self.controlFrameType(in: text) ?? "unknown", text.utf8.count)
             case let .data(data):
                 return ("audio_binary", data.count)
             @unknown default:

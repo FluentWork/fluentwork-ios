@@ -221,15 +221,40 @@ import Testing
 /// scripted source can finish without inventing a failure.
 private actor ScriptedMessageSource: SocketMessageSource {
     private var remaining: [URLSessionWebSocketTask.Message]
+    private let idleBeforeFirst: Duration?
+    private var hasIdled = false
 
-    init(_ messages: [URLSessionWebSocketTask.Message]) {
+    /// `idleBeforeFirst` models the socket sitting with nothing to read — the
+    /// normal state of a healthy connection between frames, and the thing a
+    /// receive-latency sample must not be measuring.
+    init(
+        _ messages: [URLSessionWebSocketTask.Message],
+        idleBeforeFirst: Duration? = nil
+    ) {
         self.remaining = messages
+        self.idleBeforeFirst = idleBeforeFirst
     }
 
     func receive() async throws -> URLSessionWebSocketTask.Message {
         guard !remaining.isEmpty else { throw CancellationError() }
+        if let idleBeforeFirst, !hasIdled {
+            hasIdled = true
+            try await Task.sleep(for: idleBeforeFirst)
+        }
         return remaining.removeFirst()
     }
+}
+
+/// Pulls the single `receiveLatency` sample out of a loop run.
+private func receiveLatencySample(
+    in events: [SocketTransportEvent]
+) -> (frameType: String, elapsedMs: Double)? {
+    for event in events {
+        if case let .diagnostic(.receiveLatency(frameType, _, elapsedMs)) = event {
+            return (frameType, elapsedMs)
+        }
+    }
+    return nil
 }
 
 /// Drives the receive loop with `source` and returns everything it emitted.
@@ -249,6 +274,77 @@ private func eventsFromScriptedReceiveLoop(
     var events: [SocketTransportEvent] = []
     for await event in stream { events.append(event) }
     return events
+}
+
+/// The `frame_type` column must carry the frame's type, not the key `type`.
+///
+/// The old scan read the text between the first two quotes, which in
+/// `{"type":"ping"}` is the key — so every control frame logged the literal
+/// `type`, in a column whose stated purpose is to be filtered on.
+@Test func controlFrameTypeReadsTheValueNotTheKey() {
+    #expect(URLSessionSocketTransport.controlFrameType(in: #"{"type":"ping","ts":7}"#) == "ping")
+    #expect(
+        URLSessionSocketTransport.controlFrameType(in: #"{"type":"ai.something.new"}"#)
+            == "ai.something.new"
+    )
+    // Spacing must not change the answer.
+    #expect(URLSessionSocketTransport.controlFrameType(in: #"{"type" : "pong"}"#) == "pong")
+
+    // No type string at all: `nil` rather than a fabricated name.
+    #expect(URLSessionSocketTransport.controlFrameType(in: #"{"ts":7}"#) == nil)
+    #expect(URLSessionSocketTransport.controlFrameType(in: "not json") == nil)
+}
+
+/// `receiveLatency` must measure the frame, not the wait for it.
+///
+/// The start sample used to be taken *before* `await receive()`, so the
+/// interval was dominated by however long the socket sat with nothing to
+/// read — which, on a healthy connection, is nearly all of it. The number
+/// still looked plausible, because a burst boundary produces one large sample
+/// and everything inside the burst is near zero; nothing about it ever looked
+/// wrong, which is why it survived.
+@Test func receiveLatencyDoesNotMeasureTheWaitForTheNextFrame() async {
+    let events = await eventsFromScriptedReceiveLoop(
+        ScriptedMessageSource(
+            [.string(#"{"type":"ping","ts":7}"#)],
+            idleBeforeFirst: .milliseconds(120)
+        )
+    )
+
+    let sample = receiveLatencySample(in: events)
+    #expect(sample?.frameType == "ping")
+
+    // The run's wall clock is dominated by the 120ms idle by construction, so
+    // a sample that includes it reads ~120. Generous headroom for scheduling,
+    // still far below the idle it must exclude.
+    #expect((sample?.elapsedMs ?? .infinity) < 60)
+}
+
+/// The interval has to cover `handle()`, not stop at the decode before it.
+///
+/// Sampling the end instant before `handle()` measured "receive returned and
+/// we parsed a header", while the doc comment on the marker promised
+/// "`receive()` returning to `handle()` finishing". Decode and dispatch are
+/// exactly the cost this marker exists to expose, so excluding them made it
+/// report the one part of the cycle that is never slow.
+@Test func receiveLatencyIncludesTheCostOfHandlingTheFrame() async {
+    // `WSAudioFrameCodec.decode` copies the payload (`Data(payload)`), so a
+    // large frame gives `handle()` a deterministic, measurable cost.
+    let payload = Data(count: 8 * 1024 * 1024)
+    let encoded = WSAudioFrameCodec.encode(
+        WSAudioFrame(sequence: 1, opusPayload: payload)
+    )
+
+    let events = await eventsFromScriptedReceiveLoop(
+        ScriptedMessageSource([.data(encoded)])
+    )
+
+    let sample = receiveLatencySample(in: events)
+    #expect(sample?.frameType == "audio_binary")
+    // An 8 MiB copy is ~1ms on any modern machine and the idle-inclusive part
+    // of a local source is microseconds — so a sample below this floor means
+    // handling was measured outside the interval.
+    #expect((sample?.elapsedMs ?? 0) > 0.5)
 }
 
 /// A gateway that adds a frame type must not be able to disconnect every
