@@ -1617,13 +1617,12 @@ struct I20TurnTelemetryTests {
 @Suite("SpeechSessionMiddleware Engine Voice Processing")
 struct SpeechSessionMiddlewareVoiceProcessingTests {
 
-    /// The flag is the whole reason the engine-level switch is switchable: T4
-    /// compares two builds that differ only in whether `voiceProcessing` is in
-    /// `firstWave`. If the middleware stopped passing it through, both builds
-    /// would run with the unit off and the comparison would silently become
-    /// "off vs off" — the A/B would look like a clean result and mean nothing.
+    /// The flag is the whole reason the engine-level switch is switchable.
+    /// Settings override is the kill switch now that T4 put VP in `firstWave`.
+    /// Bootstrap the shipped snapshot first — otherwise this only proves
+    /// "empty flags stay off", which was true before T4 too.
     @MainActor
-    @Test func sessionStartPassesTheVoiceProcessingFlagToTheEngine() async throws {
+    @Test func sessionStartPassesTheVoiceProcessingKillSwitchToTheEngine() async throws {
         let container = Container()
         container.reset()
         let audioEngine = StubAudioEngineForMiddleware()
@@ -1631,29 +1630,30 @@ struct SpeechSessionMiddlewareVoiceProcessingTests {
         container.speechSessionClient.register { StubSpeechSessionClientForMiddleware() }
 
         let store = AppStoreFactory.make(container: container)
-        store.dispatch(.featureFlags(.setLocalOverride(flag: .voiceProcessing, isEnabled: true)))
-        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-
-        await expectTheEngineWasTold(audioEngine)
-        #expect(await audioEngine.voiceProcessingValues == [true])
-    }
-
-    /// The shipped default. Pinned separately from the case above because
-    /// "we never told the engine anything" and "we told it off" are different
-    /// facts to the engine, and only the second one is deliberate.
-    @MainActor
-    @Test func sessionStartTellsTheEngineVoiceProcessingIsOffByDefault() async throws {
-        let container = Container()
-        container.reset()
-        let audioEngine = StubAudioEngineForMiddleware()
-        container.audioEngine.register { audioEngine }
-        container.speechSessionClient.register { StubSpeechSessionClientForMiddleware() }
-
-        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.featureFlags(.applyRemoteSnapshot(.firstWave)))
+        store.dispatch(.featureFlags(.setLocalOverride(flag: .voiceProcessing, isEnabled: false)))
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
 
         await expectTheEngineWasTold(audioEngine)
         #expect(await audioEngine.voiceProcessingValues == [false])
+    }
+
+    /// The shipped default after T4. `AppState.initial` has empty flags;
+    /// firstWave arrives via bootstrap. Pin the post-bootstrap value.
+    @MainActor
+    @Test func sessionStartTellsTheEngineVoiceProcessingIsOnAfterBootstrap() async throws {
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { StubSpeechSessionClientForMiddleware() }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.featureFlags(.applyRemoteSnapshot(.firstWave)))
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+
+        await expectTheEngineWasTold(audioEngine)
+        #expect(await audioEngine.voiceProcessingValues == [true])
     }
 
     /// 「从这一场继续」is one id travelling from a screen to a frame, and this
@@ -2097,8 +2097,8 @@ private func waitForProcessingStage(
 /// It was one second, restated at twenty-one call sites, and that read like a
 /// claim about how fast the middleware should be. It was not; it was how long a
 /// loaded parallel CI runner was assumed to take. On 2026-09-12 two of them
-/// proved the assumption wrong (`sessionStartPassesTheVoiceProcessingFlagToTheEngine`
-/// and `sessionStartTellsTheEngineVoiceProcessingIsOffByDefault` timed out on
+/// proved the assumption wrong (`sessionStartPassesTheVoiceProcessingKillSwitchToTheEngine`
+/// and `sessionStartTellsTheEngineVoiceProcessingIsOnAfterBootstrap` timed out on
 /// `4fa3cd3` while passing 0.02s locally). The three callers that pass a
 /// different number still do — those were chosen deliberately.
 private func waitUntil(

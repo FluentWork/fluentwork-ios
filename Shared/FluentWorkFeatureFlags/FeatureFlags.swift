@@ -23,13 +23,16 @@ public enum AppFeatureFlag: String, CaseIterable, Codable, Hashable, Sendable, F
     /// itself put the processed stream into the graph, which is why the
     /// engine-level call is the one that decides. See meta `77_` §3.2.
     ///
-    /// Default off, and deliberately absent from `firstWave`. Enabling voice
-    /// processing changes the input node's format (it can come back
-    /// multi-channel, with echo-reference channels alongside the real mic) and
-    /// puts the output node into voice-processing mode as well. Neither has
-    /// been confirmed on a device, and the failure mode it exists to remove —
-    /// the assistant hearing itself — is the one thing a stale default would
-    /// keep. Flip it only after `ios docs/62` T4 passes.
+    /// Default on (`firstWave`) after `ios docs/62` T4 (2026-09-12) and T1:
+    /// with the unit **on**, playback is at a normal speaker level; with it
+    /// **off**, the assistant is very quiet. That is the opposite of the
+    /// earlier guess ("VPIO makes output telephone-quiet"). Keep it on.
+    ///
+    /// Enabling still changes the input node's format (multi-channel echo
+    /// reference) and puts the output node into voice-processing mode.
+    /// Settings override remains the kill switch; it may not take effect
+    /// until the next process if the unit is already on (`ios docs/63` §5
+    /// — there is no disable path).
     case voiceProcessing
     /// The conversation list — every past practice session, most recent first
     /// (`GET /api/v1/sessions`, backend B24).
@@ -72,6 +75,7 @@ public struct FeatureFlagSnapshot: Equatable, Sendable {
             .degradedTextMode,
             .dailyRead,
             .sessionHistory,
+            .voiceProcessing,
         ]
     )
 }

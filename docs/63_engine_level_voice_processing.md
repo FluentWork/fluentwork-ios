@@ -1,7 +1,7 @@
 # 引擎级 AEC：开关与格式链必须一起改
 
 **日期**：2026-09-11
-**状态**：**代码与测试已齐，未真机验证。** AEC 是否达标只有真机能回答（模拟器既没回声也没 VPIO），所以本票交付的是**机制**，结论待 `docs/62` 的 T4。flag **默认关**，T4 通过后才翻。
+**状态**：**代码、测试、真机 T4 均已齐。** 用户于 2026-09-12 确认 T4 完成；`.voiceProcessing` 已进 `firstWave`（默认开）。设置页 override 仍是 kill switch。
 **对应**：meta `77_` **P0-2**
 
 ## 1. 为什么
@@ -57,9 +57,9 @@
 
 ### 为什么是 feature flag 而不是常量
 
-`AppFeatureFlag.voiceProcessing`，**不进 `firstWave`（默认关）**。middleware 按 flag 下发意图、引擎在 `startCapture()` 建图时应用——**照抄 `voiceVadAuto` → `setSpeechBoundaryMode` 那条路**（`:926`）。
+`AppFeatureFlag.voiceProcessing`，**已进 `firstWave`（2026-09-12 T4 完成后翻开）**。middleware 按 flag 下发意图、引擎在 `startCapture()` 建图时应用——**照抄 `voiceVadAuto` → `setSpeechBoundaryMode` 那条路**（`:926`）。
 
-默认关是刻意的：VPIO 带来多声道路径与「输出节点进 VP 模式」，两条都没在真机上跑过；在 T4 给结论前默认开，等于把未验证的变更推给用户，而它不达标时的现象（自激）恰好就是 P0-2 要消除的那个。代价写在 T4 里：**T4 需要一个把 flag 打开的构建**。
+此前默认关是刻意的：VPIO 带来多声道路径与「输出节点进 VP 模式」，两条都没在真机上跑过。T4 通过后这一行留在 `firstWave` 里。设置页仍可当场关掉。
 
 ## 3.1 差点就这么发出去的：extension-only 方法到不了引擎
 
@@ -211,7 +211,9 @@ xcodebuild -project FluentWorkHost.xcodeproj -scheme FluentWorkHost \
 
 ## 7. 真机：本票唯一的结论来源
 
-`docs/62` 的 **T4** 已经改成四步（先改一行把 flag 打开 → 确认日志里开关生效 → 再判 AEC → 不通过走半双工退路）。两点补充：
+**T4 已完成（2026-09-12，用户确认）。** `.voiceProcessing` 在 `firstWave`。下面步骤保留作复跑。
+
+`docs/62` 的 **T4** 是四步（确认日志里开关生效 → 再判 AEC → 不通过走半双工退路）。两点补充：
 
 1. **先看 `[Tracker] timing_audio_voice_processing` 那行。**
    `on, tap=48000Hz/1ch` / `on, alreadyOn, …` / `off, …` / `unavailable: …` —— **开关没生效时 T4 的结论不成立**，先修开关再判 AEC。这一行是本票为 T4 专门加的：没有它，「AEC 不行」与「AEC 根本没开」在真机上完全同形。
@@ -219,5 +221,4 @@ xcodebuild -project FluentWorkHost.xcodeproj -scheme FluentWorkHost \
 
 ⚠️ **一项会移动既有基线的副作用**：VP 默认带 AGC，而 VAD 阈值 `speechThreshold = 0.015` 是按**原始麦克风能量**标定的。增益后的静音可能越过它 —— `autoVAD` 下表现为幻影 `speechStarted`，`tapToStart` 下表现为 8 秒后自动提交。另有播放侧：VPIO 会同时处理输出节点，声音更小、更带宽受限。**这两条都没有动**（不盲调），但 `docs/62` 的 **T1 是听感测试，它的基线会跟着变**。
 
-> 改前那两处文档说「会话即系统 AEC」。改后本票说「引擎级开关接上了，但**效果未验**」——
-> 这两句话的距离，就是 T4 要跑的那一趟。**在它跑完之前，本票的成果是「开关不再缺失」，不是「回声被消掉了」。**
+> 改前那两处文档说「会话即系统 AEC」。改后本票先说「引擎级开关接上了，但效果未验」。**T4 跑完之后，成果是「回声按主方案在消」**，不是只「开关不再缺失」。

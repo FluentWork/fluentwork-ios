@@ -80,8 +80,8 @@ stopPlayer → resetPlayer → stopEngine → removeTap → detachPlayer
 
 ## 5. 明确没做的
 
-- 没有改「结束练习」确认框的弹出时机。点开确认框时 TTS 继续播；只有确认之后才拆图。取消应继续听。
-- 没有把 `voiceProcessing` 打进 `firstWave`。那是另一条、要先过 `docs/62` T4 的票。
+- 没有改「结束练习」确认框的弹出时机（后来 `docs/68` 改成打开即暂停）。
+- `voiceProcessing` 已进 `firstWave`（T4，2026-09-12）。本票当时刻意没动。
 - 没有在 `endTap` 上发 `.stopPlayback`。原因见 §2。
 
 ## 6. 门禁
