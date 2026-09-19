@@ -562,6 +562,320 @@ private func audioEventPump(
     }
 }
 
+/// 组装传输事件的路由表。
+///
+/// 每个 handler 就是原先 `transportEventPump` 里那个 case 的 body，逐字搬过来，
+/// 包括注释——那些注释记的是**顺序为什么是这样**，而顺序正是这次重构唯一可能
+/// 悄悄改坏的东西。
+///
+/// 三点必须守住的：
+///
+/// 1. **handler 体内不得派生任务**（`Task {}` / `async let` / `withTaskGroup`）。
+///    `for await` 的逐事件串行性来自循环自己 `await`，一旦 detach 就没了，而且
+///    没有任何测试会因此变红。
+/// 2. **`.feedbackBadge` 必须先 `evaluationArrival.mark()`**。这一帧同时被
+///    `SocketTransportEventMapper` 映过一次，按 mapper 的写法搬就会丢掉这个 mark；
+///    丢了之后 `processingTimeoutEffects` 走 `scheduleEvaluationWaitTask`，
+///    于是**每一轮都白等 `evaluationWait`（默认 20s）**，不报错、只是慢。
+/// 3. **`.clientASRTranscription` 是两次 dispatch**，mapper 只产生一次。
+private func makeTransportEventRouter(
+    container: Container,
+    dispatchBox: MainActorActionBox,
+    timings: SpeechSessionTimingsRecorder,
+    turnTimeoutTracking: TurnTimeoutTracking,
+    evaluationArrival: EvaluationArrivalBox,
+    ttsCoordinator: TTSPlaybackCoordinator,
+    ttsTrace: TTSStreamTrace
+) -> TransportEventRouter {
+    let audioHandler = AnyAudioFrameHandler { frame in
+        await dispatchBox.dispatch(.speakingRoom(.session(.aiFirstAudioChunk)))
+        // 一轮的音频有几百帧，但「第一帧什么时候到」只有一个时刻：
+        // 逐帧打点会把那条真的埋在自己的重复里（250 帧 = 250 行）。
+        timings.markTurnOnce(
+            "ai_first_chunk",
+            turnID: nil,
+            properties: [
+                "sequence": String(frame.sequence),
+                "payload_bytes": String(frame.payload.count),
+            ]
+        )
+        // P1-5: audio is the other way a turn can answer first, and
+        // for "did the AI start speaking sooner" it is the one that
+        // matters — text streams earlier but is silent. The recorder
+        // keeps whichever channel arrives first, so a reply that
+        // leads with audio is not overwritten by the text delta
+        // chasing it. No turn id on the wire here: binary frames
+        // carry a sequence and nothing else, so this resolves to the
+        // turn most recently started.
+        timings.markFirstResponse(nil, source: "audio")
+        // 唯一入口：播 / 丢由协调器按轮次归属判定，这里只负责埋点。
+        // 归属来自「当前活跃的 ai.tts.start」——二进制帧上没有 turn_id。
+        switch await ttsCoordinator.onAudioFrame(frame) {
+        case let .played(turnID):
+            let count = ttsTrace.recordAudio()
+            if count == 1 {
+                container.tracker().track(
+                    event: "tts_first_audio",
+                    properties: [
+                        "turn_id": turnID,
+                        "sequence": String(frame.sequence),
+                        "payload_bytes": String(frame.payload.count),
+                    ]
+                )
+            }
+        case let .dropped(turnID, reason, errorDescription):
+            // 丢弃必须留痕。无 ai.tts.start 时帧会被丢弃并记录。
+            container.tracker().track(
+                event: reason == .decodeFailed ? "tts_decoder_failed" : "tts_frame_dropped",
+                properties: [
+                    "phase": "feed",
+                    "turn_id": turnID ?? "nil",
+                    "sequence": String(frame.sequence),
+                    "reason": reason.rawValue,
+                    "error": errorDescription ?? "n/a",
+                ]
+            )
+        }
+    }
+
+    var controlHandlers: [WSControlFrameType: ControlFrameHandler] = [:]
+
+    // `ai.tts.start` 是轮次归属的开始。从这里到 `ai.tts.end` 之间
+    // 到达的二进制帧都属于这一轮（契约 `meta 83_`）。
+    controlHandlers[.aiTTSStart] = AnyControlFrameHandler { frame in
+        guard case let .aiTTSStart(turnID, voiceID, sampleRate, codec) = frame else {
+            return
+        }
+        await ttsCoordinator.onStart(turnID: turnID)
+        ttsTrace.reset()
+        container.tracker().track(
+            event: "tts_start",
+            properties: [
+                "turn_id": turnID,
+                "voice_id": voiceID,
+                "sample_rate": String(sampleRate),
+                "codec": codec,
+            ]
+        )
+    }
+
+    controlHandlers[.aiTTSEnd] = AnyControlFrameHandler { frame in
+        guard case let .aiTTSEnd(turnID, completionStatus, durationMs) = frame else {
+            return
+        }
+        await ttsCoordinator.onEnd(turnID: turnID)
+        container.tracker().track(
+            event: "tts_end",
+            properties: [
+                "turn_id": turnID,
+                "completion_status": completionStatus,
+                "duration_ms": durationMs.map(String.init) ?? "nil",
+                "audio_frames": String(ttsTrace.audioFrameCount()),
+            ]
+        )
+    }
+
+    controlHandlers[.feedbackBadge] = AnyControlFrameHandler { frame in
+        guard case let .feedbackBadge(badge, phraseBlockID, tier, turnID) = frame else {
+            return
+        }
+        // WSS has no eval.frame. `feedback.badge` is the turn-level
+        // signal that can leave `.waitingForEvaluation`. Session
+        // review stays on REST (I16).
+        //
+        // 这一行也是"badge 早于 ai.turn.end 到达"时不必等满窗口的原因：
+        // 见 `processingTimeoutEffects` 里对 `evaluationArrival.consume()` 的分支。
+        evaluationArrival.mark()
+        let displayTier = tier.map(BadgeFeedEntry.Tier.from(transport:))
+        await dispatchBox.dispatch(
+            .speakingRoom(.badgeHit(
+                badge: badge,
+                phraseBlockID: phraseBlockID,
+                tier: displayTier,
+                turnID: turnID
+            ))
+        )
+        await dispatchBox.dispatch(
+            .speakingRoom(.session(.evaluationReceived))
+        )
+    }
+
+    controlHandlers[.aiTurnEnd] = AnyControlFrameHandler { frame in
+        guard case let .aiTurnEnd(turnID, outcome, logID) = frame else {
+            return
+        }
+        // B15-I3: capture the vendor log_id from the first ai.turn.end.
+        // setLogID is idempotent (only the first call stores the value).
+        timings.setLogID(logID)
+        // B15: ai.turn.end arrived — cancel the turn timeout timer so it
+        // doesn't fire and cause a duplicate session.end. Safe to call
+        // even if the timer was never started.
+        turnTimeoutTracking.disarm()
+        // B15: when backend explicitly reports outcome=timeout, dispatch
+        // the same .failed("turn_timeout") as the 70s client-side fallback.
+        // This makes the explicit timeout path consistent with the implicit
+        // 70s timer path — both end the session identically.
+        if outcome == .timeout {
+            await dispatchBox.dispatch(.speakingRoom(.session(.failed("turn_timeout"))))
+        } else {
+            await dispatchBox.dispatch(.speakingRoom(.session(.aiTurnEnd)))
+            await dispatchBox.dispatch(.speakingRoom(.aiTurnFinalized(turnID: turnID)))
+            if let turnID {
+                timings.markTurnEnded(turnID, source: "ios", stage: "ai_turn_end")
+            }
+            // B15-I3: log_id is now included in all mark() calls automatically.
+            timings.mark(
+                event: "ai_turn_end",
+                properties: [
+                    "turn_id": turnID ?? "nil",
+                    "outcome": outcome?.rawValue ?? "nil", // B15: log outcome
+                    "log_id": logID ?? "nil", // B15-I3: vendor trace log_id
+                ]
+            )
+        }
+    }
+
+    controlHandlers[.aiTextDelta] = AnyControlFrameHandler { frame in
+        guard case let .aiTextDelta(text, turnID, serverTsMs) = frame else {
+            return
+        }
+        await dispatchBox.dispatch(
+            .speakingRoom(.aiTurnTextDelta(text: text, turnID: turnID))
+        )
+        // P1-5: the first delta of a turn *is* the assistant starting
+        // to answer, so it is where the wait ends. The recorder
+        // reports once per turn — later deltas are the same answer
+        // continuing, and counting them would turn "how long until
+        // the AI spoke" into "how long until it finished".
+        timings.markFirstResponse(turnID, source: "text", serverTsMs: serverTsMs)
+    }
+
+    controlHandlers[.clientASRTranscription] = AnyControlFrameHandler { frame in
+        guard case let .clientASRTranscription(text, turnID) = frame else {
+            return
+        }
+        // Display-layer transcript plus the ASR → LLM hop.
+        // `.session(.serverASRReceived)` advances the ASR → LLM
+        // stage; it still updates the
+        // speaking-room transcript overlay.
+        await dispatchBox.dispatch(
+            .speakingRoom(.session(.serverASRReceived(text: text, turnID: turnID)))
+        )
+        await dispatchBox.dispatch(
+            .speakingRoom(.serverASRReceived(text: text, turnID: turnID))
+        )
+        container.tracker().track(
+            event: "server_asr_received_full",
+            properties: [
+                "turn_id": turnID ?? "nil",
+                "text_bytes": String(text.utf8.count),
+                "text": text,
+            ]
+        )
+        // Anchored on the turn, not on the previous mark: the
+        // question this line exists to answer is "how long after
+        // the user stopped talking did their own words appear",
+        // and the chain of marks in between is not something a
+        // reader should have to sum.
+        timings.markTurnAnchored(
+            "server_asr_received",
+            turnID: turnID,
+            properties: [
+                "text_bytes": String(text.utf8.count),
+            ]
+        )
+        // NOTE: We intentionally do NOT call `sendSpeechBoundary` here.
+        // The original iOS VAD already fired `user.speech.end` when the user
+        // actually stopped speaking, which is what triggered the Volc commit
+        // that produced this transcript. Re-emitting `user.speech.end` on
+        // receipt of the relay frame would start a phantom second turn with
+        // no audio, causing the gateway to wait 60s for nothing and the
+        // client to surface "sockettransporterror error 3".
+        // The backend already pulls the authoritative transcript out of
+        // `ProviderOutbound.ServerASRText` for badge hit detection, so
+        // nothing is lost by not pushing the text again.
+    }
+
+    let diagnosticHandler = AnyTransportEventHandler { event in
+        guard case let .diagnostic(diagnostic) = event else {
+            return
+        }
+        // 穷尽 switch：新增一类诊断会在这里编译失败，而不是被安静地忽略掉。
+        switch diagnostic {
+        case let .receiveLatency(frameType, sizeBytes, elapsedMs):
+            container.tracker().track(
+                event: "timing_socket_receive",
+                properties: [
+                    "frame_type": frameType,
+                    "size_bytes": String(sizeBytes),
+                    "elapsed_ms": String(format: "%.3f", elapsedMs),
+                ]
+            )
+
+        // The barge-in watermark discarding inbound audio. Reported
+        // at the start and end of each run, so `dropped` is the size
+        // of the loss. A `sequence` at or below `watermark` on a
+        // later turn is the signature of the gateway's numbering
+        // going backwards — which is what makes this event worth
+        // more than the silence it replaces.
+        case let .clockOffsetEstimated(offset):
+            // P1-5: a tighter gateway↔phone clock estimate. Handed to the
+            // recorder rather than logged here — its only consumer is the
+            // first-response mark, which needs it to split server time from
+            // network time. Not tracked as its own event on purpose: it
+            // repeats on every improvement, and the number worth reading is
+            // the one attached to a turn, not the estimate on its own.
+            timings.setClockOffset(offset)
+
+        // A frame type this client does not know. The connection stays
+        // up — that is the point — so without this line the only trace
+        // of a server-side rollout would be a feature that appears to
+        // do nothing. `type` is the datum: it names what we are behind
+        // on, which is what says whether it matters.
+        case let .unsupportedControlFrame(type, sizeBytes):
+            container.tracker().track(
+                event: "transport_control_frame_ignored",
+                properties: [
+                    "type": type,
+                    "size_bytes": String(sizeBytes),
+                ]
+            )
+
+        case let .audioFrameDropped(sequence, watermark, dropped):
+            container.tracker().track(
+                event: "transport_audio_dropped",
+                properties: [
+                    "sequence": String(sequence),
+                    "watermark": String(watermark),
+                    "dropped": String(dropped),
+                ]
+            )
+        }
+    }
+
+    // 兜底：`.stateChanged`、`.failure`、以及 13 类没有专属 handler 的控制帧。
+    //
+    // 它们**本来就都落在这里**——这不是路由表漏了。其中只有 `.error` 会产生动作
+    // （`.session(.failed)` → 完整 teardown），其余被 mapper 有意忽略。把这条写下来，
+    // 是为了下一个人不必同时读两个 switch 才能确认某类帧是被忽略的。
+    let fallbackHandler = AnyTransportEventHandler { event in
+        guard let mapped = SocketTransportEventMapper.speakingRoomAction(for: event),
+              let action = SpeakingRoomAction(mapped)
+        else {
+            // 原来是 `continue`：跳过这一条事件，继续读下一条。
+            return
+        }
+        await dispatchBox.dispatch(.speakingRoom(action))
+    }
+
+    return TransportEventRouter(
+        audioHandler: audioHandler,
+        controlHandlers: controlHandlers,
+        diagnosticHandler: diagnosticHandler,
+        fallbackHandler: fallbackHandler
+    )
+}
+
 private func transportEventPump(
     container: Container,
     dispatch: @escaping @MainActor (AppAction) -> Void,
@@ -574,6 +888,17 @@ private func transportEventPump(
     let speechClient = container.speechSessionClient()
     let tracker = container.tracker()
     let dispatchBox = MainActorActionBox(dispatch: dispatch)
+    // Built once per pump, next to the coordinator it routes to. "这类事件归谁"
+    // 现在是一张静态表，而不是循环体里那个 237 行的 switch。
+    let router = makeTransportEventRouter(
+        container: container,
+        dispatchBox: dispatchBox,
+        timings: timings,
+        turnTimeoutTracking: turnTimeoutTracking,
+        evaluationArrival: evaluationArrival,
+        ttsCoordinator: ttsCoordinator,
+        ttsTrace: ttsTrace
+    )
 
     // No id, and never cancelled: the pump is not a session resource.
     return .task {
@@ -611,29 +936,19 @@ private func transportEventPump(
     
                 // B14 debug: log all incoming transport control events to diagnose
                 // missing feedback.badge frames. Remove after root cause is confirmed.
+                //
+                // 帧类型的标签现在取自 `WSControlFrame.wireType`（与线上 discriminator
+                // 同一批字符串），不再手写第二份。两处措辞因此与旧日志不同：`auth` /
+                // `handshake` 不再合并成 `<auth/handshake>`，`ai.turn.end` 之外的帧
+                // 是否带 outcome 后缀不一致——这是 DEBUG 日志，没有测试钉过它。
                 #if DEBUG
                 if case let .control(frame) = event {
                     let typeTag: String
-                    switch frame {
-                    case .feedbackBadge:  typeTag = "feedback.badge"
-                    case .userSpeechStart: typeTag = "user.speech.start"
-                    case .userSpeechEnd:   typeTag = "user.speech.end"
-                    case .clientTurnAbort: typeTag = "client.turn.abort"
-                    case let .aiTurnEnd(_, outcome, _):
+                    if case let .aiTurnEnd(_, outcome, _) = frame {
+                        // outcome 是排查 ai.turn.end 时唯一要看的东西，保留后缀。
                         typeTag = "ai.turn.end" + (outcome.map { "(\($0.rawValue))" } ?? "")
-                    case .ping:            typeTag = "ping"
-                    case .pong:            typeTag = "pong"
-                    case .clientASRTranscription: typeTag = "client.asr.transcription"
-                    case .sessionReady:    typeTag = "session.ready"
-                    case .sessionStart:   typeTag = "session.start"
-                    case .aiTextDelta:    typeTag = "ai.text.delta"
-                    case .aiAudioChunk:   typeTag = "ai.audio.chunk"
-                    case .aiTTSStart:     typeTag = "ai.tts.start"
-                    case .aiTTSEnd:       typeTag = "ai.tts.end"
-                    case .interrupt:       typeTag = "interrupt"
-                    case .sessionEnd:      typeTag = "session.end"
-                    case .error:           typeTag = "error"
-                    case .auth, .handshake: typeTag = "<auth/handshake>"
+                    } else {
+                        typeTag = frame.wireType.rawValue
                     }
                     tracker.track(event: "transport_rx", properties: [
                         "frame_type": typeTag,
@@ -647,243 +962,13 @@ private func transportEventPump(
                 }
                 #endif
     
-                switch event {
-                case let .audio(frame):
-                    await dispatchBox.dispatch(.speakingRoom(.session(.aiFirstAudioChunk)))
-                    // 一轮的音频有几百帧，但「第一帧什么时候到」只有一个时刻：
-                    // 逐帧打点会把那条真的埋在自己的重复里（250 帧 = 250 行）。
-                    timings.markTurnOnce(
-                        "ai_first_chunk",
-                        turnID: nil,
-                        properties: [
-                            "sequence": String(frame.sequence),
-                            "payload_bytes": String(frame.payload.count),
-                        ]
-                    )
-                    // P1-5: audio is the other way a turn can answer first, and
-                    // for "did the AI start speaking sooner" it is the one that
-                    // matters — text streams earlier but is silent. The recorder
-                    // keeps whichever channel arrives first, so a reply that
-                    // leads with audio is not overwritten by the text delta
-                    // chasing it. No turn id on the wire here: binary frames
-                    // carry a sequence and nothing else, so this resolves to the
-                    // turn most recently started.
-                    timings.markFirstResponse(nil, source: "audio")
-                    // 唯一入口：播 / 丢由协调器按轮次归属判定，这里只负责埋点。
-                    // 归属来自「当前活跃的 ai.tts.start」——二进制帧上没有 turn_id。
-                    switch await ttsCoordinator.onAudioFrame(frame) {
-                    case let .played(turnID):
-                        let count = ttsTrace.recordAudio()
-                        if count == 1 {
-                            container.tracker().track(
-                                event: "tts_first_audio",
-                                properties: [
-                                    "turn_id": turnID,
-                                    "sequence": String(frame.sequence),
-                                    "payload_bytes": String(frame.payload.count),
-                                ]
-                            )
-                        }
-                    case let .dropped(turnID, reason, errorDescription):
-                        // 丢弃必须留痕。无 ai.tts.start 时帧会被丢弃并记录。
-                        container.tracker().track(
-                            event: reason == .decodeFailed ? "tts_decoder_failed" : "tts_frame_dropped",
-                            properties: [
-                                "phase": "feed",
-                                "turn_id": turnID ?? "nil",
-                                "sequence": String(frame.sequence),
-                                "reason": reason.rawValue,
-                                "error": errorDescription ?? "n/a",
-                            ]
-                        )
-                    }
-    
-                // `ai.tts.start` 是轮次归属的开始。从这里到 `ai.tts.end` 之间
-                // 到达的二进制帧都属于这一轮（契约 `meta 83_`）。
-                case let .control(.aiTTSStart(turnID, voiceID, sampleRate, codec)):
-                    await ttsCoordinator.onStart(turnID: turnID)
-                    ttsTrace.reset()
-                    container.tracker().track(
-                        event: "tts_start",
-                        properties: [
-                            "turn_id": turnID,
-                            "voice_id": voiceID,
-                            "sample_rate": String(sampleRate),
-                            "codec": codec,
-                        ]
-                    )
-
-                case let .control(.aiTTSEnd(turnID, completionStatus, durationMs)):
-                    await ttsCoordinator.onEnd(turnID: turnID)
-                    container.tracker().track(
-                        event: "tts_end",
-                        properties: [
-                            "turn_id": turnID,
-                            "completion_status": completionStatus,
-                            "duration_ms": durationMs.map(String.init) ?? "nil",
-                            "audio_frames": String(ttsTrace.audioFrameCount()),
-                        ]
-                    )
-    
-                case let .control(.feedbackBadge(badge, phraseBlockID, tier, turnID)):
-                    // WSS has no eval.frame. `feedback.badge` is the turn-level
-                    // signal that can leave `.waitingForEvaluation`. Session
-                    // review stays on REST (I16).
-                    evaluationArrival.mark()
-                    let displayTier = tier.map(BadgeFeedEntry.Tier.from(transport:))
-                    await dispatchBox.dispatch(
-                        .speakingRoom(.badgeHit(
-                            badge: badge,
-                            phraseBlockID: phraseBlockID,
-                            tier: displayTier,
-                            turnID: turnID
-                        ))
-                    )
-                    await dispatchBox.dispatch(
-                        .speakingRoom(.session(.evaluationReceived))
-                    )
-    
-                case let .control(.aiTurnEnd(turnID, outcome, logID)):
-                    // B15-I3: capture the vendor log_id from the first ai.turn.end.
-                    // setLogID is idempotent (only the first call stores the value).
-                    timings.setLogID(logID)
-                    // B15: ai.turn.end arrived — cancel the turn timeout timer so it
-                    // doesn't fire and cause a duplicate session.end. Safe to call
-                    // even if the timer was never started.
-                    turnTimeoutTracking.disarm()
-                    // B15: when backend explicitly reports outcome=timeout, dispatch
-                    // the same .failed("turn_timeout") as the 70s client-side fallback.
-                    // This makes the explicit timeout path consistent with the implicit
-                    // 70s timer path — both end the session identically.
-                    if outcome == .timeout {
-                        await dispatchBox.dispatch(.speakingRoom(.session(.failed("turn_timeout"))))
-                    } else {
-                        await dispatchBox.dispatch(.speakingRoom(.session(.aiTurnEnd)))
-                        await dispatchBox.dispatch(.speakingRoom(.aiTurnFinalized(turnID: turnID)))
-                        if let turnID {
-                            timings.markTurnEnded(turnID, source: "ios", stage: "ai_turn_end")
-                        }
-                        // B15-I3: log_id is now included in all mark() calls automatically.
-                        timings.mark(
-                            event: "ai_turn_end",
-                            properties: [
-                                "turn_id": turnID ?? "nil",
-                                "outcome": outcome?.rawValue ?? "nil", // B15: log outcome
-                                "log_id": logID ?? "nil", // B15-I3: vendor trace log_id
-                            ]
-                        )
-                    }
-    
-                case let .control(.aiTextDelta(text, turnID, serverTsMs)):
-                    await dispatchBox.dispatch(
-                        .speakingRoom(.aiTurnTextDelta(text: text, turnID: turnID))
-                    )
-                    // P1-5: the first delta of a turn *is* the assistant starting
-                    // to answer, so it is where the wait ends. The recorder
-                    // reports once per turn — later deltas are the same answer
-                    // continuing, and counting them would turn "how long until
-                    // the AI spoke" into "how long until it finished".
-                    timings.markFirstResponse(turnID, source: "text", serverTsMs: serverTsMs)
-    
-                case let .control(.clientASRTranscription(text, turnID)):
-                    // Display-layer transcript plus the ASR → LLM hop.
-                    // `.session(.serverASRReceived)` advances the ASR → LLM
-                    // stage; it still updates the
-                    // speaking-room transcript overlay.
-                    await dispatchBox.dispatch(
-                        .speakingRoom(.session(.serverASRReceived(text: text, turnID: turnID)))
-                    )
-                    await dispatchBox.dispatch(
-                        .speakingRoom(.serverASRReceived(text: text, turnID: turnID))
-                    )
-                    tracker.track(
-                        event: "server_asr_received_full",
-                        properties: [
-                            "turn_id": turnID ?? "nil",
-                            "text_bytes": String(text.utf8.count),
-                            "text": text,
-                        ]
-                    )
-                    // Anchored on the turn, not on the previous mark: the
-                    // question this line exists to answer is "how long after
-                    // the user stopped talking did their own words appear",
-                    // and the chain of marks in between is not something a
-                    // reader should have to sum.
-                    timings.markTurnAnchored(
-                        "server_asr_received",
-                        turnID: turnID,
-                        properties: [
-                            "text_bytes": String(text.utf8.count),
-                        ]
-                    )
-                    // NOTE: We intentionally do NOT call `sendSpeechBoundary` here.
-                    // The original iOS VAD already fired `user.speech.end` when the user
-                    // actually stopped speaking, which is what triggered the Volc commit
-                    // that produced this transcript. Re-emitting `user.speech.end` on
-                    // receipt of the relay frame would start a phantom second turn with
-                    // no audio, causing the gateway to wait 60s for nothing and the
-                    // client to surface "sockettransporterror error 3".
-                    // The backend already pulls the authoritative transcript out of
-                    // `ProviderOutbound.ServerASRText` for badge hit detection, so
-                    // nothing is lost by not pushing the text again.
-    
-                case let .diagnostic(.receiveLatency(frameType, sizeBytes, elapsedMs)):
-                    tracker.track(
-                        event: "timing_socket_receive",
-                        properties: [
-                            "frame_type": frameType,
-                            "size_bytes": String(sizeBytes),
-                            "elapsed_ms": String(format: "%.3f", elapsedMs),
-                        ]
-                    )
-    
-                // The barge-in watermark discarding inbound audio. Reported
-                // at the start and end of each run, so `dropped` is the size
-                // of the loss. A `sequence` at or below `watermark` on a
-                // later turn is the signature of the gateway's numbering
-                // going backwards — which is what makes this event worth
-                // more than the silence it replaces.
-                // P1-5: a tighter gateway↔phone clock estimate. Handed to the
-                // recorder rather than logged here — its only consumer is the
-                // first-response mark, which needs it to split server time from
-                // network time. Not tracked as its own event on purpose: it
-                // repeats on every improvement, and the number worth reading is
-                // the one attached to a turn, not the estimate on its own.
-                case let .diagnostic(.clockOffsetEstimated(offset)):
-                    timings.setClockOffset(offset)
-
-                // A frame type this client does not know. The connection stays
-                // up — that is the point — so without this line the only trace
-                // of a server-side rollout would be a feature that appears to
-                // do nothing. `type` is the datum: it names what we are behind
-                // on, which is what says whether it matters.
-                case let .diagnostic(.unsupportedControlFrame(type, sizeBytes)):
-                    tracker.track(
-                        event: "transport_control_frame_ignored",
-                        properties: [
-                            "type": type,
-                            "size_bytes": String(sizeBytes),
-                        ]
-                    )
-
-                case let .diagnostic(.audioFrameDropped(sequence, watermark, dropped)):
-                    tracker.track(
-                        event: "transport_audio_dropped",
-                        properties: [
-                            "sequence": String(sequence),
-                            "watermark": String(watermark),
-                            "dropped": String(dropped),
-                        ]
-                    )
-    
-                default:
-                    guard let mapped = SocketTransportEventMapper.speakingRoomAction(for: event),
-                          let action = SpeakingRoomAction(mapped)
-                    else {
-                        continue
-                    }
-                    await dispatchBox.dispatch(.speakingRoom(action))
-                }
+                // 路由。这一条事件归谁，由 `makeTransportEventRouter` 的那张静态表
+                // 决定；循环体只剩「读进来 → 判断该不该丢 → 记一笔 → 交出去」。
+                //
+                // 放在循环里而不是循环外，是因为它必须**逐事件串行**：循环体在每次
+                // `await` 上挂起，下一条事件才会被取走。handler 体内一旦派生任务，
+                // 这个保证就没了——而那不会让任何测试变红。
+                await router.route(event: event)
             }
             // The loop exits for two very different reasons and this mark
             // has to say which. `for await` on a cancelled task returns nil
