@@ -44,6 +44,18 @@ public enum AudioEngineEvent: Equatable, Sendable {
     /// report, and reporting `0` would read as "stopped and finished instantly",
     /// which is a real and different case.
     case speechEndpointed(reason: String, windowMs: Int?, trailingSilenceMs: Int?)
+    /// A captured buffer never became PCM, so it never became a `pcmChunk`.
+    ///
+    /// Emitted **once per capture session**, not once per buffer: at 48 kHz the
+    /// tap fires ~86 times a second, and a line per buffer would bury the fact
+    /// it exists to reveal.
+    ///
+    /// It exists because this was the last silent gate on the uplink. A capture
+    /// graph that reports a healthy tap (`tap=48000Hz/1ch`) while every buffer
+    /// fails conversion looks *identical* to a graph that is working — until you
+    /// notice the gateway received no audio and the turn timed out. The client
+    /// could not say why it sent nothing; now it can.
+    case captureDropped(reason: String)
     case failed(String)
 }
 

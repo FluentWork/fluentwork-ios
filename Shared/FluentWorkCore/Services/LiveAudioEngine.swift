@@ -222,6 +222,12 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     private var converter: AVAudioConverter?
     private var sourceFormat: AVAudioFormat?
     private var hasInstalledTap = false
+    /// Whether this capture session has already reported a dropped buffer.
+    ///
+    /// The tap fires ~86 times a second at 48 kHz, so an unreported-per-buffer
+    /// diagnostic would bury the fact it exists to reveal. Reset when capture
+    /// starts, so a *new* session that starts dropping says so again.
+    private var captureDropReported = false
     private var speechTracker = AudioSpeechActivityTracker.forMode(.manual)
     /// When the current utterance opened, so its length can be reported
     /// alongside how it closed. The tracker cannot hold this itself: it has no
@@ -477,6 +483,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
         // Committed together, and only once there is a tap to use them.
         hasInstalledTap = true
+        self.captureDropReported = false
         self.sourceFormat = inputFormat
         self.converter = converter
         // Rebuild from the configured mode, not from the initializer defaults.
@@ -917,13 +924,34 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
     private func processInput(_ buffer: AVAudioPCMBuffer) async {
         guard !isSystemInterrupted else { return }
+        // The three `return nil`s inside `convertToPCM16`, plus the bare `return`
+        // that used to sit here, were the last silent gate on the uplink. At
+        // 48 kHz the tap fires ~86 times a second, and a graph whose every buffer
+        // fails conversion is indistinguishable from one that works: the tap
+        // still reports a healthy format, the engine still runs, and the only
+        // symptom is a turn the gateway never heard. Reported once per capture
+        // session — the fact is worth one line, not eighty-six a second.
+        guard converter != nil, sourceFormat != nil else {
+            reportCaptureDropOnce("no_converter")
+            return
+        }
         do {
-            guard let pcm = try convertToPCM16(buffer) else { return }
+            guard let pcm = try convertToPCM16(buffer) else {
+                reportCaptureDropOnce("conversion_produced_no_pcm")
+                return
+            }
             continuation.yield(.pcmChunk(pcm))
             updateSpeechState(using: pcm)
         } catch {
             continuation.yield(.failed(error.localizedDescription))
         }
+    }
+
+    /// Emits `.captureDropped` at most once per capture session.
+    private func reportCaptureDropOnce(_ reason: String) {
+        guard !captureDropReported else { return }
+        captureDropReported = true
+        continuation.yield(.captureDropped(reason: reason))
     }
 
     /// Yields a speech-boundary event, and attaches the endpointing facts when

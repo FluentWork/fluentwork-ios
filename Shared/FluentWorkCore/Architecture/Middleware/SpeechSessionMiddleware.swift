@@ -536,6 +536,15 @@ private func audioEventPump(
                     // judged on a device, and a device run cannot be read
                     // without knowing whether the switch was even on.
                     timings.mark(event: "audio_voice_processing", properties: ["detail": detail])
+
+                case let .captureDropped(reason):
+                    // Also informational — and also not a failure, since a graph
+                    // that drops every buffer runs perfectly. It is recorded
+                    // because this is the uplink's last silent gate: without it
+                    // the client sends nothing, the gateway reports a turn it
+                    // never heard, and neither side can say why. Emitted once per
+                    // capture session by the engine.
+                    timings.mark(event: "audio_capture_dropped", properties: ["reason": reason])
     
                 case let .failed(message):
                     timings.mark(event: "audio_engine_failed", properties: ["message": message])
