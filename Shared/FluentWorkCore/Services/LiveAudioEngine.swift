@@ -937,7 +937,19 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         }
         do {
             guard let pcm = try convertToPCM16(buffer) else {
-                reportCaptureDropOnce("conversion_produced_no_pcm")
+                // The formats ride along because the likeliest cause is a
+                // mismatch between what the tap was told it would receive and
+                // what the buffers actually carry — enabling voice processing
+                // reshapes the input node, and a converter built from the
+                // pre-reshape format fails silently for the whole session. The
+                // buffer's own format is the third number, and the one that
+                // settles it.
+                reportCaptureDropOnce(
+                    "conversion_produced_no_pcm src=\(Self.describe(sourceFormat)) "
+                        + "target=\(Self.describe(Self.targetFormat)) "
+                        + "buffer=\(Self.describe(buffer.format)) "
+                        + "frames=\(buffer.frameLength)"
+                )
                 return
             }
             continuation.yield(.pcmChunk(pcm))
