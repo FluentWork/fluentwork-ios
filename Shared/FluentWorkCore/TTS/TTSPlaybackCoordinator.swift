@@ -2,16 +2,10 @@ import Foundation
 import FluentWorkNetworking
 
 /// 一帧下行音频的处理结果。
-///
-/// 协调器只做决策，**埋点留在调用方**（middleware 持有 tracker）。把这个结果返回
-/// 出去，而不是让协调器自己去打点，是「决策可测」这条原则的一部分：测试断言
-/// 返回值，不需要一个 mock tracker。
 public enum TTSFrameOutcome: Equatable, Sendable {
-    /// 没有活跃轮次：走今天的老路（引擎侧解码 + barge-in 水位线）
-    case playedLegacy
-    /// 归属某一轮，已经过解码 seam 并交给 sink
+    /// 归属某一轮，已经过解码并交给 sink
     case played(turnID: String)
-    /// 丢弃。`errorDescription` 只在解码失败时非空
+    /// 丢弃。`errorDescription` 在解码失败时非空
     case dropped(turnID: String?, reason: TTSDropReason, errorDescription: String?)
 }
 
@@ -24,32 +18,31 @@ public enum TTSDropReason: String, Equatable, Sendable {
     case decodeFailed
 }
 
-/// TTS 播放协调器：基于 `turn_id` 路由下行音频帧，支持打断与过渡期双轨兼容。
+/// TTS 播放协调器：基于 `turn_id` 路由下行音频帧，支持打断。
 ///
 /// ## 设计目标
 ///
 /// 1. **修复串音 bug**：用户打断后，前一轮的残留帧不再播放（P0-11 根因）。
-/// 2. **零行为变化过渡**：没有活跃轮次时，帧走 legacy 路径，后端未改造前仍出声。
+/// 2. **强制 turn_id**：所有帧必须有 turn_id，无 ai.tts.start 则无声音。
 /// 3. **可测试决策**：通过 `RecordingSink` 验证播/丢逻辑，不依赖真实音频设备。
-/// 4. **真实解码 seam**：带轮次归属的帧经 `AudioFrameDecoder` 解码成 PCM 后播放，
-///    杜绝「start 认领后路由进一台录音机」的 2026-09-12 静音事故重演。
+/// 4. **真实解码**：所有帧经 `AudioFrameDecoder` 解码成 PCM 后播放。
 ///
-/// ## 轮次归属从哪来（契约 `meta 83_`）
+/// ## 轮次归属（契约 `meta 83_`）
 ///
 /// **二进制帧格式不变**：4 字节大端 seq + payload，帧上不带 `turn_id`。归属由
 /// 「谁是这段 `ai.tts.start` / `ai.tts.end` 之间的帧」决定。所以裸帧入口
-/// （`onAudioFrame`）按**当前归属指针**解析轮次，而不是要求帧自带 id。
+/// （`onAudioFrame`）按**当前归属指针**解析轮次。
 ///
 /// ## 三个状态，一张注册表
 ///
-/// - 归属指针 `currentTurnID`：最近的 `ai.tts.start`。`ai.tts.end` 才清空。
+/// - 归属指针 `attributionTurnID`：最近的 `ai.tts.start`。`ai.tts.end` 才清空。
 /// - 注册表 `turnRegistry`：`turn_id → .active | .superseded`。
-/// - 裸帧路由：指针非空 → 按注册表判定；指针为空 → legacy。
+/// - 裸帧路由：指针非空 → 按注册表判定；指针为空 → **丢弃**。
 ///
-/// **打断不移动归属指针。** 这是本类最容易改错的一行：打断之后、`ai.tts.end`
-/// 之前，线上仍在到达的那批帧依然属于被打断的那一轮，必须被丢弃。若在打断时把
-/// 指针清空，它们会「因为没有活跃轮次」而退回 legacy 被播出去 —— 那正是 P0-11
-/// 的串音（用户打断了，上一轮接着说）。指针的移动只发生在 start 与 end。
+/// **打断不移动归属指针。** 打断之后、`ai.tts.end` 之前，线上仍在到达的帧
+/// 依然属于被打断的那一轮，必须被丢弃。若在打断时把指针清空，它们会被判为
+/// 「未知轮」而丢弃，但 errorDescription 会说「missing ai.tts.start」而不是
+/// 「superseded」，这会误导诊断。指针的移动只发生在 start 与 end。
 public actor TTSPlaybackCoordinator {
     /// 轮次状态
     private enum TurnState: Sendable, Equatable {
@@ -74,21 +67,12 @@ public actor TTSPlaybackCoordinator {
     /// 音频播放 sink
     private let sink: any AudioSink
 
-    /// 未知 turn_id 的处理策略
-    public enum UnknownTurnPolicy: Sendable {
-        case drop         // 丢弃（保守，默认）
-        case playAsLegacy // 当作 legacy 播放（激进）
-    }
-    private let unknownTurnPolicy: UnknownTurnPolicy
-
     public init(
         decoder: any AudioFrameDecoder,
-        sink: any AudioSink,
-        unknownTurnPolicy: UnknownTurnPolicy = .drop
+        sink: any AudioSink
     ) {
         self.decoder = decoder
         self.sink = sink
-        self.unknownTurnPolicy = unknownTurnPolicy
     }
 
     // MARK: - Turn Lifecycle
@@ -147,13 +131,11 @@ public actor TTSPlaybackCoordinator {
 
     /// 裸帧入口：线上二进制帧（只有 seq + payload）从这里进来。
     ///
-    /// 归属由归属指针解析 —— 有活跃轮次就是它的帧，没有就是 legacy。
-    /// 这是 `TTSFrameDispatcher` 那条「谁在 start 和 end 之间」规则的等价物，
-    /// 只是丢帧决策变成了显式的查表结果，而不是「漏出去」。
+    /// 归属由归属指针解析 —— 必须有活跃轮次，否则丢弃。
+    /// 移除了 legacy 路径：所有帧必须经过 ai.tts.start 认领。
     public func onAudioFrame(_ frame: WSAudioFrame) async -> TTSFrameOutcome {
         guard let turnID = attributionTurnID else {
-            await sink.play(legacy: frame)
-            return .playedLegacy
+            return .dropped(turnID: nil, reason: .unknownTurn, errorDescription: "no active turn (missing ai.tts.start)")
         }
         return await onAudio(
             TurnKeyedAudioFrame(turnID: turnID, sequence: frame.sequence, payload: frame.payload)
@@ -163,19 +145,18 @@ public actor TTSPlaybackCoordinator {
     /// 已带归属的帧：用于测试与将来的「帧自带 turn_id」形态。
     ///
     /// ## 路由规则
-    /// 1. `turnID == nil` → legacy 路径（透传）
+    /// 1. `turnID == nil` → 丢弃（不再支持 legacy）
     /// 2. `turnID` 是 `.active` → 解码后播放
     /// 3. `turnID` 是 `.superseded` → 丢弃
-    /// 4. `turnID` 未知 → 按 policy 处理
+    /// 4. `turnID` 未知 → 丢弃（不再支持 playAsLegacy）
     @discardableResult
     public func onAudio(_ frame: TurnKeyedAudioFrame) async -> TTSFrameOutcome {
         guard let turnID = frame.turnID else {
-            await playLegacy(frame)
-            return .playedLegacy
+            return .dropped(turnID: nil, reason: .unknownTurn, errorDescription: "frame has no turn_id")
         }
 
         guard let state = turnRegistry[turnID] else {
-            return await handleUnknownTurn(frame, turnID: turnID)
+            return .dropped(turnID: turnID, reason: .unknownTurn, errorDescription: "turn_id not registered (missing ai.tts.start)")
         }
 
         guard state == .active else {
@@ -187,15 +168,7 @@ public actor TTSPlaybackCoordinator {
 
     // MARK: - Private Helpers
 
-    private func playLegacy(_ frame: TurnKeyedAudioFrame) async {
-        await sink.play(
-            legacy: WSAudioFrame(sequence: frame.sequence, payload: frame.payload)
-        )
-    }
-
     private func playKeyed(_ frame: TurnKeyedAudioFrame, turnID: String) async -> TTSFrameOutcome {
-        // 空 payload 在引擎侧只会变成「PCM 长度不是偶数」，那条日志带不动 turn_id ——
-        // 在归属这一层拦下来，日志才能说清是哪一轮的第几帧是空的。
         guard !frame.payload.isEmpty else {
             return .dropped(turnID: turnID, reason: .decodeFailed, errorDescription: "empty payload")
         }
@@ -210,19 +183,6 @@ public actor TTSPlaybackCoordinator {
                 reason: .decodeFailed,
                 errorDescription: String(describing: error)
             )
-        }
-    }
-
-    private func handleUnknownTurn(
-        _ frame: TurnKeyedAudioFrame,
-        turnID: String
-    ) async -> TTSFrameOutcome {
-        switch unknownTurnPolicy {
-        case .drop:
-            return .dropped(turnID: turnID, reason: .unknownTurn, errorDescription: nil)
-        case .playAsLegacy:
-            await playLegacy(frame)
-            return .playedLegacy
         }
     }
 }

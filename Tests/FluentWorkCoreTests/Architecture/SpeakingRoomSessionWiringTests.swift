@@ -518,13 +518,14 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
         await audioEngine.snapshotStartCalls() == 1
     }
 
+    speechClient.emit(.control(.aiTTSStart(turnID: "turn-1", voiceID: "mock_voice_01", sampleRate: 16_000, codec: "pcm")))
     let frame = WSAudioFrame(sequence: 7, payload: Data([0x01, 0x02]))
     speechClient.emit(.audio(frame))
 
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        await audioEngine.snapshotPlayedFrames() == [frame]
+        await audioEngine.snapshotPlayedPCM().count == 1
     }
-    #expect(await audioEngine.snapshotPlayedFrames() == [frame])
+    #expect(await audioEngine.snapshotPlayedPCM() == [frame.payload])
 }
 
 /// 这条是 2026-09-12 那根保险丝的**接线级**版本。
@@ -549,14 +550,6 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         await audioEngine.snapshotStartCalls() == 1
     }
-
-    // 没有 start 的帧 = 今天那条老路：引擎侧解码 + barge-in 水位线。
-    let beforeStart = WSAudioFrame(sequence: 7, payload: Data([0x07, 0x08]))
-    speechClient.emit(.audio(beforeStart))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        await audioEngine.snapshotPlayedFrames() == [beforeStart]
-    }
-    #expect(await audioEngine.snapshotPlayedPCM().isEmpty)
 
     // start 之后到达的帧归属这一轮。codec 是 `pcm`（网关发的是重采样后的裸 PCM16）。
     speechClient.emit(
@@ -584,10 +577,6 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(
         await audioEngine.snapshotPlayedPCM() == [first.payload, second.payload],
         "start 认领的帧必须解码成 PCM 到播放口：停在只记录的组件上就是 2026-09-12 的静音"
-    )
-    #expect(
-        await audioEngine.snapshotPlayedFrames() == [beforeStart],
-        "带归属的帧不得再走 legacy 播放"
     )
 }
 
@@ -662,6 +651,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(store.state.speakingRoom.session.userTurnCount == 1)
 
     // Drive the machine to `waitingForEvaluation` so a second turn can start.
+    speechClient.emit(.control(.aiTTSStart(turnID: "turn-1", voiceID: "mock_voice_01", sampleRate: 16_000, codec: "pcm")))
     let frame = WSAudioFrame(sequence: 1, payload: Data([0x01]))
     speechClient.emit(.audio(frame))
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
@@ -871,12 +861,13 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(store.state.speakingRoom.phase == .processing)
     #expect(await speechClient.snapshotBoundaries() == [true, false])
 
+    speechClient.emit(.control(.aiTTSStart(turnID: "turn-7", voiceID: "mock_voice_01", sampleRate: 16_000, codec: "pcm")))
     let frame = WSAudioFrame(sequence: 7, payload: Data([0x01, 0x02]))
     speechClient.emit(.audio(frame))
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .aiSpeaking
     }
-    #expect(await audioEngine.snapshotPlayedFrames() == [frame])
+    #expect(await audioEngine.snapshotPlayedPCM() == [frame.payload])
     #expect(store.state.speakingRoom.phase == .aiSpeaking)
 
     speechClient.emit(.control(.aiTurnEnd(turnID: "turn-7", outcome: nil, logID: nil)))

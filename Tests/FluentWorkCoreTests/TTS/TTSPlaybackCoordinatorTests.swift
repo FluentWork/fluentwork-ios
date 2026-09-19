@@ -90,7 +90,6 @@ struct TTSPlaybackCoordinatorTests {
         await coordinator.onAudio(TurnKeyedAudioFrame(turnID: "T1", sequence: 0, payload: Data([0x01, 0x02])))
 
         #expect(await sink.playCalls.isEmpty)
-        #expect(await sink.legacyPlayCalls.isEmpty)
     }
 
     @Test("onInterrupt 会立即中断 sink")
@@ -129,52 +128,21 @@ struct TTSPlaybackCoordinatorTests {
         #expect(playCalls.first?.pcm == pcmData, "播放的数据应该与解码输出一致")
     }
 
-    // MARK: - Legacy 兼容（无 turn_id）
+    // MARK: - 无 turn_id 处理
 
-    @Test("无 turn_id 的帧走 legacy 路径")
-    func legacyFrameWithoutTurnIDStillPlays() async {
+    @Test("无 turn_id 的帧被丢弃")
+    func frameWithoutTurnIDIsDropped() async {
         let sink = RecordingSink()
         let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
 
-        // 过渡期：后端未发 start，直接推二进制帧
-        await coordinator.onAudio(TurnKeyedAudioFrame(
+        let outcome = await coordinator.onAudio(TurnKeyedAudioFrame(
             turnID: nil,
             sequence: 0,
             payload: Data([0x01, 0x02])
         ))
 
-        await coordinator.onAudio(TurnKeyedAudioFrame(
-            turnID: nil,
-            sequence: 1,
-            payload: Data([0x03, 0x04])
-        ))
-
-        // 验证：legacy 路径仍正常播放
-        let legacyCalls = await sink.legacyPlayCalls
-        #expect(legacyCalls.count == 2, "应该有两次 legacy 播放")
-        #expect(legacyCalls[0].sequence == 0)
-        #expect(legacyCalls[1].sequence == 1)
-    }
-
-    @Test("有 turn_id 和无 turn_id 的帧不交错")
-    func turnKeyedAndLegacyFramesDoNotInterfere() async {
-        let sink = RecordingSink()
-        let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
-
-        // Legacy 帧
-        await coordinator.onAudio(TurnKeyedAudioFrame(turnID: nil, sequence: 0, payload: Data([0x01, 0x02])))
-
-        // 开始有 turn_id 的轮次
-        await coordinator.onStart(turnID: "T1")
-        await coordinator.onAudio(TurnKeyedAudioFrame(turnID: "T1", sequence: 0, payload: Data([0x10, 0x11])))
-
-        // 又来一个 legacy 帧
-        await coordinator.onAudio(TurnKeyedAudioFrame(turnID: nil, sequence: 1, payload: Data([0x02, 0x03])))
-
-        let legacyCount = await sink.legacyPlayCalls.count
-        let keyedCount = await sink.playCalls.count
-        #expect(legacyCount == 2, "应该有两次 legacy 播放")
-        #expect(keyedCount == 1, "应该有一次 keyed 播放")
+        #expect(outcome == .dropped(turnID: nil, reason: .unknownTurn, errorDescription: "frame has no turn_id"))
+        #expect(await sink.playCalls.isEmpty)
     }
 
     // MARK: - 顺序保证
@@ -200,39 +168,20 @@ struct TTSPlaybackCoordinatorTests {
 
     // MARK: - 未知 turn_id 处理
 
-    @Test("未知 turn_id 的帧按策略处理")
-    func unknownTurnIDHandledByPolicy() async {
+    @Test("未知 turn_id 的帧被丢弃")
+    func unknownTurnIDIsDropped() async {
         let sink = RecordingSink()
         let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
 
         // 未 start 就收到帧（可能是 start 消息丢包）
-        await coordinator.onAudio(TurnKeyedAudioFrame(
+        let outcome = await coordinator.onAudio(TurnKeyedAudioFrame(
             turnID: "UNKNOWN",
             sequence: 0,
             payload: Data([0x01, 0x02])
         ))
 
-        // 默认策略：丢弃（保守）
-        #expect(await sink.playCalls.isEmpty, "未知 turn_id 默认丢弃")
-        #expect(await sink.legacyPlayCalls.isEmpty, "未知 turn_id 默认丢弃")
-    }
-
-    @Test("未知 turn_id 用 playAsLegacy 策略时透传")
-    func unknownTurnWithPlayAsLegacyPolicy() async {
-        let sink = RecordingSink()
-        let coordinator = TTSPlaybackCoordinator(
-            decoder: PassthroughAudioFrameDecoder(),
-            sink: sink,
-            unknownTurnPolicy: .playAsLegacy
-        )
-
-        await coordinator.onAudio(TurnKeyedAudioFrame(
-            turnID: "UNKNOWN",
-            sequence: 0,
-            payload: Data([0x01, 0x02])
-        ))
-
-        #expect(await sink.legacyPlayCalls.count == 1)
+        #expect(outcome == .dropped(turnID: "UNKNOWN", reason: .unknownTurn, errorDescription: "turn_id not registered (missing ai.tts.start)"))
+        #expect(await sink.playCalls.isEmpty)
     }
 }
 
@@ -241,8 +190,8 @@ struct TTSPlaybackCoordinatorTests {
 @Suite("裸帧归属与 draining 窗口")
 struct TTSPlaybackCoordinatorBareFrameTests {
 
-    @Test("没有 start 时，裸帧走 legacy 路径（今天的出声路径）")
-    func bareFrameWithoutStartPlaysAsLegacy() async {
+    @Test("没有 start 时，裸帧被丢弃（必须先有 ai.tts.start）")
+    func bareFrameWithoutStartIsDropped() async {
         let sink = RecordingSink()
         let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
 
@@ -250,11 +199,11 @@ struct TTSPlaybackCoordinatorBareFrameTests {
             WSAudioFrame(sequence: 0, payload: Data([0x01, 0x02]))
         )
 
-        #expect(outcome == .playedLegacy)
-        #expect(await sink.legacyPlayCalls.count == 1)
+        #expect(outcome == .dropped(turnID: nil, reason: .unknownTurn, errorDescription: "no active turn (missing ai.tts.start)"))
+        #expect(await sink.playCalls.isEmpty)
     }
 
-    @Test("start 之后的裸帧归属该轮，经解码 seam 后播放")
+    @Test("start 之后的裸帧归属该轮，经解码后播放")
     func bareFrameAfterStartIsKeyedToThatTurn() async {
         let sink = RecordingSink()
         let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
@@ -266,13 +215,11 @@ struct TTSPlaybackCoordinatorBareFrameTests {
 
         #expect(outcome == .played(turnID: "T1"))
         #expect(await sink.playCalls.count == 1)
-        #expect(await sink.legacyPlayCalls.isEmpty)
     }
 
-    /// 这一条是 P0-11 在**裸帧入口**上的形状：打断之后、`ai.tts.end` 之前到达的
-    /// 帧仍然属于被打断的那一轮，必须被丢弃。如果归属指针在 interrupt 时被清空，
-    /// 它们会因为没有活跃轮次而退回 legacy —— 也就是「打断后上一轮接着说」。
-    @Test("打断之后、end 之前的裸帧被丢弃，而不是退回 legacy")
+    /// P0-11 在裸帧入口上的形状：打断之后、`ai.tts.end` 之前到达的帧
+    /// 仍然属于被打断的那一轮，必须被丢弃。
+    @Test("打断之后、end 之前的裸帧被丢弃")
     func bareFrameBetweenInterruptAndEndIsDropped() async {
         let sink = RecordingSink()
         let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
@@ -285,12 +232,11 @@ struct TTSPlaybackCoordinatorBareFrameTests {
         )
 
         #expect(outcome == .dropped(turnID: "T1", reason: .superseded, errorDescription: nil))
-        #expect(await sink.playCalls.isEmpty, "被打断轮次的在途帧不得播放")
-        #expect(await sink.legacyPlayCalls.isEmpty, "也不得退回 legacy 播放")
+        #expect(await sink.playCalls.isEmpty)
     }
 
-    @Test("end 之后裸帧退回 legacy（下一轮没有 start 时的老路）")
-    func bareFrameAfterEndFallsBackToLegacy() async {
+    @Test("end 之后裸帧被丢弃（下一轮需要新的 start）")
+    func bareFrameAfterEndIsDropped() async {
         let sink = RecordingSink()
         let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
 
@@ -301,8 +247,8 @@ struct TTSPlaybackCoordinatorBareFrameTests {
             WSAudioFrame(sequence: 9, payload: Data([0x09, 0x0A]))
         )
 
-        #expect(outcome == .playedLegacy)
-        #expect(await sink.legacyPlayCalls.count == 1)
+        #expect(outcome == .dropped(turnID: nil, reason: .unknownTurn, errorDescription: "no active turn (missing ai.tts.start)"))
+        #expect(await sink.playCalls.isEmpty)
     }
 
     /// 契约 83 §4.3：一轮被打断后可能**永远收不到** `ai.tts.end`（连接断了、回合被
@@ -325,7 +271,7 @@ struct TTSPlaybackCoordinatorBareFrameTests {
         #expect(await sink.playCalls.count == 1)
     }
 
-    @Test("reset 清空归属，下一场的裸帧走 legacy")
+    @Test("reset 清空归属，下一场的裸帧被丢弃")
     func resetClearsAttribution() async {
         let sink = RecordingSink()
         let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
@@ -337,7 +283,7 @@ struct TTSPlaybackCoordinatorBareFrameTests {
             WSAudioFrame(sequence: 0, payload: Data([0x01, 0x02]))
         )
 
-        #expect(outcome == .playedLegacy)
+        #expect(outcome == .dropped(turnID: nil, reason: .unknownTurn, errorDescription: "no active turn (missing ai.tts.start)"))
         #expect(await coordinator.currentTurnID() == nil)
     }
 

@@ -119,22 +119,7 @@ public protocol AudioEngineProtocol: AudioSink {
 }
 
 extension AudioEngineProtocol {
-    /// legacy 帧的播放就是今天那条路：`play(frame:)`（引擎侧解码 + 水位线）。
-    ///
-    /// 默认实现是**对的**，不是偷懒：这条路上没有任何引擎特有的分支要写，
-    /// 而它必须逐字节等于今天的出声路径，否则过渡期就会变味。
-    public func play(legacy frame: WSAudioFrame) async {
-        await play(frame: frame)
-    }
-
     public func setSpeechBoundaryMode(_ mode: SpeechBoundaryMode) async {}
-    /// Declares whether the session should run engine-level voice processing.
-    ///
-    /// Same shape as `setSpeechBoundaryMode`: the middleware turns a feature
-    /// flag into an intent, and the engine applies it when it builds the
-    /// capture graph. It cannot be applied on demand — voice processing may
-    /// only be toggled while the engine is stopped, and `startCapture()` is
-    /// what starts it.
     public func setVoiceProcessingEnabled(_ enabled: Bool) async {}
     public func beginManualSpeech() async {}
     public func endManualSpeech() async {}

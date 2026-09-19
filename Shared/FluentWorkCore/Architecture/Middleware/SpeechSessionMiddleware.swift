@@ -672,10 +672,6 @@ private func transportEventPump(
                     // 唯一入口：播 / 丢由协调器按轮次归属判定，这里只负责埋点。
                     // 归属来自「当前活跃的 ai.tts.start」——二进制帧上没有 turn_id。
                     switch await ttsCoordinator.onAudioFrame(frame) {
-                    case .playedLegacy:
-                        // 没有活跃轮次：这就是今天那条路（引擎侧解码 + barge-in
-                        // 水位线），逐字节等价于接线前的 `audioEngine.play(frame:)`。
-                        break
                     case let .played(turnID):
                         let count = ttsTrace.recordAudio()
                         if count == 1 {
@@ -689,8 +685,7 @@ private func transportEventPump(
                             )
                         }
                     case let .dropped(turnID, reason, errorDescription):
-                        // 丢弃必须留痕。串音的旧形态是「静默地播了不该播的」，
-                        // 静音的旧形态是「静默地什么都没播」—— 两种都没有日志。
+                        // 丢弃必须留痕。无 ai.tts.start 时帧会被丢弃并记录。
                         container.tracker().track(
                             event: reason == .decodeFailed ? "tts_decoder_failed" : "tts_frame_dropped",
                             properties: [
@@ -703,10 +698,8 @@ private func transportEventPump(
                         )
                     }
     
-                // `ai.tts.start` 就是「轮次归属」这一刻：从这里到 `ai.tts.end` 之间
-                // 到达的二进制帧都属于这一轮（契约 `meta 83_`）。网关今天还不发它，
-                // 所以下面这一行目前是空转 —— 它正是「客户端先就绪」的那一半，
-                // 网关打开时不需要再动客户端。
+                // `ai.tts.start` 是轮次归属的开始。从这里到 `ai.tts.end` 之间
+                // 到达的二进制帧都属于这一轮（契约 `meta 83_`）。
                 case let .control(.aiTTSStart(turnID, voiceID, sampleRate, codec)):
                     await ttsCoordinator.onStart(turnID: turnID)
                     ttsTrace.reset()

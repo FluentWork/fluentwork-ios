@@ -39,21 +39,6 @@ struct AudioSinkTests {
         #expect(await sink.totalPCMBytes == 6)
     }
     
-    @Test("RecordingSink 记录 legacy 帧播放")
-    func recordingSinkCapturesLegacyFrames() async {
-        let sink = RecordingSink()
-        
-        let frame1 = WSAudioFrame(sequence: 0, payload: Data([0x01, 0x02]))
-        let frame2 = WSAudioFrame(sequence: 1, payload: Data([0x03, 0x04, 0x05]))
-        
-        await sink.play(legacy: frame1)
-        await sink.play(legacy: frame2)
-        
-        #expect(await sink.playedSequenceNumbers == [0, 1])
-        #expect(await sink.legacyPlayCalls[0].payloadLength == 2)
-        #expect(await sink.legacyPlayCalls[1].payloadLength == 3)
-    }
-    
     @Test("RecordingSink 记录中断调用")
     func recordingSinkCapturesControlCalls() async {
         let sink = RecordingSink()
