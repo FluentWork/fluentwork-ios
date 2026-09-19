@@ -578,7 +578,9 @@ private func audioEventPump(
 ///    丢了之后 `processingTimeoutEffects` 走 `scheduleEvaluationWaitTask`，
 ///    于是**每一轮都白等 `evaluationWait`（默认 20s）**，不报错、只是慢。
 /// 3. **`.clientASRTranscription` 是两次 dispatch**，mapper 只产生一次。
-private func makeTransportEventRouter(
+/// 内部而非 private：见 `MainActorActionBox`。生产接线与测试走的是同一个工厂——
+/// 一个只有在生产里跑的工厂，和一张只有测试才看的表，都是这次要避免的形状。
+internal func makeTransportEventRouter(
     container: Container,
     dispatchBox: MainActorActionBox,
     timings: SpeechSessionTimingsRecorder,
@@ -1542,7 +1544,9 @@ private func cancelProcessingTimeoutTasks(includeTotalCap: Bool) -> Effect<AppAc
     return .merge(effects)
 }
 
-private final class MainActorActionBox: @unchecked Sendable {
+/// 内部而非 private：`makeTransportEventRouter` 需要它，而接线后的路由表由
+/// `TransportRoutingEquivalenceTests` 用真实工厂驱动（@testable import）。
+internal final class MainActorActionBox: @unchecked Sendable {
     private let dispatch: @MainActor (AppAction) -> Void
 
     init(dispatch: @escaping @MainActor (AppAction) -> Void) {

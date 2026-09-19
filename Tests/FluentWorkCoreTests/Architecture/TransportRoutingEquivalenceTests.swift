@@ -1,5 +1,7 @@
 import Testing
 import Foundation
+import FactoryKit
+import FluentWorkDiagnostics
 import FluentWorkNetworking
 @testable import FluentWorkCore
 
@@ -114,6 +116,144 @@ struct TransportRoutingEquivalenceTests {
         #expect(events.contains(.failure(.network("boom"))))
         #expect(events.contains(.failure(.pingTimedOut)))
     }
+}
+
+// MARK: - 生产路由表：handler 级
+
+/// 用**生产工厂** `makeTransportEventRouter` 驱动，观察它 dispatch 出什么。
+///
+/// 不建 store、不起泵、不碰状态机：这一层回答的是"表接对了没有"。状态机那一层由
+/// `SpeechSessionMiddlewareTests` 的 64 条原样覆盖——两种问题在不同的高度上。
+///
+/// 这里用的是生产接线本身（同一个工厂、同一份 handler），所以它对"接线时漏掉
+/// 一个副作用"是敏感的，而不是对"测试自己拼的表"敏感。
+@MainActor
+@Suite("生产路由表的接线")
+struct ProductionRoutingWiringTests {
+
+    @Test("feedback.badge 会 mark 评测等待，并推动两次 dispatch")
+    func badgeHandlerMarksTheEvaluationArrival() async {
+        let (router, recorder, evaluationArrival) = makeProductionRouter()
+
+        await router.route(event: .control(.feedbackBadge(
+            badge: "ship it",
+            phraseBlockID: "block-1",
+            tier: .highlight,
+            turnID: "turn-1"
+        )))
+
+        // 这一句就是整个 shadow 风险的落点。`.feedbackBadge` 同时被
+        // `SocketTransportEventMapper` 映过一次——按 mapper 的写法搬 handler，
+        // 就会只发 badgeHit、丢掉这个 mark；丢了之后
+        // `processingTimeoutEffects` 走 `scheduleEvaluationWaitTask`，
+        // 于是**每一轮都白等 `evaluationWait`（默认 20s）**，不报错、只是慢。
+        #expect(evaluationArrival.consume(), "badge 到达时没有 mark 评测等待——每轮会白等满窗口")
+
+        // 两次 dispatch：badgeHit（展示）与 .session(.evaluationReceived)（状态机）。
+        // 少了后者，阶段不会离开 evaluation；少了前者，界面上没有命中。
+        #expect(recorder.actions.count == 2)
+        if recorder.actions.count == 2 {
+            guard case .speakingRoom(.badgeHit) = recorder.actions[0] else {
+                Issue.record("第一次 dispatch 不是 badgeHit：\(recorder.actions[0])")
+                return
+            }
+            guard case .speakingRoom(.session(.evaluationReceived)) = recorder.actions[1] else {
+                Issue.record("第二次 dispatch 不是 .session(.evaluationReceived)：\(recorder.actions[1])")
+                return
+            }
+        }
+    }
+
+    @Test("网关报错经 fallback 仍然触发会话失败")
+    func errorFrameStillTearsTheSessionDown() async {
+        let (router, recorder, _) = makeProductionRouter()
+
+        await router.route(event: .control(.error(code: "provider_audio_failed", message: nil)))
+
+        // `.error` 没有专属 handler，靠 fallback 的 mapper 变成 `.session(.failed)`。
+        // 走 router 之后这条路径必须还在——否则网关报错时房间就那样挂着。
+        #expect(recorder.actions.count == 1)
+        guard let first = recorder.actions.first,
+              case .speakingRoom(.session(.failed)) = first
+        else {
+            Issue.record("`.error` 没有变成 .session(.failed)，实际：\(recorder.actions)")
+            return
+        }
+    }
+
+    @Test("13 类没有专属 handler 的控制帧什么都不做")
+    func unownedControlFramesChangeNothing() async {
+        let unowned: [WSControlFrame] = [
+            .auth(ticket: "t"),
+            .handshake(ticket: "t", sessionID: "s"),
+            .sessionReady(sessionID: "s", userID: nil),
+            .sessionStart(.init(materialID: "m")),
+            .userSpeechStart,
+            .userSpeechEnd(text: nil, turnID: "turn-1"),
+            .clientTurnAbort(turnID: "turn-1", outcome: .userAbandoned),
+            .aiAudioChunk(sequence: 1),
+            .interrupt,
+            .sessionEnd(reason: nil),
+            .ping(ts: 1),
+            .pong(ts: 1),
+            // `.error` 不在此列：它是这 13 类里唯一有动作的，见上一条。
+        ]
+
+        for frame in unowned {
+            let (router, recorder, evaluationArrival) = makeProductionRouter()
+            await router.route(event: .control(frame))
+            #expect(
+                recorder.actions.isEmpty,
+                "\(frame.wireType) 产生了 dispatch：\(recorder.actions) —— 它本该被 mapper 有意忽略"
+            )
+            #expect(!evaluationArrival.consume(), "\(frame.wireType) 意外地 mark 了评测等待")
+        }
+    }
+}
+
+/// 用生产工厂搭一个路由器，dispatch 落进 `recorder`。
+@MainActor
+private func makeProductionRouter() -> (TransportEventRouter, ActionRecorder, EvaluationArrivalBox) {
+    let container = Container()
+    container.reset()
+    let recorder = ActionRecorder()
+    let evaluationArrival = EvaluationArrivalBox()
+    let dispatchBox = MainActorActionBox(dispatch: { recorder.record($0) })
+
+    let router = makeTransportEventRouter(
+        container: container,
+        dispatchBox: dispatchBox,
+        timings: SpeechSessionTimingsRecorder(tracker: ConsoleTracker(), clock: { Date() }),
+        turnTimeoutTracking: TurnTimeoutTracking(),
+        evaluationArrival: evaluationArrival,
+        ttsCoordinator: TTSPlaybackCoordinator(decoder: NoopFrameDecoder(), sink: NoopAudioSink()),
+        ttsTrace: TTSStreamTrace()
+    )
+    return (router, recorder, evaluationArrival)
+}
+
+/// 收集被 dispatch 的动作。`@MainActor` 是因为 `MainActorActionBox` 的 dispatch
+/// 本来就跑在 MainActor 上。
+@MainActor
+private final class ActionRecorder {
+    private(set) var actions: [AppAction] = []
+
+    func record(_ action: AppAction) {
+        actions.append(action)
+    }
+}
+
+/// 这些测试不碰音频路径，解码器只需存在。
+private struct NoopFrameDecoder: AudioFrameDecoder {
+    func decode(_ frame: TurnKeyedAudioFrame) async throws -> Data {
+        frame.payload
+    }
+}
+
+/// 同上：不播、不中断。
+private struct NoopAudioSink: AudioSink {
+    func play(pcm: Data) async {}
+    func interruptNow() async {}
 }
 
 // MARK: - 记录
