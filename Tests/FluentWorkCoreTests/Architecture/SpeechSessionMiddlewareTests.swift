@@ -1181,7 +1181,7 @@ struct SpeechSessionMiddlewareReconnectTests {
     /// id, the gateway mints its own `session_id`, keeps per-session state in a
     /// struct discarded on disconnect, and has no session registry — so a
     /// reconnect would need a new frame, a lookup surviving restarts, and
-    /// persisted live context. Backend evidence in `docs/55`.
+    /// persisted live context.
     ///
     /// This test exists so the window cannot go back to looking alive. If
     /// someone implements reconnect, this fails and makes them update the

@@ -9,7 +9,7 @@ public enum SocketConnectionState: String, Equatable, Sendable {
     /// The transport goes `connecting → connected → disconnected`; a reconnect
     /// would need something to re-open the socket, and nothing does. A reader
     /// finding this case should not conclude that a reconnect is in flight
-    /// anywhere — see `SpeechSessionEvent.reconnectSucceeded` and `docs/55`.
+    /// anywhere — see `SpeechSessionEvent.reconnectSucceeded`.
     case reconnecting
     case disconnected
 }

@@ -90,7 +90,7 @@ public func appBootstrapMiddleware(container: Container? = nil) -> Middleware<Ap
 /// `corpus-seed-dev-device`, a physical device authenticates as its own guest,
 /// and the corpus is scoped by user — so badge hits on a real phone silently
 /// never fire until corpus is seeded against *that* id, with nothing anywhere
-/// saying why (`docs/62` §0 item 4).
+/// saying why.
 ///
 /// It was reachable only from the Keychain, which is not where anyone looks
 /// when a device run needs it. One line at startup is the difference between

@@ -51,7 +51,7 @@ public struct BadgeFeedbackViewModel: Equatable, Sendable {
 
 /// Lightweight, non-blocking badge overlay (`I11`).
 ///
-/// Visual constraints (`05_第二波开发范围与任务清单.md` §7):
+/// Visual constraints:
 ///  * Non-modal, no pop-up, no vibration, no system alert.
 ///  * Never blocks the voice stream.
 ///  * Anti-spam: respects `maxVisible`; dedupe/dispatch-time windowing

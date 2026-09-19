@@ -152,7 +152,7 @@ public enum ProcessingStage: String, Equatable, Sendable, Codable, CaseIterable 
     /// I21: the recording was aborted, and its answer is still on the way.
     ///
     /// Same wait as every other entry into this phase — only the entrance
-    /// differs (`docs/29`).
+    /// differs.
     case aiAnswer
 
     /// A label for this stage. **Only `asr` is a gateway stage** — the other

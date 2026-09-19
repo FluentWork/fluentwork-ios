@@ -37,7 +37,7 @@ Environment:
   SIMULATOR_NAME      override device name (exact simctl name)
 
 Traces land under build/instruments/. This script does not analyze traces
-or fill gate numbers; see docs/23_iOS-arch-baseline-report_2026-09-09.md.
+or fill gate numbers.
 EOF
 }
 
@@ -315,6 +315,6 @@ echo "traces: $OUT_DIR/{allocations,leaks,time-profiler}.trace"
 if [[ "$DRY_RUN" == "1" ]]; then
   echo "status: dry-run only; no 30-minute Instruments attach was performed."
 else
-  echo "status: recording finished. Fill docs/23_iOS-arch-baseline-report_2026-09-09.md from the traces."
+  echo "status: recording finished. Read the gate numbers from the traces."
   echo "Do not invent gate numbers. Compare vs bf0ae8b only after a matching pre-change run."
 fi

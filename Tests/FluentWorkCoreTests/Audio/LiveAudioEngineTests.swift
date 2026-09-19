@@ -140,7 +140,7 @@ import Testing
 /// ending the session has to retire both.
 ///
 /// The retired frame is dropped, not surfaced as `.failed`. The audio pump
-/// treats `.failed` as fatal (`docs/49`); see
+/// treats `.failed` as fatal; see
 /// `stopCaptureDropsLateFramesWithoutFailingTheEngine`.
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineRetiresPlaybackWhenCaptureStops() async {
@@ -1161,7 +1161,7 @@ final class VoiceProcessingRecorder: @unchecked Sendable {
 /// `stopCapture()` retires playback so leftover TTS frames from a socket that
 /// has not closed yet have nowhere to go. Yielding `.failed` for those frames
 /// is the wrong signal: the audio pump treats `.failed` as fatal and exits
-/// for the rest of the process (`docs/49`), so "ended while the assistant was
+/// for the rest of the process, so "ended while the assistant was
 /// still speaking" used to kill 「开始说话」 on the next session.
 @available(iOS 17, macOS 14, *)
 @Test func stopCaptureDropsLateFramesWithoutFailingTheEngine() async {

@@ -258,7 +258,7 @@ public enum SpeechSessionMachine {
         // **Also unreachable today, for the same reason**: nothing re-opens the
         // socket, so no `.connected` arrives while `isReconnecting` is set. The
         // branch is correct and complete — it is the trigger that is missing.
-        // See `SpeechSessionEvent.reconnectSucceeded` and `docs/55`.
+        // See `SpeechSessionEvent.reconnectSucceeded`.
         case (_, .socketReady) where state.isReconnecting:
             effects.append(contentsOf: completeReconnect(&state))
 

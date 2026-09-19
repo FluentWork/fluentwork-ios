@@ -45,7 +45,7 @@ import Testing
     // instead of rejecting them — `handler.go` keeps `unsupported_frame` only
     // in the comments explaining that), so this also covers the unknown-code
     // path: the identifier is kept for diagnostics, but beside a human sentence
-    // rather than as the whole message. See `docs/57`.
+    // rather than as the whole message.
     let event = SocketTransportEvent.control(
         .error(code: "unsupported_frame", message: "unknown type")
     )

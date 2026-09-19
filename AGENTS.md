@@ -67,13 +67,12 @@ The implementation note's test section must quote the **actual pre-fix failure o
 
 ## Testing Index
 
-Before writing or changing tests in bootstrap, audio, middleware, or navigation paths, read these docs first:
-
-1. `docs/19_测试分层与依赖隔离规范.md` — test boundary, hermetic rules, stub policy
-2. `docs/17_Bootstrap设计原理说明.md` — bootstrap layering and provider boundary
-3. `docs/12_mock_device_测试支持说明.md` — device / mock support and local doubles
-4. `docs/10_I12_audio_engine_decoder_pitfalls.md` — audio engine pitfalls and decoder constraints
-5. `docs/09_I10_smoke_test_runbook.md` — iPhone 17 Pro simulator smoke scope
+The test-discipline documents that used to be listed here were removed with `docs/`
+on 2026-09-20 (TTS/WSS refactor reset). The surviving statement of hermetic-test
+policy is the doubles list under **Defect Fix Discipline**: reproduce with
+`InMemorySocketTransport`, `StubAudioEngine`, `StubSpeechSessionClient`, or
+`FixedClock` rather than the device. The existing tests are now the spec — read the
+test file next to the code you are changing before you change it.
 
 ## Local Review Gate
 

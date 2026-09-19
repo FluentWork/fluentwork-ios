@@ -14,8 +14,8 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         /// hard-coded 3s before `.reconnectTimedOut`. The two literals agree by
         /// coincidence and are not connected: changing this one changes nothing.
         /// Kept rather than deleted only because deleting it would not make a
-        /// reconnect appear — see `SpeechSessionEvent.reconnectSucceeded` and
-        /// `docs/55` for why one cannot be built on this side.
+        /// reconnect appear — see `SpeechSessionEvent.reconnectSucceeded` for why
+        /// one cannot be built on this side.
         public var reconnectWindow: Duration
 
         public init(

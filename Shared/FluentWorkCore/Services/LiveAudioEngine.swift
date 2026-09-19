@@ -343,8 +343,8 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// that matters is the one a healthy device will not take, and here the
     /// branch is "the device refuses voice processing". It also keeps `swift
     /// test` off the real API entirely — the capture path is already entered on
-    /// CI as far as the input node, and `docs/19` §4.2 forbids a test from
-    /// depending on whether the machine has an audio device.
+    /// CI as far as the input node, and a test must not depend on whether the
+    /// machine has an audio device.
     private let applyVoiceProcessing: @Sendable (AVAudioInputNode) throws -> Bool
 
     public init(
@@ -362,7 +362,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             // is documented to fail the other way — an `AVAEInternal` "required
             // condition is false" raise — and that is an `NSException`, which
             // `do/catch` cannot see. That second shape is the F12–F16 class and
-            // the reason `FWTryCatch` exists at all (`docs/44` §3).
+            // the reason `FWTryCatch` exists at all.
             var raised: NSError?
             var thrown: Error?
             _ = FWTryCatch({
@@ -644,7 +644,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // TTS frames from a socket that has not closed yet still call
         // `play(frame:)`; once this flag is set they drop instead of
         // restarting the player (and instead of `.failed`, which would kill
-        // the process-lifetime audio pump — `docs/49`).
+        // the process-lifetime audio pump).
         playbackRetired = true
         playbackPaused = false
         let shouldRemoveTap = hasInstalledTap
@@ -924,7 +924,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             }
             continuation.yield(.interruptedBySystem)
         case .ended(let shouldResume):
-            // docs/22: only resume the speech session when iOS says we may.
+            // Only resume the speech session when iOS says we may.
             // Do not `playerNode.play()` — interruptedBySystem already asked
             // the machine to stopPlayback, and resume lands in waitingUser.
             //
@@ -1326,7 +1326,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// mixer→output connection is one the engine manages and re-derives on the
     /// next `stop()`/`start()`. So the raise this would guard is speculative,
     /// while the guard itself is not free: `.failed` ends the middleware's
-    /// audio pump for the rest of the process (`docs/49`), which would turn a
+    /// audio pump for the rest of the process, which would turn a
     /// one-session playback problem into every later session going silent.
     private func attachPlayerIfNeeded() {
         guard !playerAttached else { return }

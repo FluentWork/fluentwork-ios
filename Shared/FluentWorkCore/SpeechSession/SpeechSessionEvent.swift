@@ -55,7 +55,7 @@ public enum SpeechSessionEvent: Equatable, Sendable {
     /// mints its own `session_id`, per-session state lives in a struct discarded
     /// on disconnect, and there is no session registry. It would need a new
     /// frame carrying a session id (or a reusable ticket), a lookup that
-    /// survives gateway restarts, and persisted live context. See `docs/55`.
+    /// survives gateway restarts, and persisted live context.
     ///
     /// Kept rather than deleted so the shape stays visible — `88_` §⑧ names this
     /// and `processingReview` as the two instances of "定义在、消费分支在、测试在,

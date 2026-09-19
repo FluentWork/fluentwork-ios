@@ -73,8 +73,8 @@ public struct BadgeFeedEntry: Equatable, Sendable, Identifiable, Hashable {
 /// Display-only state for `I11` badge feedback.
 ///
 /// Lives outside `SpeechSessionState` on purpose: the speaking-room state
-/// machine must never be disturbed by presentation concerns (`02_iOS架构
-/// 实现约定.md` §2.2 — badge feedback is a display action).
+/// machine must never be disturbed by presentation concerns — badge feedback
+/// is a display action.
 public struct BadgeFeedbackState: Equatable, Sendable, State {
     /// Entries in arrival order (oldest first).
     public var entries: [BadgeFeedEntry]

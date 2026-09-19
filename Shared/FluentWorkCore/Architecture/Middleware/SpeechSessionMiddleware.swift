@@ -1029,8 +1029,8 @@ private func interpretSpeechSessionSideEffect(
                     // couldn't be completed. (FluentWorkCore.AudioEngineError
                     // error 0.)" — which means the format facts the new guards
                     // were written to carry reach nobody at all. Writing
-                    // Chinese copy for them is a product decision (see
-                    // `ios docs/63` §5); getting them into the log is not, and
+                    // Chinese copy for them is a product decision; getting them
+                    // into the log is not, and
                     // a device run that dies at a format guard is unreadable
                     // without them.
                     let detail: String
@@ -1097,8 +1097,7 @@ private func interpretSpeechSessionSideEffect(
     // The window is deliberately kept: it is the honest amount of time to give
     // a future reconnect attempt, and `networkLossDegradesAndNeverAttemptsAReconnect`
     // pins the current behaviour so implementing one is a deliberate act rather
-    // than a silent drift. Why it cannot be implemented client-side alone:
-    // `docs/55`.
+    // than a silent drift. It cannot be implemented client-side alone.
     case .startReconnectWindow:
         return .task(id: SpeechSessionTaskID.reconnectWindow) {
             try? await Task.sleep(for: .seconds(3))

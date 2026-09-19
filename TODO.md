@@ -4,7 +4,7 @@
 
 **Status:** done (2026-09-02)
 **Created:** 2026-09-02
-**Implementation:** see `docs/17_AuthTokenStore_Async迁移方案.md`
+**Implementation:** `AuthTokenStoreProtocol` / `SecureStorageProtocol` and their tests.
 
 ### Result
 - 216/216 tests pass.
