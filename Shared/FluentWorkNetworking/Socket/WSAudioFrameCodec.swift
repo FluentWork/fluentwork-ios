@@ -1,13 +1,24 @@
 import Foundation
 
-/// Decoded Opus audio frame with a server-monotonic sequence number.
+/// A downstream audio frame with a server-monotonic sequence number.
+///
+/// The payload is whatever the active `ai.tts.start` codec says it is — Opus in
+/// the gateway's current shape, already-PCM16 under `RawPCM16FrameDecoder`. The
+/// field is named `payload`, not `opusPayload`, so the name stops claiming a
+/// codec the decoder is the one to decide.
 public struct WSAudioFrame: Equatable, Sendable {
     public var sequence: UInt32
-    public var opusPayload: Data
+    public var payload: Data
 
-    public init(sequence: UInt32, opusPayload: Data) {
+    public init(sequence: UInt32, payload: Data) {
         self.sequence = sequence
-        self.opusPayload = opusPayload
+        self.payload = payload
+    }
+    
+    @available(*, deprecated, renamed: "payload")
+    public var opusPayload: Data {
+        get { payload }
+        set { payload = newValue }
     }
 }
 
@@ -21,10 +32,10 @@ public enum WSAudioFrameCodec: Sendable {
 
     public static func encode(_ frame: WSAudioFrame) -> Data {
         var data = Data()
-        data.reserveCapacity(headerByteCount + frame.opusPayload.count)
+        data.reserveCapacity(headerByteCount + frame.payload.count)
         var sequence = frame.sequence.bigEndian
         withUnsafeBytes(of: &sequence) { data.append(contentsOf: $0) }
-        data.append(frame.opusPayload)
+        data.append(frame.payload)
         return data
     }
 
@@ -37,7 +48,7 @@ public enum WSAudioFrameCodec: Sendable {
             UInt32(bigEndian: buffer.load(as: UInt32.self))
         }
         let payload = data.dropFirst(headerByteCount)
-        return WSAudioFrame(sequence: sequence, opusPayload: Data(payload))
+        return WSAudioFrame(sequence: sequence, payload: Data(payload))
     }
 }
 

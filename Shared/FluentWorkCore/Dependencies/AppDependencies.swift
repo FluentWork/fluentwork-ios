@@ -135,7 +135,7 @@ public protocol WSAudioFrameDecoder: Sendable {
     func decode(_ frame: WSAudioFrame) async throws -> Data
 }
 
-/// Decoder that treats `opusPayload` as already-PCM16 bytes.
+/// Decoder that treats `payload` as already-PCM16 bytes.
 ///
 /// Useful for:
 ///   - Unit tests that drive the speaking-room wiring without a Volcengine
@@ -154,10 +154,10 @@ public struct RawPCM16FrameDecoder: WSAudioFrameDecoder {
     public init() {}
 
     public func decode(_ frame: WSAudioFrame) async throws -> Data {
-        guard frame.opusPayload.count.isMultiple(of: 2) else {
-            throw Error.oddSampleCount(frame.opusPayload.count)
+        guard frame.payload.count.isMultiple(of: 2) else {
+            throw Error.oddSampleCount(frame.payload.count)
         }
-        return frame.opusPayload
+        return frame.payload
     }
 }
 

@@ -19,7 +19,7 @@ import Testing
 }
 
 @Test func testAITTSAudio_DecodeBinaryFrame() throws {
-    let frame = WSAudioFrame(sequence: 0, opusPayload: Data([0x01, 0x02, 0x03]))
+    let frame = WSAudioFrame(sequence: 0, payload: Data([0x01, 0x02, 0x03]))
     let encoded = WSAudioFrameCodec.encode(frame)
     let decoded = try WSAudioFrameCodec.decode(encoded)
     #expect(decoded == frame)
@@ -69,8 +69,8 @@ import Testing
         )
     )
     #expect(dispatcher.activeTurnID() == "turn-1")
-    try dispatcher.handle(audio: WSAudioFrame(sequence: 0, opusPayload: Data([0x0A])))
-    try dispatcher.handle(audio: WSAudioFrame(sequence: 1, opusPayload: Data([0x0B])))
+    try dispatcher.handle(audio: WSAudioFrame(sequence: 0, payload: Data([0x0A])))
+    try dispatcher.handle(audio: WSAudioFrame(sequence: 1, payload: Data([0x0B])))
     try dispatcher.handle(
         control: .aiTTSEnd(turnID: "turn-1", completionStatus: "ok", durationMs: 40)
     )
@@ -114,7 +114,7 @@ import Testing
     let decoder = MockTTSDecoder()
     let dispatcher = TTSFrameDispatcher(decoder: decoder)
 
-    let consumed = try dispatcher.handle(audio: WSAudioFrame(sequence: 0, opusPayload: Data([0x01])))
+    let consumed = try dispatcher.handle(audio: WSAudioFrame(sequence: 0, payload: Data([0x01])))
     #expect(consumed == false)
     #expect(decoder.snapshotFeeds().isEmpty)
     #expect(dispatcher.activeTurnID() == nil)
@@ -132,7 +132,7 @@ import Testing
         )
     )
     #expect(throws: TTSDecoderError.emptyPayload) {
-        try dispatcher.handle(audio: WSAudioFrame(sequence: 0, opusPayload: Data()))
+        try dispatcher.handle(audio: WSAudioFrame(sequence: 0, payload: Data()))
     }
 }
 
@@ -149,7 +149,7 @@ import Testing
     )
     try dispatcher.interrupt()
     let leftoverConsumed = try dispatcher.handle(
-        audio: WSAudioFrame(sequence: 9, opusPayload: Data([0x99]))
+        audio: WSAudioFrame(sequence: 9, payload: Data([0x99]))
     )
     try dispatcher.handle(
         control: .aiTTSEnd(turnID: "turn-1", completionStatus: "ok", durationMs: 20)
@@ -186,7 +186,7 @@ import Testing
         control: .aiTTSStart(turnID: "turn-2", voiceID: "v", sampleRate: 24_000, codec: "opus")
     )
     let consumed = try dispatcher.handle(
-        audio: WSAudioFrame(sequence: 1, opusPayload: Data([0x01]))
+        audio: WSAudioFrame(sequence: 1, payload: Data([0x01]))
     )
 
     #expect(consumed == true, "turn-2's audio must reach the decoder, not be eaten by turn-1's leftovers")
@@ -208,7 +208,7 @@ import Testing
         )
     )
     try dispatcher.reset()
-    let consumed = try dispatcher.handle(audio: WSAudioFrame(sequence: 0, opusPayload: Data([0x01])))
+    let consumed = try dispatcher.handle(audio: WSAudioFrame(sequence: 0, payload: Data([0x01])))
 
     #expect(consumed == false)
     #expect(decoder.snapshotFinishes().map(\.status) == ["interrupted"])

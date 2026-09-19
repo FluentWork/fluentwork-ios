@@ -170,10 +170,10 @@ import TGReduxKitTesting
 
 @Test func audioPlaybackGateDropsFramesAtAndBeforeInterruptWatermark() {
     var gate = AudioPlaybackGate()
-    let first = WSAudioFrame(sequence: 10, opusPayload: Data([0x01]))
-    let second = WSAudioFrame(sequence: 11, opusPayload: Data([0x02]))
-    let stale = WSAudioFrame(sequence: 11, opusPayload: Data([0x03]))
-    let fresh = WSAudioFrame(sequence: 12, opusPayload: Data([0x04]))
+    let first = WSAudioFrame(sequence: 10, payload: Data([0x01]))
+    let second = WSAudioFrame(sequence: 11, payload: Data([0x02]))
+    let stale = WSAudioFrame(sequence: 11, payload: Data([0x03]))
+    let fresh = WSAudioFrame(sequence: 12, payload: Data([0x04]))
 
     let acceptedFirst = gate.shouldAccept(first)
     let acceptedSecond = gate.shouldAccept(second)
@@ -223,7 +223,7 @@ import TGReduxKitTesting
 
     // The previous turn is long over; nothing is in flight.
     for sequence in UInt32(495)...499 {
-        #expect(gate.shouldAccept(WSAudioFrame(sequence: sequence, opusPayload: Data([0x01]))) == .accept)
+        #expect(gate.shouldAccept(WSAudioFrame(sequence: sequence, payload: Data([0x01]))) == .accept)
     }
 
     // The tap. Nothing of the reply being interrupted has arrived yet — the
@@ -234,7 +234,7 @@ import TGReduxKitTesting
     // accepted: they are all numbered above the watermark, so nothing about
     // them says which turn they belong to.
     let reply = (UInt32(500)...612).map {
-        gate.shouldAccept(WSAudioFrame(sequence: $0, opusPayload: Data([0x01])))
+        gate.shouldAccept(WSAudioFrame(sequence: $0, payload: Data([0x01])))
     }
     #expect(
         reply.allSatisfy { $0 == .accept },
@@ -252,23 +252,23 @@ import TGReduxKitTesting
 /// turn-awareness that is not there.
 @Test func theWatermarkIsASequenceAndNotATurnBoundary() {
     var gate = AudioPlaybackGate()
-    _ = gate.shouldAccept(WSAudioFrame(sequence: 10, opusPayload: Data([0x01])))
+    _ = gate.shouldAccept(WSAudioFrame(sequence: 10, payload: Data([0x01])))
     _ = gate.markInterrupted()
 
     #expect(gate.interruptWatermark == 10)
     // Above the watermark is accepted regardless of who produced it.
-    #expect(gate.shouldAccept(WSAudioFrame(sequence: 11, opusPayload: Data([0x01]))) == .accept)
+    #expect(gate.shouldAccept(WSAudioFrame(sequence: 11, payload: Data([0x01]))) == .accept)
 }
 
 @Test func audioPlaybackGateResetClearsInterruptWatermark() {
     var gate = AudioPlaybackGate()
     let acceptedBeforeInterrupt = gate.shouldAccept(
-        WSAudioFrame(sequence: 4, opusPayload: Data([0x01]))
+        WSAudioFrame(sequence: 4, payload: Data([0x01]))
     )
     _ = gate.markInterrupted()
     gate.reset()
     let acceptedAfterReset = gate.shouldAccept(
-        WSAudioFrame(sequence: 1, opusPayload: Data([0x02]))
+        WSAudioFrame(sequence: 1, payload: Data([0x02]))
     )
 
     #expect(acceptedBeforeInterrupt == .accept)

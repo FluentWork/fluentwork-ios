@@ -36,8 +36,8 @@ struct AudioSinkTests {
     func recordingSinkCapturesLegacyFrames() async {
         let sink = RecordingSink()
         
-        let frame1 = WSAudioFrame(sequence: 0, opusPayload: Data([0x01, 0x02]))
-        let frame2 = WSAudioFrame(sequence: 1, opusPayload: Data([0x03, 0x04, 0x05]))
+        let frame1 = WSAudioFrame(sequence: 0, payload: Data([0x01, 0x02]))
+        let frame2 = WSAudioFrame(sequence: 1, payload: Data([0x03, 0x04, 0x05]))
         
         await sink.play(legacy: frame1)
         await sink.play(legacy: frame2)
@@ -181,7 +181,7 @@ struct EngineAudioSinkOrderingTests {
 /// 透传解码器：payload 直接作为 PCM 返回（用于测试）
 private actor PassthroughDecoder: WSAudioFrameDecoder {
     func decode(_ frame: WSAudioFrame) async throws -> Data {
-        frame.opusPayload
+        frame.payload
     }
 }
 

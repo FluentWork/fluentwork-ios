@@ -650,7 +650,7 @@ private func transportEventPump(
                         event: "ai_first_chunk",
                         properties: [
                             "sequence": String(frame.sequence),
-                            "payload_bytes": String(frame.opusPayload.count),
+                            "payload_bytes": String(frame.payload.count),
                         ]
                     )
                     // P1-5: audio is the other way a turn can answer first, and
@@ -672,7 +672,7 @@ private func transportEventPump(
                                     properties: [
                                         "turn_id": ttsDispatcher.activeTurnID() ?? "nil",
                                         "sequence": String(frame.sequence),
-                                        "payload_bytes": String(frame.opusPayload.count),
+                                        "payload_bytes": String(frame.payload.count),
                                     ]
                                 )
                             }

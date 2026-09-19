@@ -1140,7 +1140,7 @@ struct SpeechSessionMiddlewareB14Tests {
         #expect(boundaries.last?.turnID == "turn-1")
 
         // Trigger AI response to return to waiting
-        let frame = WSAudioFrame(sequence: 1, opusPayload: Data([0x01]))
+        let frame = WSAudioFrame(sequence: 1, payload: Data([0x01]))
         speechClient.emit(.audio(frame))
         try await waitForPhase(store, phase: .aiSpeaking)
 
@@ -1589,8 +1589,8 @@ struct I20TurnTelemetryTests {
         try await waitUntil() {
             decoder.snapshotPrepares().count == 1
         }
-        speechClient.emit(.audio(WSAudioFrame(sequence: 0, opusPayload: Data([0x0A, 0x0B]))))
-        speechClient.emit(.audio(WSAudioFrame(sequence: 1, opusPayload: Data([0x0C]))))
+        speechClient.emit(.audio(WSAudioFrame(sequence: 0, payload: Data([0x0A, 0x0B]))))
+        speechClient.emit(.audio(WSAudioFrame(sequence: 1, payload: Data([0x0C]))))
         speechClient.emit(
             .control(.aiTTSEnd(turnID: "turn-9", completionStatus: "ok", durationMs: 40))
         )

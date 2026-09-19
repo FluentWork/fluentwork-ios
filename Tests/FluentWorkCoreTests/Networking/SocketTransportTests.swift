@@ -65,7 +65,7 @@ import Testing
 }
 
 @Test func audioFrameCodecRoundTripsSequenceAndPayload() throws {
-    let frame = WSAudioFrame(sequence: 1_024, opusPayload: Data([0x01, 0x02, 0xFF]))
+    let frame = WSAudioFrame(sequence: 1_024, payload: Data([0x01, 0x02, 0xFF]))
     let encoded = WSAudioFrameCodec.encode(frame)
     #expect(encoded.count == WSAudioFrameCodec.headerByteCount + 3)
 
@@ -167,13 +167,13 @@ import Testing
         ticket: "ticket"
     )
 
-    #expect(await transport.emitAudio(WSAudioFrame(sequence: 1, opusPayload: Data([0x01]))) == true)
-    #expect(await transport.emitAudio(WSAudioFrame(sequence: 2, opusPayload: Data([0x02]))) == true)
+    #expect(await transport.emitAudio(WSAudioFrame(sequence: 1, payload: Data([0x01]))) == true)
+    #expect(await transport.emitAudio(WSAudioFrame(sequence: 2, payload: Data([0x02]))) == true)
 
     await transport.markInterrupted()
 
-    #expect(await transport.emitAudio(WSAudioFrame(sequence: 2, opusPayload: Data([0x02]))) == false)
-    #expect(await transport.emitAudio(WSAudioFrame(sequence: 3, opusPayload: Data([0x03]))) == true)
+    #expect(await transport.emitAudio(WSAudioFrame(sequence: 2, payload: Data([0x02]))) == false)
+    #expect(await transport.emitAudio(WSAudioFrame(sequence: 3, payload: Data([0x03]))) == true)
 }
 
 @Test func transportFailureMapsToSpeakingRoomFailedAction() {
@@ -332,7 +332,7 @@ private func eventsFromScriptedReceiveLoop(
     // large frame gives `handle()` a deterministic, measurable cost.
     let payload = Data(count: 8 * 1024 * 1024)
     let encoded = WSAudioFrameCodec.encode(
-        WSAudioFrame(sequence: 1, opusPayload: payload)
+        WSAudioFrame(sequence: 1, payload: payload)
     )
 
     let events = await eventsFromScriptedReceiveLoop(
@@ -418,7 +418,7 @@ private func eventsFromScriptedReceiveLoop(
     let burst = 200
     for sequence in 0..<burst {
         continuation.yield(
-            .audio(WSAudioFrame(sequence: UInt32(sequence), opusPayload: Data([0x01])))
+            .audio(WSAudioFrame(sequence: UInt32(sequence), payload: Data([0x01])))
         )
     }
     continuation.finish()
@@ -509,8 +509,8 @@ private actor TransportHolder {
     // reference leaves the loop below waiting on a stream that never ends.
     let (holder, events) = TransportHolder.make()
     let source = InterleavingMessageSource([
-        .message(.data(WSAudioFrameCodec.encode(WSAudioFrame(sequence: 1, opusPayload: Data([0x01]))))),
-        .message(.data(WSAudioFrameCodec.encode(WSAudioFrame(sequence: 2, opusPayload: Data([0x02]))))),
+        .message(.data(WSAudioFrameCodec.encode(WSAudioFrame(sequence: 1, payload: Data([0x01]))))),
+        .message(.data(WSAudioFrameCodec.encode(WSAudioFrame(sequence: 2, payload: Data([0x02]))))),
         // The user barges in: the gate records the highest sequence seen.
         .perform { await holder.markInterrupted() },
         // The interrupted turn ends. Everything it had in flight is now moot,
@@ -519,7 +519,7 @@ private actor TransportHolder {
         // A later frame whose numbering went backwards — the F18 shape. It is
         // a *new* turn's audio and must be delivered, not swallowed by a
         // watermark that belongs to a turn that is over.
-        .message(.data(WSAudioFrameCodec.encode(WSAudioFrame(sequence: 1, opusPayload: Data([0x03]))))),
+        .message(.data(WSAudioFrameCodec.encode(WSAudioFrame(sequence: 1, payload: Data([0x03]))))),
     ])
 
     await holder.run(source)
@@ -556,15 +556,15 @@ private actor TransportHolder {
         ticket: "ticket"
     )
 
-    #expect(await transport.emitAudio(WSAudioFrame(sequence: 1, opusPayload: Data([0x01]))) == true)
-    #expect(await transport.emitAudio(WSAudioFrame(sequence: 2, opusPayload: Data([0x02]))) == true)
+    #expect(await transport.emitAudio(WSAudioFrame(sequence: 1, payload: Data([0x01]))) == true)
+    #expect(await transport.emitAudio(WSAudioFrame(sequence: 2, payload: Data([0x02]))) == true)
 
     await transport.markInterrupted()
 
     // Dropped — and, crucially, *said to have been dropped*.
-    #expect(await transport.emitAudio(WSAudioFrame(sequence: 2, opusPayload: Data([0x02]))) == false)
+    #expect(await transport.emitAudio(WSAudioFrame(sequence: 2, payload: Data([0x02]))) == false)
     // A later frame closes the run with its size.
-    #expect(await transport.emitAudio(WSAudioFrame(sequence: 3, opusPayload: Data([0x03]))) == true)
+    #expect(await transport.emitAudio(WSAudioFrame(sequence: 3, payload: Data([0x03]))) == true)
 
     // The opening report (the first drop makes the run visible) and the closing
     // one (its size) — the same two the production transport emits.

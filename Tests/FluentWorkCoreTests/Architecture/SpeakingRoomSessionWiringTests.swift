@@ -501,7 +501,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
         await audioEngine.snapshotStartCalls() == 1
     }
 
-    let frame = WSAudioFrame(sequence: 7, opusPayload: Data([0x01, 0x02]))
+    let frame = WSAudioFrame(sequence: 7, payload: Data([0x01, 0x02]))
     speechClient.emit(.audio(frame))
 
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
@@ -540,8 +540,8 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         decoder.snapshotPrepares().count == 1
     }
-    let first = WSAudioFrame(sequence: 0, opusPayload: Data([0x0A, 0x0B]))
-    let second = WSAudioFrame(sequence: 1, opusPayload: Data([0x0C]))
+    let first = WSAudioFrame(sequence: 0, payload: Data([0x0A, 0x0B]))
+    let second = WSAudioFrame(sequence: 1, payload: Data([0x0C]))
     speechClient.emit(.audio(first))
     speechClient.emit(.audio(second))
     speechClient.emit(
@@ -662,7 +662,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(store.state.speakingRoom.session.userTurnCount == 1)
 
     // Drive the machine to `waitingForEvaluation` so a second turn can start.
-    let frame = WSAudioFrame(sequence: 1, opusPayload: Data([0x01]))
+    let frame = WSAudioFrame(sequence: 1, payload: Data([0x01]))
     speechClient.emit(.audio(frame))
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .aiSpeaking
@@ -871,7 +871,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(store.state.speakingRoom.phase == .processing)
     #expect(await speechClient.snapshotBoundaries() == [true, false])
 
-    let frame = WSAudioFrame(sequence: 7, opusPayload: Data([0x01, 0x02]))
+    let frame = WSAudioFrame(sequence: 7, payload: Data([0x01, 0x02]))
     speechClient.emit(.audio(frame))
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .aiSpeaking

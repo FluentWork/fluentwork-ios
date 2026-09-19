@@ -42,7 +42,7 @@ import Testing
 @Test func rawPCM16FrameDecoderRoundtripPreservesBytes() async throws {
     let decoder = RawPCM16FrameDecoder()
     let payload = Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06])
-    let frame = WSAudioFrame(sequence: 1, opusPayload: payload)
+    let frame = WSAudioFrame(sequence: 1, payload: payload)
 
     let decoded = try await decoder.decode(frame)
 
@@ -51,7 +51,7 @@ import Testing
 
 @Test func rawPCM16FrameDecoderRejectsOddSampleCount() async {
     let decoder = RawPCM16FrameDecoder()
-    let frame = WSAudioFrame(sequence: 1, opusPayload: Data([0x01, 0x02, 0x03]))
+    let frame = WSAudioFrame(sequence: 1, payload: Data([0x01, 0x02, 0x03]))
 
     await #expect(throws: RawPCM16FrameDecoder.Error.oddSampleCount(3)) {
         _ = try await decoder.decode(frame)
@@ -60,7 +60,7 @@ import Testing
 
 @Test func volcengineOpusFrameDecoderReturnsNotAvailableUntilB13Lands() async {
     let decoder = VolcengineOpusFrameDecoder()
-    let frame = WSAudioFrame(sequence: 1, opusPayload: Data([0x01, 0x02]))
+    let frame = WSAudioFrame(sequence: 1, payload: Data([0x01, 0x02]))
 
     await #expect(throws: VolcengineOpusFrameDecoder.Error.notAvailable) {
         _ = try await decoder.decode(frame)
@@ -75,8 +75,8 @@ import Testing
     let decoder = CapturingFrameDecoder(log: log, samplesPerFrame: 4)
     let engine = LiveAudioEngine(decoder: decoder)
 
-    await engine.play(frame: WSAudioFrame(sequence: 1, opusPayload: Data(repeating: 0x01, count: 8)))
-    await engine.play(frame: WSAudioFrame(sequence: 2, opusPayload: Data(repeating: 0x02, count: 8)))
+    await engine.play(frame: WSAudioFrame(sequence: 1, payload: Data(repeating: 0x01, count: 8)))
+    await engine.play(frame: WSAudioFrame(sequence: 2, payload: Data(repeating: 0x02, count: 8)))
 
     let captured = await log.snapshot()
     #expect(captured.count == 2)
@@ -95,7 +95,7 @@ import Testing
 
     #expect(await engine._testPlaybackStarted() == false)
 
-    await engine.play(frame: WSAudioFrame(sequence: 1, opusPayload: Data(repeating: 0x01, count: 8)))
+    await engine.play(frame: WSAudioFrame(sequence: 1, payload: Data(repeating: 0x01, count: 8)))
 
     #expect(await engine._testPlaybackStarted() == true)
 }
@@ -114,7 +114,7 @@ import Testing
     )
     let stream = engine.events()
 
-    await engine.play(frame: WSAudioFrame(sequence: 1, opusPayload: Data(repeating: 0x01, count: 8)))
+    await engine.play(frame: WSAudioFrame(sequence: 1, payload: Data(repeating: 0x01, count: 8)))
 
     #expect(await engine._testEngineRunning() == false)
     #expect(
@@ -148,12 +148,12 @@ import Testing
     let engine = LiveAudioEngine(decoder: decoder)
 
     // Live session: playback works.
-    await engine.play(frame: WSAudioFrame(sequence: 1, opusPayload: Data(repeating: 0x01, count: 8)))
+    await engine.play(frame: WSAudioFrame(sequence: 1, payload: Data(repeating: 0x01, count: 8)))
     #expect(await engine._testPlaybackStarted() == true)
 
     // Session ends; a frame that was already in flight arrives afterwards.
     await engine.stopCapture()
-    await engine.play(frame: WSAudioFrame(sequence: 2, opusPayload: Data(repeating: 0x02, count: 8)))
+    await engine.play(frame: WSAudioFrame(sequence: 2, payload: Data(repeating: 0x02, count: 8)))
 
     #expect(
         await engine._testPlaybackStarted() == false,
@@ -321,7 +321,7 @@ import Testing
     let engine = LiveAudioEngine(decoder: ThrowingFrameDecoder())
     let stream = engine.events()
 
-    await engine.play(frame: WSAudioFrame(sequence: 1, opusPayload: Data([0x01, 0x02])))
+    await engine.play(frame: WSAudioFrame(sequence: 1, payload: Data([0x01, 0x02])))
 
     // Drain up to 250 ms — long enough to surface the failure, short enough
     // to keep CI responsive if the engine never emits. The TaskGroup wrapper
@@ -787,13 +787,13 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
     let engine = LiveAudioEngine(decoder: decoder)
 
     // Pre-interrupt frame — gate accepts, decoder runs.
-    await engine.play(frame: WSAudioFrame(sequence: 10, opusPayload: Data(repeating: 0x01, count: 8)))
+    await engine.play(frame: WSAudioFrame(sequence: 10, payload: Data(repeating: 0x01, count: 8)))
     // Bump the watermark to 10.
     await engine.interruptNow()
     // Same sequence after interrupt — gate rejects (10 <= 10).
-    await engine.play(frame: WSAudioFrame(sequence: 10, opusPayload: Data(repeating: 0x02, count: 8)))
+    await engine.play(frame: WSAudioFrame(sequence: 10, payload: Data(repeating: 0x02, count: 8)))
     // Fresh sequence past the watermark — gate accepts again.
-    await engine.play(frame: WSAudioFrame(sequence: 11, opusPayload: Data(repeating: 0x03, count: 8)))
+    await engine.play(frame: WSAudioFrame(sequence: 11, payload: Data(repeating: 0x03, count: 8)))
 
     let captured = await log.snapshot()
     #expect(captured.count == 2, "expected 1 pre-interrupt + 1 post-watermark frame; got \(captured.count)")
@@ -1170,9 +1170,9 @@ final class VoiceProcessingRecorder: @unchecked Sendable {
     let engine = LiveAudioEngine(decoder: decoder)
     let stream = engine.events()
 
-    await engine.play(frame: WSAudioFrame(sequence: 1, opusPayload: Data(repeating: 0x01, count: 8)))
+    await engine.play(frame: WSAudioFrame(sequence: 1, payload: Data(repeating: 0x01, count: 8)))
     await engine.stopCapture()
-    await engine.play(frame: WSAudioFrame(sequence: 2, opusPayload: Data(repeating: 0x02, count: 8)))
+    await engine.play(frame: WSAudioFrame(sequence: 2, payload: Data(repeating: 0x02, count: 8)))
 
     let captured = await log.snapshot()
     #expect(captured.map(\.sequence) == [1], "late frames after stopCapture must not reach the decoder; got \(captured.map(\.sequence))")
@@ -1192,11 +1192,11 @@ final class VoiceProcessingRecorder: @unchecked Sendable {
     let engine = LiveAudioEngine(decoder: decoder)
     let stream = engine.events()
 
-    await engine.play(frame: WSAudioFrame(sequence: 1, opusPayload: Data(repeating: 0x01, count: 8)))
+    await engine.play(frame: WSAudioFrame(sequence: 1, payload: Data(repeating: 0x01, count: 8)))
     await engine.pausePlayback()
     #expect(await engine.isPlaybackPaused())
 
-    await engine.play(frame: WSAudioFrame(sequence: 2, opusPayload: Data(repeating: 0x02, count: 8)))
+    await engine.play(frame: WSAudioFrame(sequence: 2, payload: Data(repeating: 0x02, count: 8)))
     let captured = await log.snapshot()
     #expect(captured.map(\.sequence) == [1, 2], "paused playback must still queue incoming TTS; got \(captured.map(\.sequence))")
     #expect(await engine.isPlaybackPaused())
@@ -1212,7 +1212,7 @@ final class VoiceProcessingRecorder: @unchecked Sendable {
     await engine.pausePlayback()
     await engine.stopCapture()
     #expect(await engine.isPlaybackPaused() == false)
-    await engine.play(frame: WSAudioFrame(sequence: 3, opusPayload: Data(repeating: 0x03, count: 8)))
+    await engine.play(frame: WSAudioFrame(sequence: 3, payload: Data(repeating: 0x03, count: 8)))
     let afterStop = await log.snapshot()
     #expect(afterStop.map(\.sequence) == [1, 2], "stopCapture after pause must retire leftover frames")
 }

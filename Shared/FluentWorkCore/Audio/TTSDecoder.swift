@@ -111,12 +111,12 @@ public final class TTSFrameDispatcher: @unchecked Sendable {
             case .draining:
                 return true
             case let .active(turnID):
-                guard !frame.opusPayload.isEmpty else {
+                guard !frame.payload.isEmpty else {
                     throw TTSDecoderError.emptyPayload
                 }
                 try decoder.feed(
                     seq: frame.sequence,
-                    bytes: frame.opusPayload,
+                    bytes: frame.payload,
                     turnId: turnID
                 )
                 return true

@@ -15,7 +15,7 @@ struct TransportEventRouterTests {
         let recorder = RecordingAudioHandler()
         let router = await TransportEventRouter(audioHandler: recorder)
         
-        let frame = WSAudioFrame(sequence: 42, opusPayload: Data([0x01, 0x02]))
+        let frame = WSAudioFrame(sequence: 42, payload: Data([0x01, 0x02]))
         let result = await router.route(event: .audio(frame))
         
         #expect(result == .handled)
@@ -28,7 +28,7 @@ struct TransportEventRouterTests {
     func audioFrameIgnoredWithoutHandler() async {
         let router = await TransportEventRouter()
         
-        let frame = WSAudioFrame(sequence: 1, opusPayload: Data([0x01]))
+        let frame = WSAudioFrame(sequence: 1, payload: Data([0x01]))
         let result = await router.route(event: .audio(frame))
         
         #expect(result == .ignored)

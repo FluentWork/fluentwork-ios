@@ -54,7 +54,7 @@ public actor RecordingSink: AudioSink {
     public func play(legacy frame: WSAudioFrame) async {
         legacyPlayCalls.append(LegacyPlayCall(
             sequence: frame.sequence,
-            payloadLength: frame.opusPayload.count
+            payloadLength: frame.payload.count
         ))
     }
     

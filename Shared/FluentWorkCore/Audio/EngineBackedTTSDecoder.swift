@@ -73,7 +73,7 @@ public final class EngineBackedTTSDecoder: TTSDecoder, @unchecked Sendable {
             throw TTSDecoderError.emptyPayload
         }
         // Queued, not played. `player` runs on the consumer, in this order.
-        frames?.yield(WSAudioFrame(sequence: seq, opusPayload: bytes))
+        frames?.yield(WSAudioFrame(sequence: seq, payload: bytes))
     }
 
     public func finish(turnId: String, status: String, durationMs: Int?) throws {
