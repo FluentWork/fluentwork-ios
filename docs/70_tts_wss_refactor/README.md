@@ -18,19 +18,25 @@
 
 旧结论里那句「这是整条链路的病根」仍然成立，只是病根已经治了：**无轮次归属**（P-B）不再是问题，归属现在是显式查表；**双解码器**（P-C）的语义冲突也解除了 —— 生产绑定的解码 seam 只有 `RawPCM16FrameDecoder` 一条实现。
 
-但另外两条症状**还在**，读旧文时不要当成已解决：**双水印门禁**（P-D）的两道门都还在代码里（传输层 `BargeInAudioGate`、引擎 `AudioPlaybackGate`），只是 keyed 帧绕开了后者；**巨石中间件**（P-E）原封未动。另外 P-G 那根 `EngineBackedTTSDecoder` 的 AsyncStream 单消费者桥，文件被 `f3bb127` 加了回来、至今零调用点。
+> **修订（2026-09-20，第二次）**：下面这一段里关于水印与中间件的两句，在本轮之后只剩一句仍然成立。
+
+**双水印门禁（P-D）已经收敛成一道**（2026-09-20）。引擎侧那道 `AudioPlaybackGate` 连同它的入口 `play(frame:)` 一起删除了——它不只是没有读者，而是**不可能被武装**：watermark 的唯一赋值点写的是 `lastAcceptedSequence`，而后者只在 `shouldAccept` 内写，`shouldAccept` 的唯一调用点又是永不执行的 `play(frame:)`。证据链与 2026-09-12 03:57 那段原始记录见 [`07`](./07_Stage4_删除死路径.md) §2。今天 barge-in 的丢弃**只在传输层发生一次**（`BargeInAudioGate`）。
+
+**巨石中间件（P-E）原封未动**——这一条仍然成立，而且现在有准确数字：路由只占它 1470 行里的约 275 行（19%），拆出去的只是那个 switch 壳；`audioEventPump`（209 行）仍是第二个大 switch，`TransportEventRouter` 不覆盖它。
+
+另外 P-G 那根 `EngineBackedTTSDecoder` 的 AsyncStream 单消费者桥，文件被 `f3bb127` 加了回来、至今零调用点（是否再删见 `07` §1）。
 
 ## 文档索引（按阅读顺序）
 
 | # | 文档 | 回答的问题 | 状态（2026-09-20 核对） |
 |---|------|-----------|------------------------|
 | 1 | [`01_现状架构审计.md`](./01_现状架构审计.md) | 现在到底是什么样的？哪两条路径？问题清单和根因链 | 历史快照（Stage 2/3 之前的现状），已被推翻，文首有注 |
-| 2 | [`02_目标架构与组件设计.md`](./02_目标架构与组件设计.md) | 如果我从零实现这个组件，会怎么设计？ | 设计提案，部分落地、部分改道，逐处有注 |
+| 2 | [`02_目标架构与组件设计.md`](./02_目标架构与组件设计.md) | 如果我从零实现这个组件，会怎么设计？ | **§5 的 Stage 1 已落地**（形状与原设计不同，见该节）；其余部分部分落地、部分改道 |
 | 3 | [`03_重构建议与迁移路径.md`](./03_重构建议与迁移路径.md) | 不动架构大换血，如何一步步把现状改到目标？ | 计划，S0/S1/S2/S4 落地、S3 未走，文首有注 |
 | 4 | [`04_从测试出发.md`](./04_从测试出发.md) | 每个重构步骤由哪条「先红」的测试驱动？ | 计划，T2c 未保留，文首有注 |
 | 5 | [`05_Stage2_实现说明.md`](./05_Stage2_实现说明.md) | Stage 2 的协调器落地了什么、红验证证据、还有什么没接 | 实施记录，已接线，文中四处已修订 |
 | 6 | [`06_Stage2_3_接线实现说明.md`](./06_Stage2_3_接线实现说明.md) | 协调器接管音频分支：三个关键决定、测试迁移、红验证 | 实施记录，文中四处已修订 |
-| 7 | [`07_Stage4_删除死路径.md`](./07_Stage4_删除死路径.md) | 删掉了哪条并行路径、为什么水位线不能删、剩下的一条缺口 | 实施记录，三处已修订（两条删除被 `f3bb127` 撤回） |
+| 7 | [`07_Stage4_删除死路径.md`](./07_Stage4_删除死路径.md) | 删掉了哪条并行路径、为什么水位线能删、剩下的一条缺口 | 实施记录；§2 已重写（引擎水印与其入口已删），§5 记本轮范围 |
 | 8 | [`08_真机验证记录_2026-09-20.md`](./08_真机验证记录_2026-09-20.md) | 真机验到了什么、没验到什么、与后端 `93_` 梯子契约的逐条核对 | 日期快照，§4/§5.2 各有一条被后续提交推翻 |
 | 9 | [`09_麦克风替身.md`](./09_麦克风替身.md) | `FW_MOCK_MIC`：真机验证不再依赖真麦克风（接管哪三处、替不掉什么） | 现行 |
 
@@ -51,19 +57,23 @@
 
 > **修订（2026-09-20）**：本表原指向 `MockTTSDecoder.swift` 与 `consumedByTTS` 分支，两者都已随 `e64237e` / `d004869` 删除；回滚注释的行号也从 `:538-557` 移到 `:574-580`。下表按 HEAD `d004869` 核对过。
 
+> **修订（2026-09-20，第二次）**：第二版（下面就收进修订记录的那版）核对的是 `d004869`。本轮接线与删除之后，行号与两行的存在性都变了：`TransportEventRouter` 已接线，`play(frame:)` 与 `AudioPlaybackGate` 已删除。下表按本轮之后的 HEAD 重新核对。
+
 | 组件 | 文件:行 |
 |------|---------|
 | **`TTSPlaybackCoordinator`**（唯一的播/丢决策点；裸帧入口 `onAudioFrame`） | `Shared/FluentWorkCore/TTS/TTSPlaybackCoordinator.swift:136-143` |
-| **音频路由点**（裸帧 / `ai.tts.start` / `ai.tts.end` 三个 case） | `Shared/FluentWorkCore/Architecture/Middleware/SpeechSessionMiddleware.swift:674`、`:703`、`:717` |
+| **`TransportEventRouter`**（传输事件的真实分发点） | `Shared/FluentWorkCore/Architecture/Middleware/TransportEventRouter.swift:63` |
+| **生产路由表**（四个 handler 就地定义在这里） | `Shared/FluentWorkCore/Architecture/Middleware/SpeechSessionMiddleware.swift:568`（`makeTransportEventRouter`），组装于 `:880`，分发于 `:958` |
+| **控制帧的路由键**（`String` 原始值取线上 discriminator；穷尽 switch） | `Shared/FluentWorkNetworking/Socket/WSControlFrame.swift:174`（`wireType`） |
 | 生产 DI：解码 seam（`audioFrameDecoder`）与「引擎即 sink」的绑定 | `Shared/FluentWorkCore/Dependencies/AppDependencies.swift:566-571`、`:74-80` |
-| 生产 DI 绑定处的回滚注释 | `Shared/FluentWorkCore/Dependencies/AppDependencies.swift:574-580` |
+| 生产 DI 绑定处的回滚注释（**没有回滚开关**） | `Shared/FluentWorkCore/Dependencies/AppDependencies.swift:571` |
 | `WSAudioFrame`（只有 seq、无 turn_id） | `Shared/FluentWorkNetworking/Socket/WSAudioFrameCodec.swift:9` |
-| `LiveAudioEngine.play(pcm:)`（keyed 帧的出口，刻意不查水位线） | `Shared/FluentWorkCore/Services/LiveAudioEngine.swift:778` |
-| `LiveAudioEngine.play(frame:)` + `AudioPlaybackGate`（legacy 那条守卫；`play(frame:)` 已无生产调用点） | `Shared/FluentWorkCore/Services/LiveAudioEngine.swift:719`、`:147` |
+| **`LiveAudioEngine.play(pcm:)`**（引擎唯一的播放入口；`playbackRetired` 守卫在此） | `Shared/FluentWorkCore/Services/LiveAudioEngine.swift:697` |
 | `RawPCM16FrameDecoder`（`audioFrameDecoder` 的底层实现，一个 codec 两个调用点） | `Shared/FluentWorkCore/Dependencies/AppDependencies.swift:562-564` |
+| **传输层的 barge-in 门**（唯一一道；每帧入站二进制都过它） | `Shared/FluentWorkNetworking/Socket/AudioFrameDropGate.swift`（`BargeInAudioGate`） |
 | ~~`TTSFrameDispatcher`~~ / ~~`MockTTSDecoder`~~ | 已删除（Stage 4）。文件与 DI 绑定都不在了 |
+| ~~`LiveAudioEngine.play(frame:)`~~ / ~~`AudioPlaybackGate`~~ | **已删除**（2026-09-20）。理由与证据见 `07` §2 |
 | `EngineBackedTTSDecoder` | 文件在（`Shared/FluentWorkCore/Audio/EngineBackedTTSDecoder.swift`），**零调用点** —— `e64237e` 删过、`f3bb127` 又加了回来 |
-| `TransportEventRouter` | 文件在（`Shared/FluentWorkCore/Architecture/Middleware/TransportEventRouter.swift`），**无生产调用点**，只有它自己的测试 |
 
 ## 修订记录
 
@@ -80,3 +90,17 @@
 > iOS 的 AI 语音回放有**两条并行的播放路径**，而 app 之所以还能出声，是因为这两条路径之间恰好踩中了一个「网关不发 `ai.tts.start`」的偶然事实：**设计路径（A）** `ai.tts.start` → `TTSFrameDispatcher` 进入 `.active` → 帧被 `handle(audio:)` 认领 → 交给 `TTSDecoder` 解码播放；**实际路径（B）** 网关不发 `ai.tts.start`，`TTSFrameDispatcher` 永远停在 `.idle`，`handle(audio:)` 返回 `false`，帧「漏」到 `audioEngine.play(frame:)` 直接播。而生产环境 DI 绑定的 `TTSDecoder` 是 `MockTTSDecoder`（只记录、不出声）……这条 2026-09-12 已经踩过一次并回滚（`AppDependencies.swift:538-557`）。
 
 后续各篇的处理方式不同：`01`/`03`/`04` 是当时代的计划与快照，只加注不改写（它们的价值是当时观察到了什么）；`02` 的设计提案按现状逐处修订；`05`/`06`/`07` 的实施记录按代码现状修订并标出被撤回的部分。
+
+### 2026-09-20（当天第二次）：把最后两处尾巴收掉
+
+上一版把「Stage 1 未接线」记为**本系列唯一至今未关闭的缺口**。本轮关掉了它，并删掉了另一处同类的尾巴。
+
+**1. Stage 1 接线了，但形状与原设计不同。** `TransportEventRouter` 成为传输事件的真实分发点；中间件里那个 237 行的 switch 收敛成 `await router.route(event: event)` 一行。**原图里的 `BadgeSink` / `ErrorHandler` / `Telemetry` 三个 owner 从来不存在**，而 `SpeechSessionMachine` 的状态在 Redux store 里、router 接管不了——所以没有把中间件拆成 owner 分离，handler 定义在中间件内部。详见 [`02`](./02_目标架构与组件设计.md) §5。
+
+三处 API 更正是接线的前提，其中一处会直接造成故障：`.failure` 原被硬编码成 `.ignored`，照原样接线会**静默吞掉 socket 断线**。
+
+**2. 引擎侧的水印与其入口删除了。** `AudioPlaybackGate` 不只是没有读者——它的 watermark 唯一赋值点写的是 `lastAcceptedSequence`，而后者只在 `shouldAccept` 内写，`shouldAccept` 的唯一调用点又是永不执行的 `play(frame:)`。**它不可能被武装，即使有帧路由到那里也一个都拦不住。** `play(frame:)` 一并删除；barge-in 的丢弃现在只在传输层发生一次。证据链与 2026-09-12 03:57 的原始记录见 [`07`](./07_Stage4_删除死路径.md) §2。
+
+**3. 仍然没有做到的**：中间件没有被拆小（路由只占 19%，`audioEventPump` 那个 209 行的 switch 不归 router 管）；`EngineBackedTTSDecoder` 与 `TTSDecoder` 两个零调用点文件仍在树里（`07` §1）。
+
+> **⚠️ 本轮只跑 `swift test`（565/565），没有做真机验证。** 删除那部分不需要——被删代码不可达是论证过的。**但接线那部分需要**：它改的是活的 dispatch 路径，而这条链路的失败模式历来是「转写正常、没有声音」，两侧单测全绿也照样发生过两次（2026-09-12 静音事故、2026-09-20 的 start 顺序缺陷）。真机验证另开一轮，重点 barge-in 与断线重连。在那一轮通过之前，本轮描述的接线状态应视为**单测已验、真机未验**。
