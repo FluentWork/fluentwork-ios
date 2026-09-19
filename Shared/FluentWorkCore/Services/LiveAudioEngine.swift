@@ -260,6 +260,10 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     // tests that only exercise the capture / event side.
     private let playerNode = AVAudioPlayerNode()
     private var playerAttached = false
+    /// A source that renders silence, connected to the mixer for the session's
+    /// whole life. See `attachSilentSourceIfNeeded` for why an engine without
+    /// one refuses to pull its own input tap.
+    private var silentSource: AVAudioSourceNode?
 
     /// Set when `stopCapture()` tears the audio graph down.
     ///
@@ -507,6 +511,9 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // session, which is the only moment attach, connect and play ever
         // happened together.
         attachPlayerIfNeeded()
+        // Same window, same reason: the graph is finished before the engine
+        // starts and is never mutated after.
+        attachSilentSourceIfNeeded()
 
         let wasRunning = engine.isRunning
         var startAttempted = false
@@ -961,14 +968,16 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     }
 
     private func processInput(_ buffer: AVAudioPCMBuffer) async {
-        guard !isSystemInterrupted else { return }
-        // Reported before any guard can drop the buffer: the point is that the
-        // tap fired at all, which is a fact about the graph, not about this
-        // buffer's fate.
+        // First, before ANY guard. It used to sit after the `isSystemInterrupted`
+        // one, which made "the tap never delivered" and "the tap delivered and
+        // this guard ate it" indistinguishable — and those are different bugs
+        // with the same symptom. The whole point of the event is that the tap
+        // fired, which is a fact about the graph, not about this buffer's fate.
         if !captureFirstBufferSeen {
             captureFirstBufferSeen = true
             continuation.yield(.captureFirstBuffer)
         }
+        guard !isSystemInterrupted else { return }
         // The three `return nil`s inside `convertToPCM16`, plus the bare `return`
         // that used to sit here, were the last silent gate on the uplink. At
         // 48 kHz the tap fires ~86 times a second, and a graph whose every buffer
@@ -1393,6 +1402,43 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         engine.attach(playerNode)
         engine.connect(playerNode, to: engine.mainMixerNode, format: Self.targetFormat)
         playerAttached = true
+    }
+
+    /// Gives the render cycle something to pull, so the input tap is live from
+    /// the first second of a session rather than from the first playback.
+    ///
+    /// Measured on device 2026-09-20. `captureArmed` reported `running: true`
+    /// with the tap installed — and then the tap delivered **no buffer at all**
+    /// for the first eleven seconds. The user spoke and tapped 说完了 inside
+    /// that window; the gateway received zero bytes and the turn ended
+    /// `partial`. The tap's first buffer arrived **283 ms after the rescue
+    /// ladder began playing audio**.
+    ///
+    /// So the input is pulled by the output. An engine whose only source is a
+    /// player that is not playing renders nothing, and an unpulled tap is a
+    /// silent microphone — which looks exactly like a working one from every
+    /// other angle. That is the whole of "the first session after launch cannot
+    /// be heard": before the first playback there is nothing to pull.
+    ///
+    /// Silence is the correct signal to add: the mixer sums it with the player,
+    /// so it contributes nothing to what the user hears. It is attached in the
+    /// same window as the player — **before `engine.start()`, and never touched
+    /// again** — because graph mutation after start is the F14/F15 family.
+    private func attachSilentSourceIfNeeded() {
+        guard silentSource == nil else { return }
+        let format = engine.mainMixerNode.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else { return }
+        let source = AVAudioSourceNode(format: format) { _, _, _, audioBufferList in
+            // Real-time thread: write zeros, allocate nothing, return noErr.
+            for buffer in UnsafeMutableAudioBufferListPointer(audioBufferList) {
+                guard let data = buffer.mData else { continue }
+                memset(data, 0, Int(buffer.mDataByteSize))
+            }
+            return noErr
+        }
+        engine.attach(source)
+        engine.connect(source, to: engine.mainMixerNode, format: format)
+        silentSource = source
     }
 
     /// Wraps raw 16 kHz mono interleaved PCM16 bytes in an `AVAudioPCMBuffer`
