@@ -136,6 +136,66 @@ public enum WSControlFrame: Equatable, Sendable {
     }
 }
 
+/// 控制帧的**无载荷标签**，用作路由表的键。
+///
+/// `WSControlFrame` 自己当不了键：它带 associated values，而且只到 `Equatable`
+/// （不是 `Hashable`）。路由要的只是"这一帧是哪一类"，所以有这个只有类型、没有
+/// 内容的伴生枚举。
+///
+/// 原始值直接取线上的 discriminator——与 `Codable` 解出来的 `type` 是同一套字符串，
+/// 于是 DEBUG 日志、路由键、线上帧共用一批名字，不用再维护第三份拼写。
+public enum WSControlFrameType: String, CaseIterable, Sendable, Hashable {
+    case auth
+    case handshake
+    case sessionReady = "session.ready"
+    case sessionStart = "session.start"
+    case userSpeechStart = "user.speech.start"
+    case userSpeechEnd = "user.speech.end"
+    case clientTurnAbort = "client.turn.abort"
+    case clientASRTranscription = "client.asr.transcription"
+    case aiTextDelta = "ai.text.delta"
+    case aiAudioChunk = "ai.audio.chunk"
+    case aiTTSStart = "ai.tts.start"
+    case aiTTSEnd = "ai.tts.end"
+    case aiTurnEnd = "ai.turn.end"
+    case interrupt
+    case feedbackBadge = "feedback.badge"
+    case sessionEnd = "session.end"
+    case error
+    case ping
+    case pong
+}
+
+extension WSControlFrame {
+    /// 这一帧在路由表里的键。
+    ///
+    /// 穷尽 switch、**没有 `default`**：新增一个 `WSControlFrame` case 会让这里
+    /// 编译不过。这就是"标签不会和帧类型漂移"的保证所在——镜像不是靠纪律维持的。
+    public var wireType: WSControlFrameType {
+        switch self {
+        case .auth: return .auth
+        case .handshake: return .handshake
+        case .sessionReady: return .sessionReady
+        case .sessionStart: return .sessionStart
+        case .userSpeechStart: return .userSpeechStart
+        case .userSpeechEnd: return .userSpeechEnd
+        case .clientTurnAbort: return .clientTurnAbort
+        case .clientASRTranscription: return .clientASRTranscription
+        case .aiTextDelta: return .aiTextDelta
+        case .aiAudioChunk: return .aiAudioChunk
+        case .aiTTSStart: return .aiTTSStart
+        case .aiTTSEnd: return .aiTTSEnd
+        case .aiTurnEnd: return .aiTurnEnd
+        case .interrupt: return .interrupt
+        case .feedbackBadge: return .feedbackBadge
+        case .sessionEnd: return .sessionEnd
+        case .error: return .error
+        case .ping: return .ping
+        case .pong: return .pong
+        }
+    }
+}
+
 public enum WSControlFrameCodingError: Error, Equatable, Sendable {
     case unknownType(String)
     case missingField(String)

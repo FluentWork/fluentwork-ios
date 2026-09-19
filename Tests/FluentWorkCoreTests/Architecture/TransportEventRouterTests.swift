@@ -3,148 +3,130 @@ import Foundation
 import FluentWorkNetworking
 @testable import FluentWorkCore
 
-/// Stage 1 测试：验证 TransportEventRouter 的路由逻辑
+/// `TransportEventRouter` 自己的契约。
 ///
-/// 这些测试锁住路由表的正确性，确保每种事件都能找到对应的 handler
-
+/// 这里只验"事件交给了谁"。路由的**生产**表注册了哪些类型、以及接线后行为是否
+/// 等价，在 `TransportRoutingEquivalenceTests` 里——这个文件手里的表是测试自己
+/// 拼的，它证明不了生产接线是对的。
 @Suite("TransportEventRouter 路由逻辑")
 struct TransportEventRouterTests {
-    
+
     @Test("音频帧路由到 AudioFrameHandler")
     func audioFrameRoutesToAudioHandler() async {
         let recorder = RecordingAudioHandler()
-        let router = await TransportEventRouter(audioHandler: recorder)
-        
+        let router = TransportEventRouter(audioHandler: recorder)
+
         let frame = WSAudioFrame(sequence: 42, payload: Data([0x01, 0x02]))
-        let result = await router.route(event: .audio(frame))
-        
-        #expect(result == .handled)
+        await router.route(event: .audio(frame))
+
         let calls = await recorder.calls
         #expect(calls.count == 1)
         #expect(calls[0].sequence == 42)
     }
-    
-    @Test("没有 AudioHandler 时音频帧被忽略")
-    func audioFrameIgnoredWithoutHandler() async {
-        let router = await TransportEventRouter()
-        
-        let frame = WSAudioFrame(sequence: 1, payload: Data([0x01]))
-        let result = await router.route(event: .audio(frame))
-        
-        #expect(result == .ignored)
+
+    @Test("没有 AudioHandler 时音频帧落到 fallback")
+    func audioFrameWithoutHandlerReachesTheFallback() async {
+        let fallback = RecordingTransportHandler()
+        let router = TransportEventRouter(fallbackHandler: fallback)
+
+        await router.route(event: .audio(WSAudioFrame(sequence: 1, payload: Data([0x01]))))
+
+        let calls = await fallback.calls
+        #expect(calls.count == 1)
     }
-    
+
+    @Test("既没有 handler 也没有 fallback 时，音频帧被安静地放下")
+    func audioFrameWithoutAnyHandlerIsDropped() async {
+        let router = TransportEventRouter()
+
+        // 不崩溃、不抛出——"无人认领"不是错误。
+        await router.route(event: .audio(WSAudioFrame(sequence: 1, payload: Data([0x01]))))
+    }
+
     @Test("控制帧路由到对应的 ControlFrameHandler")
     func controlFrameRoutesToCorrectHandler() async {
-        let aiTextHandler = RecordingControlHandler(name: "aiTextDelta")
-        let aiTurnEndHandler = RecordingControlHandler(name: "aiTurnEnd")
-        
-        let router = await TransportEventRouter(
+        let aiTextHandler = RecordingControlHandler()
+        let aiTurnEndHandler = RecordingControlHandler()
+
+        let router = TransportEventRouter(
             controlHandlers: [
                 .aiTextDelta: aiTextHandler,
-                .aiTurnEnd: aiTurnEndHandler
+                .aiTurnEnd: aiTurnEndHandler,
             ]
         )
-        
+
         let textDelta = WSControlFrame.aiTextDelta(text: "hello", turnID: "turn-1", serverTsMs: 12345)
         let turnEnd = WSControlFrame.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil)
-        
-        _ = await router.route(event: .control(textDelta))
-        _ = await router.route(event: .control(turnEnd))
-        
+
+        await router.route(event: .control(textDelta))
+        await router.route(event: .control(turnEnd))
+
         let textCalls = await aiTextHandler.calls
         let turnCalls = await aiTurnEndHandler.calls
-        
+
         #expect(textCalls.count == 1)
         #expect(turnCalls.count == 1)
+        // 路由必须按类型分清，不是"随便给一个 handler 就算数"。
+        #expect(textCalls[0].wireType == .aiTextDelta)
+        #expect(turnCalls[0].wireType == .aiTurnEnd)
     }
-    
-    @Test("未注册的控制帧被忽略")
-    func unregisteredControlFrameIsIgnored() async {
-        let router = await TransportEventRouter(
-            controlHandlers: [
-                .aiTextDelta: RecordingControlHandler(name: "text")
-            ]
+
+    @Test("未注册的控制帧落到 fallback")
+    func unregisteredControlFrameReachesTheFallback() async {
+        let fallback = RecordingTransportHandler()
+        let router = TransportEventRouter(
+            controlHandlers: [.aiTextDelta: RecordingControlHandler()],
+            fallbackHandler: fallback
         )
-        
+
         let turnEnd = WSControlFrame.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil)
-        let result = await router.route(event: .control(turnEnd))
-        
-        #expect(result == .ignored)
+        await router.route(event: .control(turnEnd))
+
+        let calls = await fallback.calls
+        #expect(calls.count == 1)
+        if case let .control(frame) = calls[0] {
+            #expect(frame.wireType == .aiTurnEnd)
+        } else {
+            Issue.record("fallback 收到的不是控制帧：\(calls[0])")
+        }
     }
-    
+
+    @Test("已注册的控制帧不会同时落到 fallback")
+    func registeredControlFrameDoesNotAlsoReachTheFallback() async {
+        let handler = RecordingControlHandler()
+        let fallback = RecordingTransportHandler()
+        let router = TransportEventRouter(
+            controlHandlers: [.aiTextDelta: handler],
+            fallbackHandler: fallback
+        )
+
+        await router.route(event: .control(.aiTextDelta(text: "hi", turnID: nil, serverTsMs: nil)))
+
+        #expect(await handler.calls.count == 1)
+        #expect(await fallback.calls.isEmpty)
+    }
+
     @Test("诊断事件路由到 DiagnosticHandler")
     func diagnosticEventRoutesToDiagnosticHandler() async {
-        let handler = RecordingTransportHandler(name: "diagnostic")
-        let router = await TransportEventRouter(diagnosticHandler: handler)
-        
+        let handler = RecordingTransportHandler()
+        let router = TransportEventRouter(diagnosticHandler: handler)
+
         let diagnostic = SocketTransportEvent.diagnostic(.audioFrameDropped(sequence: 10, watermark: 5, dropped: 1))
-        let result = await router.route(event: diagnostic)
-        
-        #expect(result == .handled)
+        await router.route(event: diagnostic)
+
         let calls = await handler.calls
         #expect(calls.count == 1)
     }
-    
-    @Test("状态变化事件路由到 StateChangeHandler")
-    func stateChangeEventRoutesToStateChangeHandler() async {
-        let handler = RecordingTransportHandler(name: "stateChange")
-        let router = await TransportEventRouter(stateChangeHandler: handler)
-        
-        let stateChange = SocketTransportEvent.stateChanged(.connected)
-        let result = await router.route(event: stateChange)
-        
-        #expect(result == .handled)
-        let calls = await handler.calls
+
+    @Test("状态变化事件落到 fallback")
+    func stateChangeEventReachesTheFallback() async {
+        let fallback = RecordingTransportHandler()
+        let router = TransportEventRouter(fallbackHandler: fallback)
+
+        await router.route(event: .stateChanged(.connected))
+
+        let calls = await fallback.calls
         #expect(calls.count == 1)
-    }
-    
-    @Test("路由表快照：所有控制帧类型")
-    func routingTableSnapshot() async {
-        // 验证所有已知的控制帧类型都有对应的枚举值
-        // 这是一个"契约测试"：如果新增了帧类型但没更新路由器，这里会失败
-        
-        let allFrames: [WSControlFrame] = [
-            .sessionReady(sessionID: "session-1", userID: nil),
-            .aiTextDelta(text: "text", turnID: "turn-1", serverTsMs: 12345),
-            .aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil),
-            .clientASRTranscription(text: "hello", turnID: "turn-1"),
-            .feedbackBadge(badge: "green_check", phraseBlockID: "turn-1", tier: .highlight, turnID: nil),
-            .ping(ts: 12345),
-            .pong(ts: 12345),
-            .sessionEnd(reason: nil),
-            .error(code: "test_error", message: "test error"),
-            .aiTTSStart(turnID: "turn-1", voiceID: "voice-1", sampleRate: 16000, codec: "pcm"),
-            .aiTTSEnd(turnID: "turn-1", completionStatus: "ok", durationMs: nil),
-            .interrupt,
-        ]
-        
-        // 为每种帧类型注册一个 handler
-        var handlers: [WSControlFrameType: ControlFrameHandler] = [:]
-        for frameType in [
-            WSControlFrameType.sessionReady,
-            .aiTextDelta,
-            .aiTurnEnd,
-            .clientASRTranscription,
-            .feedbackBadge,
-            .ping,
-            .pong,
-            .sessionEnd,
-            .error,
-            .aiTTSStart,
-            .aiTTSEnd,
-            .interrupt,
-        ] {
-            handlers[frameType] = RecordingControlHandler(name: "\(frameType)")
-        }
-        
-        let router = await TransportEventRouter(controlHandlers: handlers)
-        
-        // 所有帧都应该被成功路由
-        for frame in allFrames {
-            let result = await router.route(event: .control(frame))
-            #expect(result == .handled, "Frame \(frame) should be routed")
-        }
     }
 }
 
@@ -153,54 +135,26 @@ struct TransportEventRouterTests {
 /// 记录所有音频帧处理调用
 private actor RecordingAudioHandler: AudioFrameHandler {
     var calls: [WSAudioFrame] = []
-    
-    func handle(frame: WSAudioFrame) async -> TransportEventResult {
+
+    func handle(frame: WSAudioFrame) async {
         calls.append(frame)
-        return .handled
     }
 }
 
 /// 记录所有控制帧处理调用
 private actor RecordingControlHandler: ControlFrameHandler {
-    let name: String
     var calls: [WSControlFrame] = []
-    
-    init(name: String) {
-        self.name = name
-    }
-    
-    func handle(frame: WSControlFrame) async -> TransportEventResult {
+
+    func handle(frame: WSControlFrame) async {
         calls.append(frame)
-        return .handled
     }
 }
 
 /// 记录所有传输事件处理调用
 private actor RecordingTransportHandler: TransportEventHandler {
-    let name: String
     var calls: [SocketTransportEvent] = []
-    
-    init(name: String) {
-        self.name = name
-    }
-    
-    func handle(event: SocketTransportEvent) async -> TransportEventResult {
+
+    func handle(event: SocketTransportEvent) async {
         calls.append(event)
-        return .handled
-    }
-}
-
-// MARK: - TransportEventResult Equatable
-
-extension TransportEventResult: Equatable {
-    public static func == (lhs: TransportEventResult, rhs: TransportEventResult) -> Bool {
-        switch (lhs, rhs) {
-        case (.handled, .handled), (.ignored, .ignored):
-            return true
-        case let (.failed(lhsMsg), .failed(rhsMsg)):
-            return lhsMsg == rhsMsg
-        default:
-            return false
-        }
     }
 }
