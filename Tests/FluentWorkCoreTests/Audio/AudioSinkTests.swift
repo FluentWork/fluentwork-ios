@@ -1,11 +1,16 @@
 import Testing
 import FluentWorkNetworking
 import Foundation
+import AVFoundation
 @testable import FluentWorkCore
 
 /// Stage 0 测试：验证 AudioSink 抽象的基本行为
 ///
 /// 这些测试锁住从 LiveAudioEngine 迁移出来的核心不变量
+
+final class ErrorBox: @unchecked Sendable {
+    var message: String?
+}
 
 @Suite("AudioSink 抽象层")
 struct AudioSinkTests {
@@ -79,21 +84,20 @@ struct EngineAudioSinkBufferTests {
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()
         let decoder = MockFrameDecoder()
-        var errorMessage: String?
+        let errorBox = ErrorBox()
         
         let sink = EngineAudioSink(
             playerNode: player,
             engine: engine,
             decoder: decoder,
-            onError: { msg in errorMessage = msg }
+            onError: { msg in errorBox.message = msg }
         )
         
         // 奇数长度的 PCM 数据
         let oddPCM = Data([0x01, 0x02, 0x03])
         await sink.play(pcm: oddPCM)
         
-        // 应该报错而不是创建无效缓冲
-        #expect(errorMessage?.contains("not multiple of 2") == true)
+        #expect(errorBox.message?.contains("not multiple of 2") == true)
     }
     
     @Test("空 PCM 数据被拒绝")
@@ -101,18 +105,18 @@ struct EngineAudioSinkBufferTests {
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()
         let decoder = MockFrameDecoder()
-        var errorMessage: String?
+        let errorBox = ErrorBox()
         
         let sink = EngineAudioSink(
             playerNode: player,
             engine: engine,
             decoder: decoder,
-            onError: { msg in errorMessage = msg }
+            onError: { msg in errorBox.message = msg }
         )
         
         await sink.play(pcm: Data())
         
-        #expect(errorMessage?.contains("not multiple of 2") == true)
+        #expect(errorBox.message?.contains("not multiple of 2") == true)
     }
     
     @Test("偶数长度 PCM 正常处理")
@@ -120,13 +124,13 @@ struct EngineAudioSinkBufferTests {
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()
         let decoder = MockFrameDecoder()
-        var errorMessage: String?
+        let errorBox = ErrorBox()
         
         let sink = EngineAudioSink(
             playerNode: player,
             engine: engine,
             decoder: decoder,
-            onError: { msg in errorMessage = msg }
+            onError: { msg in errorBox.message = msg }
         )
         
         // 偶数长度的 PCM 数据（2、4、100 等）
@@ -134,7 +138,7 @@ struct EngineAudioSinkBufferTests {
         await sink.play(pcm: Data([0x01, 0x02, 0x03, 0x04]))
         
         // 不应该有错误
-        #expect(errorMessage == nil)
+        #expect(errorBox.message == nil)
     }
 }
 

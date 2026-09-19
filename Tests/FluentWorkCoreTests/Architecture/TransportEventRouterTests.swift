@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 import FluentWorkNetworking
 @testable import FluentWorkCore
 
@@ -45,8 +46,8 @@ struct TransportEventRouterTests {
             ]
         )
         
-        let textDelta = WSControlFrame.aiTextDelta("hello", "turn-1", 12345)
-        let turnEnd = WSControlFrame.aiTurnEnd("turn-1", .ok, nil)
+        let textDelta = WSControlFrame.aiTextDelta(text: "hello", turnID: "turn-1", serverTsMs: 12345)
+        let turnEnd = WSControlFrame.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil)
         
         _ = await router.route(event: .control(textDelta))
         _ = await router.route(event: .control(turnEnd))
@@ -66,7 +67,7 @@ struct TransportEventRouterTests {
             ]
         )
         
-        let turnEnd = WSControlFrame.aiTurnEnd("turn-1", .ok, nil)
+        let turnEnd = WSControlFrame.aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil)
         let result = await router.route(event: .control(turnEnd))
         
         #expect(result == .ignored)
@@ -77,7 +78,7 @@ struct TransportEventRouterTests {
         let handler = RecordingTransportHandler(name: "diagnostic")
         let router = await TransportEventRouter(diagnosticHandler: handler)
         
-        let diagnostic = WSTransportEvent.diagnostic(.audioFrameDropped(sequence: 10, watermark: 5, dropped: 1))
+        let diagnostic = SocketTransportEvent.diagnostic(.audioFrameDropped(sequence: 10, watermark: 5, dropped: 1))
         let result = await router.route(event: diagnostic)
         
         #expect(result == .handled)
@@ -90,7 +91,7 @@ struct TransportEventRouterTests {
         let handler = RecordingTransportHandler(name: "stateChange")
         let router = await TransportEventRouter(stateChangeHandler: handler)
         
-        let stateChange = WSTransportEvent.stateChanged(.connected)
+        let stateChange = SocketTransportEvent.stateChanged(.connected)
         let result = await router.route(event: stateChange)
         
         #expect(result == .handled)
@@ -104,17 +105,17 @@ struct TransportEventRouterTests {
         // 这是一个"契约测试"：如果新增了帧类型但没更新路由器，这里会失败
         
         let allFrames: [WSControlFrame] = [
-            .sessionReady("session-1", nil),
-            .aiTextDelta("text", "turn-1", 12345),
-            .aiTurnEnd("turn-1", .ok, nil),
-            .clientASRTranscription("hello", "turn-1"),
-            .feedbackBadge(.greenCheck, "turn-1", .tier1, nil),
-            .ping(12345),
-            .pong(12345),
-            .sessionEnd,
-            .error("test error"),
-            .aiTTSStart("turn-1", "voice-1", 16000, "pcm"),
-            .aiTTSEnd("turn-1", "ok", nil),
+            .sessionReady(sessionID: "session-1", userID: nil),
+            .aiTextDelta(text: "text", turnID: "turn-1", serverTsMs: 12345),
+            .aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil),
+            .clientASRTranscription(text: "hello", turnID: "turn-1"),
+            .feedbackBadge(badge: "green_check", phraseBlockID: "turn-1", tier: .highlight, turnID: nil),
+            .ping(ts: 12345),
+            .pong(ts: 12345),
+            .sessionEnd(reason: nil),
+            .error(code: "test_error", message: "test error"),
+            .aiTTSStart(turnID: "turn-1", voiceID: "voice-1", sampleRate: 16000, codec: "pcm"),
+            .aiTTSEnd(turnID: "turn-1", completionStatus: "ok", durationMs: nil),
             .interrupt,
         ]
         
@@ -177,13 +178,13 @@ private actor RecordingControlHandler: ControlFrameHandler {
 /// 记录所有传输事件处理调用
 private actor RecordingTransportHandler: TransportEventHandler {
     let name: String
-    var calls: [WSTransportEvent] = []
+    var calls: [SocketTransportEvent] = []
     
     init(name: String) {
         self.name = name
     }
     
-    func handle(event: WSTransportEvent) async -> TransportEventResult {
+    func handle(event: SocketTransportEvent) async -> TransportEventResult {
         calls.append(event)
         return .handled
     }

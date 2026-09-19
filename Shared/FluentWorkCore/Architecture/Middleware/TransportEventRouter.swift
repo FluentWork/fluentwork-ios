@@ -14,7 +14,7 @@ import Foundation
 /// - 所有路由决策都是静态的、可测试的
 
 /// 传输事件的处理结果
-public enum TransportEventResult {
+public enum TransportEventResult: Sendable {
     /// 事件已被处理
     case handled
     /// 事件被忽略（不是错误）
@@ -25,7 +25,7 @@ public enum TransportEventResult {
 
 /// 传输事件处理器协议
 public protocol TransportEventHandler: Sendable {
-    func handle(event: WSTransportEvent) async -> TransportEventResult
+    func handle(event: SocketTransportEvent) async -> TransportEventResult
 }
 
 /// 音频帧处理器
@@ -68,7 +68,7 @@ public actor TransportEventRouter {
     }
     
     /// 路由并处理传输事件
-    public func route(event: WSTransportEvent) async -> TransportEventResult {
+    public func route(event: SocketTransportEvent) async -> TransportEventResult {
         switch event {
         case let .audio(frame):
             guard let handler = audioHandler else {
@@ -94,6 +94,9 @@ public actor TransportEventRouter {
                 return .ignored
             }
             return await handler.handle(event: event)
+            
+        case .failure:
+            return .ignored
         }
     }
     
