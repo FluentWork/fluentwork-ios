@@ -346,6 +346,18 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// CI as far as the input node, and a test must not depend on whether the
     /// machine has an audio device.
     private let applyVoiceProcessing: @Sendable (AVAudioInputNode) throws -> Bool
+    /// 装上采集 tap。可注入**只为**让 `swift test` 不碰本机输入设备。
+    ///
+    /// 采集路径的用例（边界模式、语音处理顺序）会特意把 `startCapture()` 推过守卫；
+    /// 用真实实现时，在有输入设备的开发机上这一步会打开麦克风 —— 系统亮指示、
+    /// CI 机器开始录音。返回非 `nil` 表示安装失败，保留 `FWTryCatch` 抓到的那条
+    /// `NSError`，报错文案与原来一致。
+    private let installCaptureTap: @Sendable (AVAudioInputNode, AVAudioFormat, @escaping AVAudioNodeTapBlock) -> NSError?
+    /// 启动采集引擎。
+    ///
+    /// 与 `installCaptureTap` 分成两个口子而不是一个：只堵住 tap，`engine.start()`
+    /// 仍会因为输入节点被访问而打开设备 —— 半堵的替身比不堵更糟，因为它看起来已经安全了。
+    private let startCaptureEngine: @Sendable (AVAudioEngine) throws -> Void
 
     public init(
         sessionManager: any AudioSessionManaging = DefaultAudioSessionManager(),
@@ -371,10 +383,25 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             if let raised { throw raised }
             if let thrown { throw thrown }
             return node.isVoiceProcessingEnabled
-        }
+        },
+        installCaptureTap: @escaping @Sendable (AVAudioInputNode, AVAudioFormat, @escaping AVAudioNodeTapBlock) -> NSError? = { node, format, block in
+            var raised: NSError?
+            let installed = FWTryCatch({
+                node.installTap(onBus: 0, bufferSize: 1_024, format: format, block: block)
+            }, &raised)
+            guard !installed else { return nil }
+            return raised ?? NSError(
+                domain: "com.fluentwork.capture-tap",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "unknown"]
+            )
+        },
+        startCaptureEngine: @escaping @Sendable (AVAudioEngine) throws -> Void = { try $0.start() },
     ) {
         self.startEngineForPlayback = startEngineForPlayback
         self.applyVoiceProcessing = applyVoiceProcessing
+        self.installCaptureTap = installCaptureTap
+        self.startCaptureEngine = startCaptureEngine
         let pair = AsyncStream.makeStream(
             of: AudioEngineEvent.self,
             bufferingPolicy: .bufferingNewest(64)
@@ -476,19 +503,15 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // the node produces — which is exactly what voice processing changes.
         // `prepareCaptureNode` is what makes them match; this is what keeps a
         // mismatch from taking the process down if it ever does not.
-        var installRaised: NSError?
-        let installed = FWTryCatch({
-            inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak self] buffer, _ in
-                guard let self else { return }
-                // # weak-required: actor value after guard; Task retains this engine for one buffer hop.
-                Task {
-                    await self.processInput(buffer)
-                }
+        if let installRaised = installCaptureTap(inputNode, inputFormat, { [weak self] buffer, _ in
+            guard let self else { return }
+            // # weak-required: actor value after guard; Task retains this engine for one buffer hop.
+            Task {
+                await self.processInput(buffer)
             }
-        }, &installRaised)
-        guard installed else {
+        }) {
             throw AudioEngineError.invalidFormat(
-                "Could not tap \(Self.describe(inputFormat)) (voiceProcessing=\(preparation.voiceProcessingActive)): \(installRaised?.localizedDescription ?? "unknown"). Check microphone permission or device audio input."
+                "Could not tap \(Self.describe(inputFormat)) (voiceProcessing=\(preparation.voiceProcessingActive)): \(installRaised.localizedDescription). Check microphone permission or device audio input."
             )
         }
 
@@ -518,7 +541,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
         if !engine.isRunning {
             do {
-                try engine.start()
+                try startCaptureEngine(engine)
             } catch {
                 // If start fails (e.g., another app holds the audio session),
                 // tear down the tap we just installed so a retry from a clean
@@ -611,19 +634,15 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // session is live and a real device pair changes underneath it.
         inputNode.removeTap(onBus: 0)
         hasInstalledTap = false
-        var installRaised: NSError?
-        let installed = FWTryCatch({
-            inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak self] buffer, _ in
-                guard let self else { return }
-                Task {
-                    await self.processInput(buffer)
-                }
+        if let installRaised = installCaptureTap(inputNode, inputFormat, { [weak self] buffer, _ in
+            guard let self else { return }
+            Task {
+                await self.processInput(buffer)
             }
-        }, &installRaised)
-        guard installed else {
+        }) {
             // No tap, and `hasInstalledTap` already says so — the session keeps
             // running silent rather than taking the process down with it.
-            continuation.yield(.failed("could not reinstall the capture tap after a route change: \(installRaised?.localizedDescription ?? "unknown")"))
+            continuation.yield(.failed("could not reinstall the capture tap after a route change: \(installRaised.localizedDescription)"))
             return
         }
 
@@ -634,7 +653,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         continuation.yield(.voiceProcessing(preparation.report))
 
         if !engine.isRunning {
-            try? engine.start()
+            try? startCaptureEngine(engine)
         }
     }
 

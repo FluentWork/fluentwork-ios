@@ -534,6 +534,24 @@ public extension Container {
 
     var audioEngine: Factory<AudioEngineProtocol> {
         self {
+            #if DEBUG
+            // 麦克风替身（`FW_MOCK_MIC=1`）：采集交给脚本，播放仍走真引擎。
+            // 验证音频链路时用它而不是真麦克风 —— 理由见 `MockAudioEngine`。
+            if let script = MockAudioEngine.Script.fromEnvironment() {
+                #if canImport(AVFoundation)
+                return MockAudioEngine(
+                    script: script,
+                    playback: LiveAudioEngine(
+                        sessionManager: self.audioSessionManager(),
+                        decoder: self.wsAudioFrameDecoder()
+                    ),
+                    preparePlaybackSession: {
+                        try self.audioSessionManager().configure(for: .playback)
+                    }
+                )
+                #endif
+            }
+            #endif
             if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
                 // XCTest path: keep `PlaceholderAudioEngine` so unit tests that
                 // exercise reducer/middleware wiring without AVFoundation can

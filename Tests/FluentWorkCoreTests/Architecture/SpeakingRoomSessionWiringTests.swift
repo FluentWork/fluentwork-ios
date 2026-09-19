@@ -591,57 +591,14 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     )
 }
 
-/// 一场结束后残留的 `ai.tts.start` 不得吞掉下一场的 PCM。
-///
-/// 旧的等价物（`...ResetsTTSDispatcherOnEndWithoutTTSEndFrame`）断言的是
-/// 「收尾时给解码器补一个 interrupted 的 finish」。新设计里解码器是无状态的，
-/// 要清的是**归属**：清不掉，下一场没有 start 的帧就会被认领进 keyed 路径
-/// （`play(pcm:)`），而不是走 legacy 的 `play(frame:)` —— 两者都不出声时，
-/// 症状一样，只有断言能分辨。
-@MainActor
-@Test func leftoverTTSStartDoesNotClaimTheNextSessionsFrames() async {
-    let container = Container()
-    container.reset()
-    let audioEngine = StubAudioEngine()
-    let speechClient = StubSpeechSessionClient()
-    container.audioEngine.register { audioEngine }
-    container.speechSessionClient.register { speechClient }
-
-    let store = AppStoreFactory.make(container: container)
-    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        await audioEngine.snapshotStartCalls() == 1
-    }
-
-    // 只发出 start，永远等不到 `ai.tts.end`（连接断了、回合被放弃）。
-    speechClient.emit(
-        .control(
-            .aiTTSStart(
-                turnID: "turn-leftover",
-                voiceID: "mock_voice_01",
-                sampleRate: 16_000,
-                codec: "pcm"
-            )
-        )
-    )
-
-    store.dispatch(.speakingRoom(.session(.endTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        store.state.speakingRoom.phase == .ended
-    }
-
-    let frame = WSAudioFrame(sequence: 3, payload: Data([0x03, 0x04]))
-    speechClient.emit(.audio(frame))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        await audioEngine.snapshotPlayedFrames() == [frame]
-    }
-
-    #expect(
-        await audioEngine.snapshotPlayedFrames() == [frame],
-        "残留归属若没被清掉，这一帧会被认领进 keyed 路径而不是走 legacy"
-    )
-    #expect(await audioEngine.snapshotPlayedPCM().isEmpty)
-}
+// 这里曾经有一条 `leftoverTTSStartDoesNotClaimTheNextSessionsFrames`：一场结束后
+// 残留的 `ai.tts.start` 不该吞掉下一场的 PCM。它在**接线层测不出来** ——
+// stub 的 `endSession()` 会 finish 掉传输流（生产的 socket 同理），所以
+// 「会话结束后还有帧到达」只存在于几百微秒的窗口里，断言是碰运气。
+//
+// 那条不变量现在钉在单元层：`TTSPlaybackCoordinatorTests.resetClearsAttribution`
+// （改坏 `reset()` 会让它红，做过变异验证）。会话收尾会调用它这件事本身，
+// 是一行代码 + `docs/70_tts_wss_refactor/06` 的记录，不是可观测行为。
 
 @MainActor
 @Test func speechSessionMiddlewareStartsReconnectWindowOnDisconnect() async {

@@ -6,8 +6,16 @@ public enum MicrophonePermission {
     /// Request microphone permission from the user.
     /// - Returns: `true` if granted, `false` if denied.
     public static func request() async -> Bool {
+        #if DEBUG
+        // 替身开着就没有麦克风可授权：不碰系统权限，也不弹框。
+        // 漏掉这一处，真机验证时仍然会弹麦克风权限、系统状态栏仍然显示在用麦 ——
+        // 于是「用替身跑」和「用真麦跑」在观感上没区别。
+        if MockDeviceMode.isMicrophoneMocked { return true }
+        #endif
         #if os(iOS)
-        await withCheckedContinuation { continuation in
+        // 显式 `return`：上面那道 `#if DEBUG` 让函数体不再是单表达式，
+        // 隐式返回在这里不成立。
+        return await withCheckedContinuation { continuation in
             AVAudioSession.sharedInstance().requestRecordPermission { granted in
                 continuation.resume(returning: granted)
             }

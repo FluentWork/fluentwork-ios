@@ -172,7 +172,9 @@ import Testing
     let engine = LiveAudioEngine(
         sessionManager: PermissiveAudioSessionManager(),
         decoder: RawPCM16FrameDecoder(),
-        requestMicrophonePermission: { true }
+        requestMicrophonePermission: { true },
+        installCaptureTap: { _, _, _ in nil },
+        startCaptureEngine: { _ in }
     )
 
     await engine.setSpeechBoundaryMode(.tapToStart)
@@ -691,7 +693,9 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
         sessionManager: PermissiveAudioSessionManager(),
         decoder: RawPCM16FrameDecoder(),
         requestMicrophonePermission: { true },
-        applyVoiceProcessing: { try recorder.record($0) }
+        applyVoiceProcessing: { try recorder.record($0) },
+        installCaptureTap: { _, _, _ in nil },
+        startCaptureEngine: { _ in }
     )
 
     await engine.setVoiceProcessingEnabled(true)
@@ -789,7 +793,9 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
         sessionManager: PermissiveAudioSessionManager(),
         decoder: RawPCM16FrameDecoder(),
         requestMicrophonePermission: { true },
-        applyVoiceProcessing: { try recorder.record($0) }
+        applyVoiceProcessing: { try recorder.record($0) },
+        installCaptureTap: { _, _, _ in nil },
+        startCaptureEngine: { _ in }
     )
 
     _ = try? await engine.startCapture()
@@ -813,7 +819,9 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
         sessionManager: PermissiveAudioSessionManager(),
         decoder: RawPCM16FrameDecoder(),
         requestMicrophonePermission: { true },
-        applyVoiceProcessing: { try recorder.record($0) }
+        applyVoiceProcessing: { try recorder.record($0) },
+        installCaptureTap: { _, _, _ in nil },
+        startCaptureEngine: { _ in }
     )
 
     await engine.setVoiceProcessingEnabled(true)
