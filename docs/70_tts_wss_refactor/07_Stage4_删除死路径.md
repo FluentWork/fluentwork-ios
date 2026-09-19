@@ -6,14 +6,16 @@
 
 ## 1. 删了什么，为什么它们是死的
 
-| 删除 | 行数 | 为什么 |
-|------|------|--------|
-| `Shared/FluentWorkCore/Audio/TTSDecoder.swift` | 164 | `TTSFrameDispatcher`（`.idle` 漏帧 / `.draining` 认领不播）、`TTSDecoder` 协议、`TTSCodec`、`TTSCompletionStatus`、`TTSDecoderError` —— 接线后没有生产调用点 |
-| `MockTTSDecoder.swift` | 55 | 只记录、不出声。**2026-09-12 静音事故的主角**：网关一发 `ai.tts.start`，帧被认领进它 |
-| `EngineBackedTTSDecoder.swift` | 86 | 回滚后一直没接进 DI；它的形态（流式解码 → 引擎）已被「解码 seam + `AudioSink.play(pcm:)`」取代 |
-| `EngineAudioSink.swift` | 158 | Stage 0 抽出的播放器 actor，从未接线；`LiveAudioEngine` 自己就是 sink，两份「PCM → 缓冲 → 入队」留一份 |
-| `ttsDecoder` DI 绑定（`AppDependencies.swift`） | — | 指向 Mock，已无读者。原位留注释说明它为什么曾经是雷，以及现在的回滚方式 |
-| `EngineBackedTTSDecoderTests.swift` | 102 | 随之删除 |
+> **修订（2026-09-20）**：下表的删除**有两行被撤销了**。`f3bb127`（引入麦克风替身）把 `TTSDecoder.swift` 与 `EngineBackedTTSDecoder.swift` 原样加了回来——不是复活接线，是那次提交顺带带回了这两个文件。它们现在**都在仓库里、都是零调用点**：`f3bb127` 之后没有任何生产代码引用 `TTSFrameDispatcher` / `TTSDecoder` / `EngineBackedTTSDecoder`。「删除」这个动作本身没有被推翻（旧路径确实没人走），被推翻的是「这两个文件已经不在了」这个事实。要不要再删一次是另一件事，本文不做主张。
+
+| 删除 | 行数 | 为什么 | 现状（2026-09-20 核对 HEAD `d004869`） |
+|------|------|--------|--------------------------------------|
+| `Shared/FluentWorkCore/Audio/TTSDecoder.swift` | 164 | `TTSFrameDispatcher`（`.idle` 漏帧 / `.draining` 认领不播）、`TTSDecoder` 协议、`TTSCodec`、`TTSCompletionStatus`、`TTSDecoderError` —— 接线后没有生产调用点 | **文件又在了**（164 行，`f3bb127` 加回），零调用点 |
+| `MockTTSDecoder.swift` | 55 | 只记录、不出声。**2026-09-12 静音事故的主角**：网关一发 `ai.tts.start`，帧被认领进它 | 仍已删除（全仓无此文件） |
+| `EngineBackedTTSDecoder.swift` | 86 | 回滚后一直没接进 DI；它的形态（流式解码 → 引擎）已被「解码 seam + `AudioSink.play(pcm:)`」取代 | **文件又在了**（86 行，`f3bb127` 加回），零调用点 |
+| `EngineAudioSink.swift` | 158 | Stage 0 抽出的播放器 actor，从未接线；`LiveAudioEngine` 自己就是 sink，两份「PCM → 缓冲 → 入队」留一份 | 仍已删除 |
+| `ttsDecoder` DI 绑定（`AppDependencies.swift`） | — | 指向 Mock，已无读者。原位留注释说明它为什么曾经是雷，以及现在的回滚方式 | 仍已删除；原位注释已从 `:538-557` 移到 `:574-580` |
+| `EngineBackedTTSDecoderTests.swift` | 102 | 随之删除 | 仍已删除 |
 
 `AITTSFramesTests.swift` 的 8 条与 `AudioSinkTests.swift` 的 4 条一并删除，**意图**已迁到对的载体上
 （逐条对应表见 `AITTSFramesTests.swift` 文件头与 `06` §3）。两条迁移是新增覆盖，不是平移：
@@ -27,9 +29,15 @@
 `03` 的 Stage 4 写着「删双水印之一（保留引擎侧，按轮重置）」。实际落地是：
 **旧派发器那一道随它自己的状态机一起消失**，引擎侧 `AudioPlaybackGate` 原样保留。
 现在两条路径各有一道门 —— legacy 帧归序列水位线，keyed 帧归轮次注册表。
+（2026-09-20 修订：legacy 那条路随 `d004869` 消失，今天只剩轮次注册表这一道门在管真实音频。）
 
-水位线**不能删**：契约 `meta 83_` §2 的回滚方式就是「网关停发 `ai.tts.start`，客户端退回
-legacy」，只要 fallback 还要活着，它的守卫就得在。
+水位线**不能删**——但理由不是原文给的那条（2026-09-20 修订）。原文说：契约 `meta 83_` §2 的回滚方式是
+「网关停发 `ai.tts.start`，客户端退回 legacy」，只要 fallback 还活着，它的守卫就得在。**那个 fallback 已经不在了**
+（`AudioSink.play(legacy:)` 已删除，无归属的帧直接丢弃，`d004869`），所以「为回滚路径留守卫」这条理由今天不成立。
+
+它仍然留下来的理由换成了更朴素的一条：`AudioPlaybackGate` 是 `play(frame:)` 的守卫，而 `play(frame:)` 这个入口
+还在（`LiveAudioEngine.swift:719`，`:732` 处查水位线）。它今天没有生产调用点，只有测试在调——但「没有调用点」
+与「可以删」不是同一件事，删它属于改行为，要单独决定、单独验证。本文只修订理由，不主张删除。
 
 ## 3. 一条已知缺口（不在本次范围，建议下一步处理）
 

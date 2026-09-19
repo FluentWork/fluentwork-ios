@@ -576,8 +576,11 @@ public extension Container {
     // 音频从此交给一台录音机。Stage 4 把整条并行路径删掉了 —— 现在带轮次归属的帧
     // 走 `audioFrameDecoder`（真实解码）→ `AudioSink.play(pcm:)`（真的出声）。
     //
-    // 回滚方式也随之改变：网关停发 `ai.tts.start`，帧自动退回 legacy 路径，
-    // 客户端不需要改任何一行（契约 `meta 83_` §2）。
+    // **没有回滚开关。** 契约 `meta 83_` §2 原写「网关停发 `ai.tts.start`，帧自动退回
+    // legacy 路径，客户端不用改任何一行」—— 那条 fallback 已随 legacy 路径一起删除
+    // （`d004869`）：无归属的帧现在被 `TTSPlaybackCoordinator` 判
+    // `.dropped(reason: .unknownTurn)`。网关停发 start 的产物是**整轮静音**，
+    // 不是降级出声；要回滚只能回滚客户端提交。
 
     var speechSessionClient: Factory<SpeechSessionClientProtocol> {
         self {

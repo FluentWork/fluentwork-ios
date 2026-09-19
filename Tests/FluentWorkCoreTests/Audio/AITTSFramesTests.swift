@@ -17,10 +17,10 @@ import Testing
 ///
 /// | 旧测试 | 现在钉在哪 |
 /// |--------|-----------|
-/// | `testTTSDispatcher_IgnoresAudioBeforeStart` | `bareFrameWithoutStartPlaysAsLegacy`（旧契约本身就是要消灭的 bug） |
+/// | `testTTSDispatcher_IgnoresAudioBeforeStart` | `bareFrameWithoutStartIsDropped`（`TTSPlaybackCoordinatorTests.swift:194`；旧契约本身就是要消灭的 bug） |
 /// | `testTTSDispatcher_InterruptDrainsUntilEndWithoutDoubleFinish` | `bareFrameBetweenInterruptAndEndIsDropped` |
 /// | `testTTSDispatcher_NewStartEndsAStuckDrainingStream` | `newStartEndsStuckDrainingWindow` |
-/// | `testTTSDispatcher_ResetClearsActiveStreamSoLegacyPCMCanPlay` | `resetClearsAttribution` + `leftoverTTSStartDoesNotClaimTheNextSessionsFrames` |
+/// | `testTTSDispatcher_ResetClearsActiveStreamSoLegacyPCMCanPlay` | `resetClearsAttribution`（`leftoverTTSStartDoesNotClaimTheNextSessionsFrames` 已删；`reset` 的意图只剩「残留 start 不吞下一场」那一半，见其原址注释） |
 /// | `testTTSDispatcher_RejectsEmptyPayload` | `emptyPayloadIsDroppedWithReason` |
 /// | `testMockDecoder_*`（记录 prepare/feed/finish） | 随 Mock 消失；「播了什么」由 `RecordingSink` / `RecordingAudioFrameDecoder` 记录 |
 ///
