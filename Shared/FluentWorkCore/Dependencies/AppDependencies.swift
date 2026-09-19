@@ -88,6 +88,21 @@ public enum AudioEngineEvent: Equatable, Sendable {
     /// difference between a user whose call was briefly in the way and a session
     /// that was broken before the call arrived.
     case captureInterruptionLifted(droppedBuffers: Int)
+    /// The result of trying to start the render cycle at session start.
+    ///
+    /// Emitted once per `startCapture()`, right before `captureArmed`. The
+    /// microphone does not deliver a single buffer until something plays, and
+    /// `.connecting` waits for the microphone — so this is what breaks the
+    /// circle, and the pair of this event and `captureFirstBuffer` is the whole
+    /// verdict: `started: true` + no first buffer means the kick did not work,
+    /// `started: false` with a `detail` means it never got the chance.
+    ///
+    /// `detail` names which of the six exits was taken. The previous attempt at
+    /// this (`ff2c142`, a silent `AVAudioSourceNode`) reported nothing at all,
+    /// so "the fix did not work" and "the fix was never installed" were
+    /// indistinguishable — which is the failure mode this project keeps paying
+    /// for, and the reason this event exists rather than a comment.
+    case captureKick(started: Bool, detail: String)
     case failed(String)
 }
 

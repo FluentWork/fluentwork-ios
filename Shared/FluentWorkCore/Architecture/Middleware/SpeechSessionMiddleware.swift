@@ -568,6 +568,20 @@ private func audioEventPump(
                 case .interruptedBySystem:
                     await dispatchBox.dispatch(.speakingRoom(.session(.interruptedBySystem)))
     
+                case let .captureKick(started, detail):
+                    // The render-cycle kick's outcome. Informational, and the
+                    // one diagnostic that makes the device run readable: with
+                    // `.connecting` waiting on the microphone, "kicked but never
+                    // delivered" and "never kicked" fail identically at the
+                    // watchdog and are different bugs.
+                    timings.mark(
+                        event: "audio_capture_kick",
+                        properties: [
+                            "started": started ? "true" : "false",
+                            "detail": detail,
+                        ]
+                    )
+
                 case let .captureInterruptionLifted(droppedBuffers):
                     // Not a failure and no dispatch — the session continues
                     // exactly as before. Recorded because the guard that ate

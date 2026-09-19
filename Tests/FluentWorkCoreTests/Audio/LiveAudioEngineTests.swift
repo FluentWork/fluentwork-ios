@@ -1159,6 +1159,71 @@ final class VoiceProcessingRecorder: @unchecked Sendable {
     )
 }
 
+/// The keep-alive player is a second `AVAudioPlayerNode` on the same engine, so
+/// it inherits every ordering rule the first one has — including the detach.
+///
+/// It renders silence, which is why it is tempting to let it slide: nobody would
+/// *hear* it survive a teardown. But a node left attached across a teardown is
+/// precisely the state the next session's `play()` raises on ("player started
+/// when in a disconnected state", an uncaught `NSException`), and
+/// `AVAudioPlayerNode` has no notion of "only the silent one".
+@Test func teardownHandlesTheKeepAlivePlayerWithTheSameOrdering() {
+    let steps = PlaybackTeardown.steps(
+        playerAttached: true,
+        engineRunning: true,
+        tapInstalled: true,
+        keepAliveAttached: true
+    )
+
+    #expect(
+        steps == [
+            .stopPlayer, .resetPlayer,
+            .stopKeepAlive, .resetKeepAlive,
+            .stopEngine, .removeTap,
+            .detachPlayer, .detachKeepAlive,
+        ],
+        "got \(steps)"
+    )
+
+    let stopEngine = steps.firstIndex(of: .stopEngine)
+    if let stopEngine,
+       let stopKeepAlive = steps.firstIndex(of: .stopKeepAlive),
+       let resetKeepAlive = steps.firstIndex(of: .resetKeepAlive),
+       let detachKeepAlive = steps.firstIndex(of: .detachKeepAlive)
+    {
+        #expect(
+            stopKeepAlive < stopEngine && resetKeepAlive < stopEngine,
+            "the loop is stopped and its queue dumped before the engine stops, or a partial silent buffer drains through the teardown. Got \(steps)."
+        )
+        #expect(
+            stopEngine < detachKeepAlive,
+            "graph mutation on a running engine is the F14/F15 crash family. Got \(steps)."
+        )
+    } else {
+        Issue.record("the keep-alive node was not stopped, reset and detached: \(steps)")
+    }
+}
+
+/// Attaching the keep-alive player is the new default for a session, but the
+/// teardown must not assume it: a session that never got as far as attaching it
+/// (a start that threw at the format guard) tears down exactly as before.
+@Test func teardownWithoutTheKeepAlivePlayerIsUnchanged() {
+    #expect(
+        PlaybackTeardown.steps(playerAttached: true, engineRunning: true, tapInstalled: true)
+            == [.stopPlayer, .resetPlayer, .stopEngine, .removeTap, .detachPlayer],
+        "the keep-alive parameter must not add steps for a graph that has no keep-alive node"
+    )
+    #expect(
+        PlaybackTeardown.steps(
+            playerAttached: false,
+            engineRunning: true,
+            tapInstalled: false,
+            keepAliveAttached: true
+        ) == [.stopKeepAlive, .resetKeepAlive, .stopEngine, .detachKeepAlive],
+        "a session that attached the keep-alive but no TTS player still has to take it apart"
+    )
+}
+
 /// `stopCapture()` retires playback so leftover TTS frames from a socket that
 /// has not closed yet have nowhere to go. Yielding `.failed` for those frames
 /// is the wrong signal: the audio pump treats `.failed` as fatal and exits
