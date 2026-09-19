@@ -11,12 +11,89 @@ import Testing
     #expect(effects.contains(.trackTransition(from: .idle, to: .connecting, stage: nil)))
 }
 
-@Test func socketReadyMovesConnectingToAISpeaking() {
+// MARK: - The readiness gate
+//
+// `.connecting` ended on `.socketReady` alone until 2026-09-20, so a session
+// could open for talking in front of a microphone that had never produced a
+// buffer. On device the tap delivered nothing for a whole 2.07s utterance and
+// its first buffer landed 284ms after the first playback; the room said
+// 「正在转写」 the whole time (`102_` §2–4). These pin the two facts as
+// separate, both required, and order-independent.
+
+@Test func socketReadyAloneLeavesConnectingWaitingForCapture() {
     var state = SpeechSessionState(phase: .connecting)
     let effects = SpeechSessionMachine.reduce(&state, event: .socketReady)
 
+    #expect(state.phase == .connecting)
+    #expect(state.socketReady == true)
+    #expect(state.isReadyToSpeak == false)
+    #expect(effects.isEmpty)
+}
+
+@Test func captureLiveAloneLeavesConnectingWaitingForSocket() {
+    var state = SpeechSessionState(phase: .connecting)
+    let effects = SpeechSessionMachine.reduce(&state, event: .captureLive)
+
+    #expect(state.phase == .connecting)
+    #expect(state.captureLive == true)
+    #expect(state.isReadyToSpeak == false)
+    #expect(effects.isEmpty)
+}
+
+@Test func socketReadyThenCaptureLiveOpensTheSession() {
+    var state = SpeechSessionState(phase: .connecting)
+    SpeechSessionMachine.reduce(&state, event: .socketReady)
+    let effects = SpeechSessionMachine.reduce(&state, event: .captureLive)
+
     #expect(state.phase == .aiSpeaking)
+    #expect(state.isReadyToSpeak == true)
     #expect(effects.contains(.trackTransition(from: .connecting, to: .aiSpeaking, stage: nil)))
+}
+
+/// The order is not part of the contract — a device can prove either half first,
+/// and the tap's first buffer regularly arrives before the socket handshake
+/// finishes. Only "both" is load-bearing.
+@Test func captureLiveThenSocketReadyOpensTheSession() {
+    var state = SpeechSessionState(phase: .connecting)
+    SpeechSessionMachine.reduce(&state, event: .captureLive)
+    let effects = SpeechSessionMachine.reduce(&state, event: .socketReady)
+
+    #expect(state.phase == .aiSpeaking)
+    #expect(state.isReadyToSpeak == true)
+    #expect(effects.contains(.trackTransition(from: .connecting, to: .aiSpeaking, stage: nil)))
+}
+
+/// A new session re-proves both halves. Carrying either forward would let the
+/// previous session's socket or microphone stand in for this one's, which is the
+/// same silent-open bug one session later.
+@Test func sessionStartTapClearsReadinessEvidence() {
+    var state = SpeechSessionState(phase: .idle, socketReady: true, captureLive: true)
+    SpeechSessionMachine.reduce(&state, event: .sessionStartTap)
+
+    #expect(state.phase == .connecting)
+    #expect(state.socketReady == false)
+    #expect(state.captureLive == false)
+    #expect(state.isReadyToSpeak == false)
+}
+
+/// A reconnect must not reopen the hole from the other side: the socket coming
+/// back says nothing about the microphone.
+@Test func reconnectWhileConnectingDoesNotSkipTheCaptureGate() {
+    var state = SpeechSessionState(phase: .connecting, isReconnecting: true)
+    SpeechSessionMachine.reduce(&state, event: .socketReady)
+
+    #expect(state.phase == .connecting)
+    #expect(state.isReconnecting == false)
+    #expect(state.socketReady == true)
+}
+
+@Test func duplicateCaptureLiveWhileActiveIsIdempotent() {
+    var state = SpeechSessionState(phase: .aiSpeaking, socketReady: true, captureLive: true)
+    let effects = SpeechSessionMachine.reduce(&state, event: .captureLive)
+
+    #expect(state.phase == .aiSpeaking)
+    #expect(state.captureLive == true)
+    #expect(effects.isEmpty)
 }
 
 @Test func duplicateSocketReadyWhileActiveIsIdempotent() {

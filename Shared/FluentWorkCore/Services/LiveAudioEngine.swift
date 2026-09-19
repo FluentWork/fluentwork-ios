@@ -230,6 +230,9 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// diagnostic would bury the fact it exists to reveal. Reset when capture
     /// starts, so a *new* session that starts dropping says so again.
     private var captureDropReported = false
+    /// Buffers the `isSystemInterrupted` guard swallowed during the interruption
+    /// in progress. Reset when one begins, reported when it lifts.
+    private var interruptionDroppedBuffers = 0
     private var speechTracker = AudioSpeechActivityTracker.forMode(.manual)
     /// When the current utterance opened, so its length can be reported
     /// alongside how it closed. The tracker cannot hold this itself: it has no
@@ -935,6 +938,9 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         switch kind {
         case .began:
             isSystemInterrupted = true
+            // Counted from here so the number that comes out at `.ended` is
+            // about *this* interruption, not every one this engine has seen.
+            interruptionDroppedBuffers = 0
             _ = speechTracker.reset()
             if playerAttached {
                 playerNode.pause()
@@ -961,6 +967,9 @@ public actor LiveAudioEngine: AudioEngineProtocol {
                 return
             }
             isSystemInterrupted = false
+            // Before the lift, so the count is attributed to the interruption
+            // that just ended rather than to whatever comes next.
+            continuation.yield(.captureInterruptionLifted(droppedBuffers: interruptionDroppedBuffers))
             continuation.yield(.systemInterruptEnded)
         case .routeChanged(let reason):
             continuation.yield(.routeChanged(reason))
@@ -977,7 +986,14 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             captureFirstBufferSeen = true
             continuation.yield(.captureFirstBuffer)
         }
-        guard !isSystemInterrupted else { return }
+        // Correct to drop, and it used to be silent — which made "the system
+        // interrupted us" and "the microphone produced nothing" the same thing
+        // from the outside. Counted here, reported once when the interruption
+        // lifts (`captureInterruptionLifted`).
+        guard !isSystemInterrupted else {
+            interruptionDroppedBuffers += 1
+            return
+        }
         // The three `return nil`s inside `convertToPCM16`, plus the bare `return`
         // that used to sit here, were the last silent gate on the uplink. At
         // 48 kHz the tap fires ~86 times a second, and a graph whose every buffer
@@ -1330,6 +1346,38 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// answer from the same instant.
     func _testEngineRunning() -> Bool {
         engine.isRunning
+    }
+
+    /// Test-only hook feeding one synthetic buffer through the real
+    /// `processInput`.
+    ///
+    /// The tap needs audio hardware, so every guard inside `processInput` — the
+    /// interruption counter, the converter check, the conversion guard — was
+    /// unreachable from a test. That is not a small gap: "the tap fired and a
+    /// guard ate the buffer" is the exact shape of the 2026-09-20 silence
+    /// (`102_` §2), and it was the one shape with no way to reproduce it off a
+    /// device. This hook closes it without making the guards testable through a
+    /// second, divergent code path.
+    ///
+    /// The buffer is built here rather than passed in because `AVAudioPCMBuffer`
+    /// is not `Sendable`: handing one across the actor boundary from a test
+    /// trips region isolation, and working around that would mean the test no
+    /// longer drives the same call the tap does.
+    ///
+    /// Silence is enough for the guards this exists for — they decide before any
+    /// sample is read.
+    func _testProcessInputSilentBuffer(frames: AVAudioFrameCount = 160) async {
+        guard
+            let format = AVAudioFormat(
+                commonFormat: .pcmFormatInt16,
+                sampleRate: 16_000,
+                channels: 1,
+                interleaved: true
+            ),
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames)
+        else { return }
+        buffer.frameLength = frames
+        await processInput(buffer)
     }
 
 

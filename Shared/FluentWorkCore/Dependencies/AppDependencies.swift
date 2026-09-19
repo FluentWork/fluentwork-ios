@@ -74,6 +74,20 @@ public enum AudioEngineEvent: Equatable, Sendable {
     /// installed and never fired, which is a different bug from every one that
     /// has a format or a converter in it.
     case captureFirstBuffer
+    /// The system interruption lifted. `droppedBuffers` is how many the
+    /// `isSystemInterrupted` guard swallowed while it lasted.
+    ///
+    /// Emitted once per interruption, not once per buffer — at 48 kHz the tap
+    /// keeps firing through a phone call, so a per-buffer line would be thousands
+    /// a minute and would bury the interruption itself.
+    ///
+    /// The count is the point. Dropping buffers during an interruption is
+    /// correct, so nothing was ever worth reporting — but the guard was also
+    /// **silent**, which made "the system interrupted us" and "the microphone
+    /// produced nothing" the same observation from the outside. It is the
+    /// difference between a user whose call was briefly in the way and a session
+    /// that was broken before the call arrived.
+    case captureInterruptionLifted(droppedBuffers: Int)
     case failed(String)
 }
 

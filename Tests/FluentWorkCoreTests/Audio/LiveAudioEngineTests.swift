@@ -916,6 +916,34 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
     #expect(event == .systemInterruptEnded)
 }
 
+/// The interruption guard dropped buffers silently, so the two ways to end up
+/// with no uplink audio looked the same.
+///
+/// Dropping while the system holds an interruption is *correct* — which is
+/// exactly why it never looked worth reporting. But "the call was briefly in the
+/// way" and "the microphone was producing nothing before the call arrived" are
+/// different problems with the same log, and only the second one is a bug. The
+/// count is what tells them apart (`102_` §6.1).
+@available(iOS 17, macOS 14, *)
+@Test func liveAudioEngineCountsBuffersDroppedDuringAnInterruption() async throws {
+    let engine = LiveAudioEngine(
+        decoder: RawPCM16FrameDecoder(),
+        interruptionObserver: RecordingAudioInterruptionObserver()
+    )
+    let stream = engine.events()
+
+    await engine.handleInterruption(.began)
+    for _ in 0..<5 {
+        await engine._testProcessInputSilentBuffer()
+    }
+    await engine.handleInterruption(.ended(shouldResume: true))
+
+    let lifted = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        if case .captureInterruptionLifted = event { return event } else { return nil }
+    }
+    #expect(lifted == .captureInterruptionLifted(droppedBuffers: 5))
+}
+
 // MARK: - Test doubles
 
 final class ThrowingAudioSessionManager: AudioSessionManaging, @unchecked Sendable {

@@ -101,25 +101,25 @@ struct SpeechSessionMiddlewareTests {
     @Test func speechCaptureGateDoesNotForwardPCMBeforeFirstSpeech() {
         let gate = SpeechCaptureGate()
         #expect(!gate.isOpen)
-        #expect(!gate.shouldForwardPCM)
+        #expect(!gate.takeForwardDecision())
     }
 
     @Test func speechCaptureGateDropsPCMAfterAbortUntilNextSpeech() {
         let gate = SpeechCaptureGate()
-        #expect(!gate.shouldForwardPCM)
+        #expect(!gate.takeForwardDecision())
         #expect(!gate.isOpen)
 
         gate.beginSpeech()
         #expect(gate.isOpen)
-        #expect(gate.shouldForwardPCM)
+        #expect(gate.takeForwardDecision())
 
         gate.abort()
         #expect(!gate.isOpen)
-        #expect(!gate.shouldForwardPCM)
+        #expect(!gate.takeForwardDecision())
 
         gate.beginSpeech()
         #expect(gate.isOpen)
-        #expect(gate.shouldForwardPCM)
+        #expect(gate.takeForwardDecision())
     }
 
     @Test func evaluationArrivalBoxConsumeClearsMark() {
@@ -144,11 +144,11 @@ struct SpeechSessionMiddlewareTests {
     @Test func speechCaptureGateEndSpeechStopsPCM() {
         let gate = SpeechCaptureGate()
         gate.beginSpeech()
-        #expect(gate.shouldForwardPCM)
+        #expect(gate.takeForwardDecision())
 
         gate.endSpeech()
         #expect(!gate.isOpen)
-        #expect(!gate.shouldForwardPCM)
+        #expect(!gate.takeForwardDecision())
     }
 
     /// The inter-turn gap is the regression window: PCM captured there used to
@@ -156,18 +156,55 @@ struct SpeechSessionMiddlewareTests {
     @Test func speechCaptureGateForwardsPCMOnlyInsideTheOpenTurn() {
         let gate = SpeechCaptureGate()
 
-        #expect(!gate.shouldForwardPCM) // before any turn
+        #expect(!gate.takeForwardDecision()) // before any turn
 
         gate.beginSpeech()
-        #expect(gate.shouldForwardPCM)
+        #expect(gate.takeForwardDecision())
         gate.endSpeech()
-        #expect(!gate.shouldForwardPCM)
-        #expect(!gate.shouldForwardPCM) // gap between turns
+        #expect(!gate.takeForwardDecision())
+        #expect(!gate.takeForwardDecision()) // gap between turns
 
         gate.beginSpeech()
-        #expect(gate.shouldForwardPCM)
+        #expect(gate.takeForwardDecision())
         gate.endSpeech()
-        #expect(!gate.shouldForwardPCM)
+        #expect(!gate.takeForwardDecision())
+    }
+
+    /// The count that separates two failures which look identical on the wire.
+    ///
+    /// "The gate was shut while the user talked" and "the microphone produced
+    /// nothing" are both *a turn with zero uplink bytes* — neither side can tell
+    /// them apart from what it receives. `forwarded`, per utterance, can; that
+    /// is why the gate is no longer silent (`102_` §6.2).
+    @Test func speechCaptureGateCountsWhatItForwardedAndDropped() {
+        let gate = SpeechCaptureGate()
+
+        #expect(!gate.takeForwardDecision()) // before any turn
+        #expect(!gate.takeForwardDecision()) // inter-turn gap
+
+        gate.beginSpeech()
+        #expect(gate.takeForwardDecision())
+        #expect(gate.takeForwardDecision())
+        #expect(gate.takeForwardDecision())
+
+        let counts = gate.endSpeech()
+        #expect(counts.forwarded == 3)
+        #expect(counts.droppedOutside == 2)
+    }
+
+    /// `forwarded` is per-utterance, so a turn where nothing reached the wire
+    /// cannot inherit the previous turn's audio and read as "the user was
+    /// heard". Zero is the interesting value, so zero has to be reachable.
+    @Test func speechCaptureGateForwardedCountIsPerUtterance() {
+        let gate = SpeechCaptureGate()
+        gate.beginSpeech()
+        #expect(gate.takeForwardDecision())
+        gate.endSpeech()
+
+        gate.beginSpeech()
+        let silent = gate.endSpeech()
+        #expect(silent.forwarded == 0)
+        #expect(silent.droppedOutside == 0)
     }
 
     /// Middleware `set(userTurnCount)` vs audio-loop `get()+1` for `turn-N`.
@@ -208,20 +245,20 @@ struct SpeechSessionMiddlewareTests {
             for _ in 0..<32 {
                 group.addTask {
                     _ = gate.isOpen
-                    _ = gate.shouldForwardPCM
+                    _ = gate.takeForwardDecision()
                 }
             }
         }
 
         #expect(!gate.isOpen)
-        #expect(!gate.shouldForwardPCM)
+        #expect(!gate.takeForwardDecision())
 
         gate.endSpeech()
-        #expect(!gate.shouldForwardPCM)
+        #expect(!gate.takeForwardDecision())
 
         gate.beginSpeech()
         #expect(gate.isOpen)
-        #expect(gate.shouldForwardPCM)
+        #expect(gate.takeForwardDecision())
     }
 
     /// B15: timeout task `arm` and a second scheduler must not both succeed.
@@ -320,7 +357,7 @@ struct SpeechSessionMiddlewareB14Tests {
         try await waitForPhase(store, phase: .connecting)
 
         // Connect first
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
 
         // Dispatch serverASR directly (not wrapped in .session) for reducer to handle
@@ -355,7 +392,7 @@ struct SpeechSessionMiddlewareB14Tests {
         try await waitForPhase(store, phase: .connecting)
 
         // Connect so we can receive transport events
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
 
         // Emit server ASR via transport event.
@@ -382,7 +419,7 @@ struct SpeechSessionMiddlewareB14Tests {
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
 
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
 
         audioEngine.emit(.speechStarted)
@@ -414,7 +451,7 @@ struct SpeechSessionMiddlewareB14Tests {
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
 
         audioEngine.emit(.speechStarted)
@@ -448,7 +485,7 @@ struct SpeechSessionMiddlewareB14Tests {
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
 
         store.dispatch(.speakingRoom(.session(.endSessionConfirmShown)))
@@ -476,7 +513,7 @@ struct SpeechSessionMiddlewareB14Tests {
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
 
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
 
         audioEngine.emit(.speechStarted)
@@ -523,7 +560,7 @@ struct SpeechSessionMiddlewareB14Tests {
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording)
@@ -559,7 +596,7 @@ struct SpeechSessionMiddlewareB14Tests {
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording)
@@ -598,7 +635,7 @@ struct SpeechSessionMiddlewareB14Tests {
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording)
@@ -672,6 +709,12 @@ struct SpeechSessionMiddlewareB14Tests {
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
         speechClient.emit(.stateChanged(.connected))
+        // The other half of readiness — the socket alone no longer opens the
+        // session. Driving it through the engine rather than dispatching
+        // `.captureLive` makes this test stricter on a second axis too: the
+        // session cannot go live unless the audio reader is alive, so a dead
+        // reader now fails here rather than surfacing later, at the tap.
+        audioEngine.emit(.captureFirstBuffer)
         try await waitForPhase(store, phase: .aiSpeaking)
         store.dispatch(.speakingRoom(.session(.endTap)))
         try await waitForPhase(store, phase: .ended)
@@ -681,6 +724,8 @@ struct SpeechSessionMiddlewareB14Tests {
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
         speechClient.emit(.stateChanged(.connected))
+        // The other half of readiness — the socket alone no longer opens the session.
+        audioEngine.emit(.captureFirstBuffer)
         try await waitForPhase(store, phase: .aiSpeaking)
 
         #expect(
@@ -715,6 +760,8 @@ struct SpeechSessionMiddlewareB14Tests {
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
         speechClient.emit(.stateChanged(.connected))
+        // The other half of readiness — the socket alone no longer opens the session.
+        audioEngine.emit(.captureFirstBuffer)
         try await waitForPhase(store, phase: .aiSpeaking)
         store.dispatch(.speakingRoom(.session(.endTap)))
         try await waitForPhase(store, phase: .ended)
@@ -724,6 +771,8 @@ struct SpeechSessionMiddlewareB14Tests {
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
         speechClient.emit(.stateChanged(.connected))
+        // The other half of readiness — the socket alone no longer opens the session.
+        audioEngine.emit(.captureFirstBuffer)
         try await waitForPhase(store, phase: .aiSpeaking)
 
         // The tap: the engine reports speech starting. Nothing else carries it.
@@ -790,7 +839,7 @@ struct SpeechSessionMiddlewareB14Tests {
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording)
@@ -852,7 +901,7 @@ struct SpeechSessionMiddlewareB14Tests {
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording)
@@ -889,7 +938,7 @@ struct SpeechSessionMiddlewareB14Tests {
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
 
         audioEngine.emit(.routeChanged("oldDeviceUnavailable"))
@@ -914,7 +963,7 @@ struct SpeechSessionMiddlewareB14Tests {
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording)
@@ -949,7 +998,7 @@ struct SpeechSessionMiddlewareB14Tests {
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
 
         store.dispatch(.speakingRoom(.manualSpeechBegin))
@@ -978,7 +1027,7 @@ struct SpeechSessionMiddlewareB14Tests {
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording)
@@ -1009,7 +1058,7 @@ struct SpeechSessionMiddlewareB14Tests {
         let store = AppStoreFactory.make(container: container)
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
         #expect(store.state.speakingRoom.session.userTurnCount == 0)
 
@@ -1085,7 +1134,7 @@ struct SpeechSessionMiddlewareB14Tests {
         #expect(idleToConnectingEvent != nil)
 
         // Socket ready: connecting → aiSpeaking
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
 
         // Poll for the connecting → aiSpeaking transition event
         var connectingToAISpeakingEvent: CapturingTracker.Event?
@@ -1122,7 +1171,7 @@ struct SpeechSessionMiddlewareB14Tests {
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
 
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
 
         // First turn
@@ -1199,7 +1248,7 @@ struct SpeechSessionMiddlewareReconnectTests {
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
 
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
 
         // Network lost starts reconnect
@@ -1234,7 +1283,7 @@ struct SpeechSessionMiddlewareReconnectTests {
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
 
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
 
         // Network lost starts reconnect
@@ -1272,7 +1321,7 @@ struct SpeechSessionMiddlewareSystemInterruptTests {
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
 
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
 
         audioEngine.emit(.interruptedBySystem)
@@ -1409,7 +1458,7 @@ struct I20TurnTelemetryTests {
 
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording)
@@ -1451,7 +1500,7 @@ struct I20TurnTelemetryTests {
 
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording)
@@ -1474,7 +1523,7 @@ struct I20TurnTelemetryTests {
 
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording)
@@ -1507,7 +1556,7 @@ struct I20TurnTelemetryTests {
 
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording)
@@ -1536,7 +1585,7 @@ struct I20TurnTelemetryTests {
 
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
         try await waitForPhase(store, phase: .connecting)
-        store.dispatch(.speakingRoom(.session(.socketReady)))
+        makeSessionLive(store)
         try await waitForPhase(store, phase: .aiSpeaking)
         audioEngine.emit(.speechStarted)
         try await waitForPhase(store, phase: .recording)

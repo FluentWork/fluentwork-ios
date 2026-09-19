@@ -333,7 +333,45 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     #expect(store.state.speakingRoom.phase == .connecting)
 
+    makeSessionLive(store)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .aiSpeaking
+    }
+    #expect(store.state.speakingRoom.phase == .aiSpeaking)
+}
+
+/// The gate's producer, end to end: the engine's first tapped buffer is what
+/// opens the session, and nothing else can stand in for it.
+///
+/// `makeSessionLive` manufactures the precondition for tests that are about
+/// everything *after* the session is live — which means those tests would stay
+/// green if the middleware stopped turning `captureFirstBuffer` into
+/// `.captureLive`, and the room would go back to opening in front of a silent
+/// microphone with a full green suite. This is the test that would go red
+/// instead. It is the `102_` failure shape (both sides green, device silent)
+/// expressed as an assertion.
+@MainActor
+@Test func captureFirstBufferOpensTheSession() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { StubSpeechSessionClient() }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .connecting
+    }
+
+    // The socket alone is not enough — this is the half that used to open the
+    // session, and it must no longer do so.
     store.dispatch(.speakingRoom(.session(.socketReady)))
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(store.state.speakingRoom.phase == .connecting)
+
+    // The tap's first buffer is the half that does.
+    audioEngine.emit(.captureFirstBuffer)
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .aiSpeaking
     }
@@ -589,7 +627,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
         await speechClient.snapshotStartCalls() == 1
     }
 
-    store.dispatch(.speakingRoom(.session(.socketReady)))
+    makeSessionLive(store)
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .aiSpeaking
     }
@@ -617,7 +655,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .connecting
     }
-    store.dispatch(.speakingRoom(.session(.socketReady)))
+    makeSessionLive(store)
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .aiSpeaking
     }
@@ -679,7 +717,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .connecting
     }
-    store.dispatch(.speakingRoom(.session(.socketReady)))
+    makeSessionLive(store)
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .aiSpeaking
     }
@@ -774,7 +812,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         await speechClient.snapshotStartCalls() == 1
     }
-    store.dispatch(.speakingRoom(.session(.socketReady)))
+    makeSessionLive(store)
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .aiSpeaking
     }
@@ -821,7 +859,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(await audioEngine.snapshotStartCalls() == 1)
     #expect(await speechClient.snapshotStartCalls() == 1)
 
-    store.dispatch(.speakingRoom(.session(.socketReady)))
+    makeSessionLive(store)
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .aiSpeaking
     }
@@ -863,6 +901,69 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(store.state.speakingRoom.processingStage == .evaluation)
 }
 
+/// The gate's policy, asserted where it is enforced.
+///
+/// "No PCM leaves the device outside an open utterance" is what keeps the
+/// gateway from committing inter-turn audio into the *next* turn's transcript —
+/// a measured defect, not a hypothetical: an 83-character transcript came back
+/// from a 2.9s tap because the tap runs for the whole session while turns do
+/// not.
+///
+/// It was enforced at exactly one line and **proven nowhere**. The only
+/// chunk-level wiring test emitted its chunk *inside* the window, so deleting
+/// the guard left the whole suite green — the policy was provable only by
+/// reading the code that implemented it. This is the missing half, in both
+/// directions: outside is dropped, inside is forwarded, and closing the turn
+/// drops again.
+@MainActor
+@Test func pcmOutsideAnOpenUtteranceNeverReachesTheClient() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .connecting
+    }
+    makeSessionLive(store)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .aiSpeaking
+    }
+
+    // 1. Before any utterance. Capture is already running — it starts with the
+    //    session, not with the turn — so this is exactly the audio that used to
+    //    be forwarded and committed into whatever came next.
+    audioEngine.emit(.pcmChunk(Data([0xDE, 0xAD])))
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(await speechClient.snapshotAudioPayloads().isEmpty)
+
+    // 2. Inside an utterance: forwarded, unchanged.
+    audioEngine.emit(.speechStarted)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .recording
+    }
+    audioEngine.emit(.pcmChunk(Data([0x01, 0x02, 0x03])))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await speechClient.snapshotAudioPayloads() == [Data([0x01, 0x02, 0x03])]
+    }
+    #expect(await speechClient.snapshotAudioPayloads() == [Data([0x01, 0x02, 0x03])])
+
+    // 3. After the turn closes: dropped again. This is the regression window —
+    //    `user.speech.end` has already been sent, so anything forwarded from
+    //    here is transcribed into the next turn.
+    audioEngine.emit(.speechEnded)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .processing
+    }
+    audioEngine.emit(.pcmChunk(Data([0xBE, 0xEF])))
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(await speechClient.snapshotAudioPayloads() == [Data([0x01, 0x02, 0x03])])
+}
+
 @MainActor
 @Test func speechSessionMiddlewareInterruptsPlaybackImmediately() async {
     let container = Container()
@@ -878,7 +979,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
         await speechClient.snapshotStartCalls() == 1
     }
 
-    store.dispatch(.speakingRoom(.session(.socketReady)))
+    makeSessionLive(store)
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .aiSpeaking
     }
