@@ -24,7 +24,7 @@
 
 **巨石中间件（P-E）原封未动**——这一条仍然成立，而且现在有准确数字：路由只占它 1470 行里的约 275 行（19%），拆出去的只是那个 switch 壳；`audioEventPump`（209 行）仍是第二个大 switch，`TransportEventRouter` 不覆盖它。
 
-另外 P-G 那根 `EngineBackedTTSDecoder` 的 AsyncStream 单消费者桥，文件被 `f3bb127` 加了回来、至今零调用点（是否再删见 `07` §1）。
+另外 P-G 那根 `EngineBackedTTSDecoder` 的 AsyncStream 单消费者桥，文件被 `f3bb127` 加回来过、**本轮已再次删除**（`07` §1）。
 
 ## 文档索引（按阅读顺序）
 
@@ -73,7 +73,7 @@
 | **传输层的 barge-in 门**（唯一一道；每帧入站二进制都过它） | `Shared/FluentWorkNetworking/Socket/AudioFrameDropGate.swift`（`BargeInAudioGate`） |
 | ~~`TTSFrameDispatcher`~~ / ~~`MockTTSDecoder`~~ | 已删除（Stage 4）。文件与 DI 绑定都不在了 |
 | ~~`LiveAudioEngine.play(frame:)`~~ / ~~`AudioPlaybackGate`~~ | **已删除**（2026-09-20）。理由与证据见 `07` §2 |
-| `EngineBackedTTSDecoder` | 文件在（`Shared/FluentWorkCore/Audio/EngineBackedTTSDecoder.swift`），**零调用点** —— `e64237e` 删过、`f3bb127` 又加了回来 |
+| ~~`EngineBackedTTSDecoder`~~ / ~~`TTSFrameDispatcher`~~ | **已重新删除**（2026-09-20）。`e64237e` 删过、`f3bb127` 加了回来、本轮再次删除 |
 
 ## 修订记录
 
@@ -101,6 +101,8 @@
 
 **2. 引擎侧的水印与其入口删除了。** `AudioPlaybackGate` 不只是没有读者——它的 watermark 唯一赋值点写的是 `lastAcceptedSequence`，而后者只在 `shouldAccept` 内写，`shouldAccept` 的唯一调用点又是永不执行的 `play(frame:)`。**它不可能被武装，即使有帧路由到那里也一个都拦不住。** `play(frame:)` 一并删除；barge-in 的丢弃现在只在传输层发生一次。证据链与 2026-09-12 03:57 的原始记录见 [`07`](./07_Stage4_删除死路径.md) §2。
 
-**3. 仍然没有做到的**：中间件没有被拆小（路由只占 19%，`audioEventPump` 那个 209 行的 switch 不归 router 管）；`EngineBackedTTSDecoder` 与 `TTSDecoder` 两个零调用点文件仍在树里（`07` §1）。
+**3. 顺带重新删掉了两个孤儿文件**：`TTSDecoder.swift`(164) 与 `EngineBackedTTSDecoder.swift`(86)——`e64237e` 删过、`f3bb127` 加了回来、本轮再次删除（删前核对全仓零引用，只剩两处墓碑注释）。
+
+**4. 仍然没有做到的**：中间件没有被拆小——路由只占它 19% 的行数，`audioEventPump` 那个 209 行的 switch 不归 router 管。
 
 > **⚠️ 本轮只跑 `swift test`（565/565），没有做真机验证。** 删除那部分不需要——被删代码不可达是论证过的。**但接线那部分需要**：它改的是活的 dispatch 路径，而这条链路的失败模式历来是「转写正常、没有声音」，两侧单测全绿也照样发生过两次（2026-09-12 静音事故、2026-09-20 的 start 顺序缺陷）。真机验证另开一轮，重点 barge-in 与断线重连。在那一轮通过之前，本轮描述的接线状态应视为**单测已验、真机未验**。

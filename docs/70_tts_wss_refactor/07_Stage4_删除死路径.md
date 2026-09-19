@@ -6,13 +6,13 @@
 
 ## 1. 删了什么，为什么它们是死的
 
-> **修订（2026-09-20）**：下表的删除**有两行被撤销了**。`f3bb127`（引入麦克风替身）把 `TTSDecoder.swift` 与 `EngineBackedTTSDecoder.swift` 原样加了回来——不是复活接线，是那次提交顺带带回了这两个文件。它们现在**都在仓库里、都是零调用点**：`f3bb127` 之后没有任何生产代码引用 `TTSFrameDispatcher` / `TTSDecoder` / `EngineBackedTTSDecoder`。「删除」这个动作本身没有被推翻（旧路径确实没人走），被推翻的是「这两个文件已经不在了」这个事实。要不要再删一次是另一件事，本文不做主张。
+> **修订（2026-09-20）**：下表的删除**有两行被撤销了**。`f3bb127`（引入麦克风替身）把 `TTSDecoder.swift` 与 `EngineBackedTTSDecoder.swift` 原样加了回来——不是复活接线，是那次提交顺带带回了这两个文件。它们现在**都在仓库里、都是零调用点**：`f3bb127` 之后没有任何生产代码引用 `TTSFrameDispatcher` / `TTSDecoder` / `EngineBackedTTSDecoder`。「删除」这个动作本身没有被推翻（旧路径确实没人走），被推翻的是「这两个文件已经不在了」这个事实。**当天第二次修订：已重新删除**（见下表末列）。
 
 | 删除 | 行数 | 为什么 | 现状（2026-09-20 核对 HEAD `d004869`） |
 |------|------|--------|--------------------------------------|
-| `Shared/FluentWorkCore/Audio/TTSDecoder.swift` | 164 | `TTSFrameDispatcher`（`.idle` 漏帧 / `.draining` 认领不播）、`TTSDecoder` 协议、`TTSCodec`、`TTSCompletionStatus`、`TTSDecoderError` —— 接线后没有生产调用点 | **文件又在了**（164 行，`f3bb127` 加回），零调用点 |
+| `Shared/FluentWorkCore/Audio/TTSDecoder.swift` | 164 | `TTSFrameDispatcher`（`.idle` 漏帧 / `.draining` 认领不播）、`TTSDecoder` 协议、`TTSCodec`、`TTSCompletionStatus`、`TTSDecoderError` —— 接线后没有生产调用点 | **已重新删除**（2026-09-20）。删前核对：全仓零引用，仅剩两处墓碑注释 |
 | `MockTTSDecoder.swift` | 55 | 只记录、不出声。**2026-09-12 静音事故的主角**：网关一发 `ai.tts.start`，帧被认领进它 | 仍已删除（全仓无此文件） |
-| `EngineBackedTTSDecoder.swift` | 86 | 回滚后一直没接进 DI；它的形态（流式解码 → 引擎）已被「解码 seam + `AudioSink.play(pcm:)`」取代 | **文件又在了**（86 行，`f3bb127` 加回），零调用点 |
+| `EngineBackedTTSDecoder.swift` | 86 | 回滚后一直没接进 DI；它的形态（流式解码 → 引擎）已被「解码 seam + `AudioSink.play(pcm:)`」取代 | **已重新删除**（2026-09-20）。它的头部注释还在描述一个已不存在的世界（「网关从不发 `ai.tts.start`」） |
 | `EngineAudioSink.swift` | 158 | Stage 0 抽出的播放器 actor，从未接线；`LiveAudioEngine` 自己就是 sink，两份「PCM → 缓冲 → 入队」留一份 | 仍已删除 |
 | `ttsDecoder` DI 绑定（`AppDependencies.swift`） | — | 指向 Mock，已无读者。原位留注释说明它为什么曾经是雷，以及现在的回滚方式 | 仍已删除；原位注释已从 `:538-557` 移到 `:574-580` |
 | `EngineBackedTTSDecoderTests.swift` | 102 | 随之删除 | 仍已删除 |
