@@ -539,6 +539,25 @@ public actor LiveAudioEngine: AudioEngineProtocol {
                 )
             }
         }
+        // `start()` returning is not the same as the engine running. It can come
+        // back without throwing and leave the engine stopped, and nothing here
+        // ever checked: the session went on to advertise a microphone it did not
+        // have, `startCapture()` returned success, and the only symptom was a
+        // turn the gateway never heard. Measured on device 2026-09-20 —
+        // `captureArmed(running: false)` with a tap that never fired, no error
+        // anywhere, and a room that looked connected.
+        //
+        // Silence is this project's one unacceptable failure (docs/03 §0.2), so
+        // it fails here instead: a retryable error the user can see beats a
+        // session that quietly cannot hear them.
+        guard engine.isRunning else {
+            throw AudioEngineError.audioSessionConflict(
+                "Audio engine did not start: wasRunning=\(wasRunning) "
+                    + "startAttempted=\(startAttempted) startThrew=\(startThrew) "
+                    + "isRunning=\(engine.isRunning). Capture would have been silent."
+            )
+        }
+
         // The engine is up, so the playback direction is usable again. Only
         // cleared once the start succeeded — a session that failed to come up
         // must not advertise a graph it does not have.
