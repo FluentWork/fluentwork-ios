@@ -69,20 +69,6 @@ import Testing
 
 // MARK: - Engine tests
 
-@available(iOS 17, macOS 14, *)
-@Test func liveAudioEnginePlayRoutesThroughDecoder() async {
-    let log = CallLog()
-    let decoder = CapturingFrameDecoder(log: log, samplesPerFrame: 4)
-    let engine = LiveAudioEngine(decoder: decoder)
-
-    await engine.play(frame: WSAudioFrame(sequence: 1, payload: Data(repeating: 0x01, count: 8)))
-    await engine.play(frame: WSAudioFrame(sequence: 2, payload: Data(repeating: 0x02, count: 8)))
-
-    let captured = await log.snapshot()
-    #expect(captured.count == 2)
-    #expect(captured.map(\.sequence) == [1, 2])
-}
-
 /// `scheduleBuffer` queues audio onto a player node, and a node that was never
 /// started plays nothing. Nothing started it, so the assistant stayed silent
 /// even after the gateway began forwarding its audio — and the decoder test
@@ -90,12 +76,12 @@ import Testing
 /// reached, never that anything came out.
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineStartsPlaybackForScheduledAudio() async {
-    let decoder = CapturingFrameDecoder(log: CallLog(), samplesPerFrame: 4)
+    let decoder = RawPCM16FrameDecoder()
     let engine = LiveAudioEngine(decoder: decoder)
 
     #expect(await engine._testPlaybackStarted() == false)
 
-    await engine.play(frame: WSAudioFrame(sequence: 1, payload: Data(repeating: 0x01, count: 8)))
+    await engine.play(pcm: Data(repeating: 0x01, count: 8))
 
     #expect(await engine._testPlaybackStarted() == true)
 }
@@ -107,14 +93,14 @@ import Testing
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineDoesNotStartPlaybackOnAStoppedEngine() async {
     struct EngineRefusedToStart: Error {}
-    let decoder = CapturingFrameDecoder(log: CallLog(), samplesPerFrame: 4)
+    let decoder = RawPCM16FrameDecoder()
     let engine = LiveAudioEngine(
         decoder: decoder,
         startEngineForPlayback: { _ in throw EngineRefusedToStart() }
     )
     let stream = engine.events()
 
-    await engine.play(frame: WSAudioFrame(sequence: 1, payload: Data(repeating: 0x01, count: 8)))
+    await engine.play(pcm: Data(repeating: 0x01, count: 8))
 
     #expect(await engine._testEngineRunning() == false)
     #expect(
@@ -144,16 +130,16 @@ import Testing
 /// `stopCaptureDropsLateFramesWithoutFailingTheEngine`.
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineRetiresPlaybackWhenCaptureStops() async {
-    let decoder = CapturingFrameDecoder(log: CallLog(), samplesPerFrame: 4)
+    let decoder = RawPCM16FrameDecoder()
     let engine = LiveAudioEngine(decoder: decoder)
 
     // Live session: playback works.
-    await engine.play(frame: WSAudioFrame(sequence: 1, payload: Data(repeating: 0x01, count: 8)))
+    await engine.play(pcm: Data(repeating: 0x01, count: 8))
     #expect(await engine._testPlaybackStarted() == true)
 
     // Session ends; a frame that was already in flight arrives afterwards.
     await engine.stopCapture()
-    await engine.play(frame: WSAudioFrame(sequence: 2, payload: Data(repeating: 0x02, count: 8)))
+    await engine.play(pcm: Data(repeating: 0x02, count: 8))
 
     #expect(
         await engine._testPlaybackStarted() == false,
@@ -316,28 +302,6 @@ import Testing
         try await engine.startCapture()
     }
     #expect(sessionManager.didConfigureFullDuplex)
-}
-
-@available(iOS 17, macOS 14, *)
-@Test func liveAudioEnginePlaySurfacesDecodeFailureAsFailedEvent() async {
-    let engine = LiveAudioEngine(decoder: ThrowingFrameDecoder())
-    let stream = engine.events()
-
-    await engine.play(frame: WSAudioFrame(sequence: 1, payload: Data([0x01, 0x02])))
-
-    // Drain up to 250 ms — long enough to surface the failure, short enough
-    // to keep CI responsive if the engine never emits. The TaskGroup wrapper
-    // cancels the stream iterator either way so the actor's deinit can fire
-    // and `swift test` can exit cleanly.
-    let failure = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
-        if case .failed = event { return event } else { return nil }
-    }
-
-    guard case let .failed(message) = failure else {
-        Issue.record("expected a .failed event from a throwing decoder, got \(String(describing: failure))")
-        return
-    }
-    #expect(message.contains("decode failed"))
 }
 
 /// `AudioSink.play(pcm:)` —— 带轮次归属的帧的播放出口。
@@ -839,26 +803,6 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
 }
 
 @available(iOS 17, macOS 14, *)
-@Test func liveAudioEnginePlaySkipsFramesAtOrBelowInterruptWatermark() async {
-    let log = CallLog()
-    let decoder = CapturingFrameDecoder(log: log, samplesPerFrame: 4)
-    let engine = LiveAudioEngine(decoder: decoder)
-
-    // Pre-interrupt frame — gate accepts, decoder runs.
-    await engine.play(frame: WSAudioFrame(sequence: 10, payload: Data(repeating: 0x01, count: 8)))
-    // Bump the watermark to 10.
-    await engine.interruptNow()
-    // Same sequence after interrupt — gate rejects (10 <= 10).
-    await engine.play(frame: WSAudioFrame(sequence: 10, payload: Data(repeating: 0x02, count: 8)))
-    // Fresh sequence past the watermark — gate accepts again.
-    await engine.play(frame: WSAudioFrame(sequence: 11, payload: Data(repeating: 0x03, count: 8)))
-
-    let captured = await log.snapshot()
-    #expect(captured.count == 2, "expected 1 pre-interrupt + 1 post-watermark frame; got \(captured.count)")
-    #expect(captured.map(\.sequence) == [10, 11])
-}
-
-@available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineStartAndStopInterruptionObservationRecordsCalls() async {
     let observer = RecordingAudioInterruptionObserver()
     let engine = LiveAudioEngine(
@@ -973,35 +917,6 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
 }
 
 // MARK: - Test doubles
-
-actor CallLog {
-    private(set) var frames: [WSAudioFrame] = []
-    func append(_ frame: WSAudioFrame) { frames.append(frame) }
-    func snapshot() -> [WSAudioFrame] { frames }
-}
-
-actor CapturingFrameDecoder: WSAudioFrameDecoder {
-    private let log: CallLog
-    private let samplesPerFrame: Int
-
-    init(log: CallLog, samplesPerFrame: Int) {
-        self.log = log
-        self.samplesPerFrame = samplesPerFrame
-    }
-
-    func decode(_ frame: WSAudioFrame) async throws -> Data {
-        await log.append(frame)
-        let byteCount = samplesPerFrame * 2
-        return Data(repeating: 0, count: byteCount)
-    }
-}
-
-struct ThrowingFrameDecoder: WSAudioFrameDecoder {
-    enum Failure: Error, Equatable { case boom }
-    func decode(_ frame: WSAudioFrame) async throws -> Data {
-        throw Failure.boom
-    }
-}
 
 final class ThrowingAudioSessionManager: AudioSessionManaging, @unchecked Sendable {
     enum Failure: Error, Equatable {
@@ -1223,17 +1138,20 @@ final class VoiceProcessingRecorder: @unchecked Sendable {
 /// still speaking" used to kill 「开始说话」 on the next session.
 @available(iOS 17, macOS 14, *)
 @Test func stopCaptureDropsLateFramesWithoutFailingTheEngine() async {
-    let log = CallLog()
-    let decoder = CapturingFrameDecoder(log: log, samplesPerFrame: 4)
-    let engine = LiveAudioEngine(decoder: decoder)
+    let engine = LiveAudioEngine(decoder: RawPCM16FrameDecoder())
     let stream = engine.events()
 
-    await engine.play(frame: WSAudioFrame(sequence: 1, payload: Data(repeating: 0x01, count: 8)))
-    await engine.stopCapture()
-    await engine.play(frame: WSAudioFrame(sequence: 2, payload: Data(repeating: 0x02, count: 8)))
+    await engine.play(pcm: Data(repeating: 0x01, count: 8))
+    #expect(await engine._testScheduledBufferCount() == 1)
 
-    let captured = await log.snapshot()
-    #expect(captured.map(\.sequence) == [1], "late frames after stopCapture must not reach the decoder; got \(captured.map(\.sequence))")
+    await engine.stopCapture()
+    await engine.play(pcm: Data(repeating: 0x02, count: 8))
+
+    // `play(pcm:)` 不经过解码器，所以这里改成问"排进播放器了没有"——问题本身没变。
+    #expect(
+        await engine._testScheduledBufferCount() == 1,
+        "结束练习之后到达的迟到帧不得再被排进播放器"
+    )
 
     let failure = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
         if case .failed = event { return event } else { return nil }
@@ -1241,22 +1159,22 @@ final class VoiceProcessingRecorder: @unchecked Sendable {
     #expect(failure == nil, "dropping a late frame must not fail the engine; got \(String(describing: failure))")
 }
 
-/// 结束练习弹窗打开时只 pause，不 teardown。迟到帧仍可进解码器（取消要接着播），
+/// 结束练习弹窗打开时只 pause，不 teardown。迟到帧仍会被排进播放器（取消后要接着播），
 /// 但不得把 player 重新 play() 起来。确定之后才走 stopCapture。
 @available(iOS 17, macOS 14, *)
 @Test func pausePlaybackHoldsThePlayerWithoutRetiringIt() async {
-    let log = CallLog()
-    let decoder = CapturingFrameDecoder(log: log, samplesPerFrame: 4)
-    let engine = LiveAudioEngine(decoder: decoder)
+    let engine = LiveAudioEngine(decoder: RawPCM16FrameDecoder())
     let stream = engine.events()
 
-    await engine.play(frame: WSAudioFrame(sequence: 1, payload: Data(repeating: 0x01, count: 8)))
+    await engine.play(pcm: Data(repeating: 0x01, count: 8))
     await engine.pausePlayback()
     #expect(await engine.isPlaybackPaused())
 
-    await engine.play(frame: WSAudioFrame(sequence: 2, payload: Data(repeating: 0x02, count: 8)))
-    let captured = await log.snapshot()
-    #expect(captured.map(\.sequence) == [1, 2], "paused playback must still queue incoming TTS; got \(captured.map(\.sequence))")
+    await engine.play(pcm: Data(repeating: 0x02, count: 8))
+    #expect(
+        await engine._testScheduledBufferCount() == 2,
+        "暂停期间到达的 TTS 仍应排队（取消后要接着播），只是不出声"
+    )
     #expect(await engine.isPlaybackPaused())
 
     let failure = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
@@ -1270,7 +1188,9 @@ final class VoiceProcessingRecorder: @unchecked Sendable {
     await engine.pausePlayback()
     await engine.stopCapture()
     #expect(await engine.isPlaybackPaused() == false)
-    await engine.play(frame: WSAudioFrame(sequence: 3, payload: Data(repeating: 0x03, count: 8)))
-    let afterStop = await log.snapshot()
-    #expect(afterStop.map(\.sequence) == [1, 2], "stopCapture after pause must retire leftover frames")
+    await engine.play(pcm: Data(repeating: 0x03, count: 8))
+    #expect(
+        await engine._testScheduledBufferCount() == 2,
+        "pause 之后再 stopCapture，残留帧必须被退掉"
+    )
 }

@@ -210,10 +210,6 @@ public actor MockAudioEngine: AudioEngineProtocol {
 
     // MARK: - Playback (forwarded to the real engine)
 
-    public func play(frame: WSAudioFrame) async {
-        await playback.play(frame: frame)
-    }
-
     public func play(pcm: Data) async {
         await playback.play(pcm: pcm)
     }

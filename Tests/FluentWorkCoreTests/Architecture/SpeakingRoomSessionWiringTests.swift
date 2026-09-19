@@ -153,7 +153,6 @@ private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unche
 
 private actor StubAudioEngineState {
     var startCalls = 0
-    var playedFrames: [WSAudioFrame] = []
     /// 已经解码、走到播放口的 PCM。带轮次归属的帧从 `play(pcm:)` 进来 ——
     /// 「真的出声」这条断言需要它（见 I12 静音事故：sink 收到解码结果才算数）。
     var playedPCM: [Data] = []
@@ -162,10 +161,6 @@ private actor StubAudioEngineState {
 
     func recordStart() {
         startCalls += 1
-    }
-
-    func recordPlayedFrame(_ frame: WSAudioFrame) {
-        playedFrames.append(frame)
     }
 
     func recordPlayedPCM(_ pcm: Data) {
@@ -204,10 +199,6 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
         await state.recordStop()
     }
 
-    func play(frame: WSAudioFrame) async {
-        await state.recordPlayedFrame(frame)
-    }
-
     func play(pcm: Data) async {
         await state.recordPlayedPCM(pcm)
     }
@@ -234,10 +225,6 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
         await state.startCalls
     }
 
-    func snapshotPlayedFrames() async -> [WSAudioFrame] {
-        await state.playedFrames
-    }
-
     func snapshotPlayedPCM() async -> [Data] {
         await state.playedPCM
     }
@@ -261,8 +248,6 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     }
 
     func stopCapture() async {}
-
-    func play(frame: WSAudioFrame) async {}
 
     func play(pcm: Data) async {}
 

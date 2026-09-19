@@ -1836,7 +1836,6 @@ private final class StubAudioEngineForMiddleware: AudioEngineProtocol, @unchecke
     func stopCapture() async {
         await _stopCaptureCalled.set(true)
     }
-    func play(frame: WSAudioFrame) async {}
     func play(pcm: Data) async {
         await _playedPCM.update { $0 + [pcm] }
     }

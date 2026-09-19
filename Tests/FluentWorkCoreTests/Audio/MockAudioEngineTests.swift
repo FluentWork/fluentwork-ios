@@ -139,11 +139,9 @@ struct MockAudioEngineTests {
         let engine = MockAudioEngine(script: MockAudioEngine.Script(), playback: playback)
 
         await engine.play(pcm: Data([0x01, 0x02]))
-        await engine.play(frame: WSAudioFrame(sequence: 3, payload: Data([0x03, 0x04])))
         await engine.interruptNow()
 
         #expect(await playback.pcmCalls == [Data([0x01, 0x02])])
-        #expect(await playback.frameCalls.map(\.sequence) == [3])
         #expect(await playback.interruptCalls == 1)
     }
 }
@@ -210,7 +208,6 @@ private final class CallCounter: @unchecked Sendable {
 
 private actor RecordingPlaybackEngine: AudioEngineProtocol {
     private(set) var pcmCalls: [Data] = []
-    private(set) var frameCalls: [WSAudioFrame] = []
     private(set) var interruptCalls = 0
 
     private nonisolated let stream = AsyncStream<AudioEngineEvent> { $0.finish() }
@@ -219,9 +216,6 @@ private actor RecordingPlaybackEngine: AudioEngineProtocol {
     func stopCapture() async {}
     nonisolated func events() -> AsyncStream<AudioEngineEvent> {
         stream
-    }
-    func play(frame: WSAudioFrame) async {
-        frameCalls.append(frame)
     }
     func play(pcm: Data) async {
         pcmCalls.append(pcm)

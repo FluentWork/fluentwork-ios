@@ -144,47 +144,6 @@ struct AudioSpeechActivityTracker: Sendable {
     }
 }
 
-struct AudioPlaybackGate: Sendable {
-    /// Why a frame was or was not taken.
-    ///
-    /// It used to be a `Bool`, and the `false` branch was a bare `return` in
-    /// `play(frame:)` — **no event, no log, no counter**. So "the assistant went
-    /// quiet" and "the assistant spoke and the client threw it away" were the
-    /// same thing from outside the process, and the second one is a bug in this
-    /// file. A drop that cannot be observed cannot be diagnosed; this carries
-    /// the number that made the decision.
-    enum Verdict: Equatable, Sendable {
-        case accept
-        case droppedAtOrBelowInterruptWatermark(UInt32)
-
-        var isAccepted: Bool {
-            if case .accept = self { return true }
-            return false
-        }
-    }
-
-    private(set) var lastAcceptedSequence: UInt32?
-    private(set) var interruptWatermark: UInt32?
-
-    mutating func shouldAccept(_ frame: WSAudioFrame) -> Verdict {
-        if let interruptWatermark, frame.sequence <= interruptWatermark {
-            return .droppedAtOrBelowInterruptWatermark(interruptWatermark)
-        }
-        lastAcceptedSequence = frame.sequence
-        return .accept
-    }
-
-    mutating func markInterrupted() -> UInt32? {
-        interruptWatermark = lastAcceptedSequence
-        return interruptWatermark
-    }
-
-    mutating func reset() {
-        lastAcceptedSequence = nil
-        interruptWatermark = nil
-    }
-}
-
 /// The order in which one session's audio graph is torn down.
 ///
 /// Pure, and split out from `stopCapture()` for exactly one reason: **the order
@@ -268,7 +227,6 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// alongside how it closed. The tracker cannot hold this itself: it has no
     /// clock — every timestamp it uses is handed in by the caller.
     private var speechStartedAt: ContinuousClock.Instant?
-    private var playbackGate = AudioPlaybackGate()
     private var speechBoundaryMode: SpeechBoundaryMode = .manual
     /// Whether the session asked for engine-level voice processing (AEC).
     ///
@@ -289,7 +247,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     // Playback graph (lazy-attached on first frame).
     //
     // AVAudioPlayerNode is not Sendable but is actor-isolated here so access
-    // from `play(frame:)` and `interruptNow()` is serialized. The node stays
+    // from `play(pcm:)` and `interruptNow()` is serialized. The node stays
     // detached until the first frame arrives so construction stays cheap in
     // tests that only exercise the capture / event side.
     private let playerNode = AVAudioPlayerNode()
@@ -313,6 +271,8 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// TTS still schedules, but `play()` is not called until `resumePlayback()`.
     /// Dumping the queue here would make cancel unable to continue the reply.
     private var playbackPaused = false
+    /// 排进播放器的 buffer 计数。只为 `_testScheduledBufferCount()` 存在。
+    private var scheduledBufferCount = 0
 
     // Barge-in timing — captured at the moment `interruptNow()` is requested so
     // tests can assert the local-silence budget (≤ 200 ms) without depending on
@@ -523,7 +483,6 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // A bare `AudioSpeechActivityTracker()` here silently reinstated the
         // auto-VAD configuration for every session.
         self.speechTracker = .forMode(speechBoundaryMode)
-        self.playbackGate.reset()
 
         // Build the WHOLE graph before the engine starts — including the
         // playback node.
@@ -661,7 +620,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         stopInterruptionObservation()
         // Retire before anything that yields or mutates the graph. Leftover
         // TTS frames from a socket that has not closed yet still call
-        // `play(frame:)`; once this flag is set they drop instead of
+        // `play(pcm:)`; once this flag is set they drop instead of
         // restarting the player (and instead of `.failed`, which would kill
         // the process-lifetime audio pump).
         playbackRetired = true
@@ -698,7 +657,6 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         if let emitted = speechTracker.reset() {
             yieldSpeechBoundary(emitted)
         }
-        playbackGate.reset()
         lastInterruptRequestedAt = nil
         isSystemInterrupted = false
 
@@ -716,65 +674,26 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         stream
     }
 
-    public func play(frame: WSAudioFrame) async {
-        // Checked before anything else: after `stopCapture()` the frame has
-        // nowhere to go, and every path below ends in a `play()` that raises
-        // rather than returns. `endSession` cancels the transport task that
-        // feeds this, but cancellation is not instant — the socket still holds
-        // frames in flight, and the first one to land here used to take the
-        // process down.
-        guard !playbackRetired else {
-            // Expected: `session.end` cancels the transport, but cancellation
-            // is not instant. A leftover TTS frame is not an engine failure,
-            // and `.failed` here used to exit the process-lifetime audio pump.
-            return
-        }
-        if case let .droppedAtOrBelowInterruptWatermark(watermark) = playbackGate.shouldAccept(frame) {
-            // Reported, not swallowed. Until this existed the only trace of a
-            // barge-in watermark eating a live turn's audio was the user
-            // noticing the assistant had gone quiet.
-            continuation.yield(.audioFrameDropped(
-                sequence: frame.sequence,
-                watermark: watermark
-            ))
-            return
-        }
-
-        let pcm: Data
-        do {
-            pcm = try await decoder.decode(frame)
-        } catch {
-            continuation.yield(.failed("decode failed: \(error)"))
-            return
-        }
-
-        guard startPlaybackIfNeeded() else { return }
-        guard let buffer = makePCMBuffer(from: pcm) else {
-            continuation.yield(.failed("scheduling dropped: PCM length \(pcm.count) not a multiple of 2"))
-            return
-        }
-        // Local barge-in: `interruptNow()` stop+reset dumps the queue so the
-        // interrupted reply does not keep talking over the user. A later
-        // `play(frame:)` of a *fresh* sequence (past the watermark) starts
-        // the node again — that is the next turn's audio, not a drain.
-        enqueueWithoutWaiting(buffer)
-    }
-
     /// Plays PCM that a decoder has already produced (`AudioSink.play(pcm:)`).
     ///
-    /// The turn-keyed path arrives here: `TTSPlaybackCoordinator` decided this
-    /// frame belongs to a live turn and decoded it. Two guards from
-    /// `play(frame:)` are deliberately kept and one is deliberately absent:
+    /// **这是引擎唯一的播放入口。** 带轮次归属的帧走这条：`TTSPlaybackCoordinator`
+    /// 判定这一帧属于一个活跃的轮次，并解码好交给这里。
     ///
-    /// - `playbackRetired` **kept**: a session that ended while the socket was
-    ///   still delivering must not be resurrected by a frame in flight.
-    /// - `makePCMBuffer` validation **kept**: it is the only thing standing
-    ///   between a malformed payload and a `scheduledBuffer` that never plays.
-    /// - the sequence watermark **absent**: `AudioPlaybackGate` is a
-    ///   "not at or below the interrupt watermark" test on the *sequence*
-    ///   axis, and there is no sequence here. Turn ownership answers the same
-    ///   question on the axis that actually matters — the coordinator drops
-    ///   the frames of a superseded turn before they ever reach this call.
+    /// 两道守卫：
+    ///
+    /// - `playbackRetired` —— 会话已经结束了、而 socket 还在投递时，不能让一个
+    ///   在途帧把它重新拉起来。
+    /// - `makePCMBuffer` 的长度校验 —— 它是畸形 payload 与"永远播不出来的一
+    ///   个 scheduledBuffer"之间唯一的东西。
+    ///
+    /// **没有序列号水印，这是有意的。** 这里曾经还有 `play(frame:)`，它带一道
+    /// 按序列号的 barge-in 水印（`AudioPlaybackGate`）。那道门后来删了，因为它
+    /// 既没有生产调用者、也不可能被武装，更根本的原因是它的轴选错了：
+    /// **序列号说不出一个帧属于哪一轮**（证据见 `07_Stage4_删除死路径.md` §2
+    /// 里 2026-09-12 03:57 那段）。轮次归属由协调器在正确的轴上回答——
+    /// 被作废那一轮的帧根本到不了这里。
+    ///
+    /// 丢弃只在传输层发生一次（`BargeInAudioGate`），而不是在音频的两个高度各来一遍。
     public func play(pcm: Data) async {
         guard !playbackRetired else { return }
 
@@ -804,6 +723,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// this API from an async context — neither applies once the call has a
     /// signature of its own.
     private func enqueueWithoutWaiting(_ buffer: AVAudioPCMBuffer) {
+        scheduledBufferCount += 1
         playerNode.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
     }
 
@@ -874,7 +794,6 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     public func interruptNow() async {
         lastInterruptRequestedAt = clock.now
         playbackPaused = false
-        _ = playbackGate.markInterrupted()
         if playerAttached {
             playerNode.stop()
             playerNode.reset()
@@ -1286,6 +1205,16 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// has to read them through the same path `setSpeechBoundaryMode` writes.
     func _testSpeechTracker() -> AudioSpeechActivityTracker {
         speechTracker
+    }
+
+    /// Test-only hook: how many buffers have been handed to the player node.
+    ///
+    /// `play(pcm:)` 不再经过解码器，所以"这一帧有没有被排进播放器"没法再从解码器
+    /// 的调用日志上看出来——而这条断言是有价值的：`stopCapture()` 之后到达的迟到帧
+    /// **不**该再被排进去（`playbackRetired`），暂停期间到达的帧**该**排队但不出声。
+    /// 丢掉这个观察，正是「结束练习后迟到帧又被排进播放器」复发的方式。
+    func _testScheduledBufferCount() -> Int {
+        scheduledBufferCount
     }
 
     /// Test-only hook reporting whether the player node is running.

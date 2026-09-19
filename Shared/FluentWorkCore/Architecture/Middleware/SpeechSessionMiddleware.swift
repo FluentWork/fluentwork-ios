@@ -71,8 +71,9 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
     let turnTimeoutTracking = TurnTimeoutTracking()
     let speechCaptureGate = SpeechCaptureGate()
     let evaluationArrival = EvaluationArrivalBox()
-    // 下行音频的唯一入口。它的 sink 就是引擎本身：barge-in 水位线与
-    // `playbackRetired` 守卫都住在 `play(frame:)` 上，换一个对象去播会静默绕过它们。
+    // 下行音频的唯一入口。它的 sink 就是引擎本身：`playbackRetired` 守卫住在
+    // `play(pcm:)` 上，换一个对象去播会静默绕过它。（barge-in 的丢弃只剩传输层
+    // 一处，引擎侧那道按序列号的水印已删除。）
     let ttsCoordinator = TTSPlaybackCoordinator(
         decoder: resolvedContainer.audioFrameDecoder(),
         sink: resolvedContainer.audioEngine()
@@ -536,22 +537,6 @@ private func audioEventPump(
                     // without knowing whether the switch was even on.
                     timings.mark(event: "audio_voice_processing", properties: ["detail": detail])
     
-                case let .audioFrameDropped(sequence, watermark):
-                    // Informational, same shape as `.voiceProcessing`: a drop is
-                    // what a barge-in watermark is for, so it is not a failure
-                    // and must not degrade the session. It is recorded because
-                    // the same gate also drops frames it has no business
-                    // dropping, and when that happens the user's only symptom is
-                    // "the assistant went quiet" — indistinguishable from the
-                    // provider having sent nothing.
-                    timings.mark(
-                        event: "audio_frame_dropped",
-                        properties: [
-                            "sequence": String(sequence),
-                            "watermark": String(watermark),
-                        ]
-                    )
-
                 case let .failed(message):
                     timings.mark(event: "audio_engine_failed", properties: ["message": message])
                     await dispatchBox.dispatch(.speakingRoom(.session(.failed(message))))

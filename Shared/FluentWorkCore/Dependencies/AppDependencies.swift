@@ -44,14 +44,6 @@ public enum AudioEngineEvent: Equatable, Sendable {
     /// report, and reporting `0` would read as "stopped and finished instantly",
     /// which is a real and different case.
     case speechEndpointed(reason: String, windowMs: Int?, trailingSilenceMs: Int?)
-    /// A binary audio frame was thrown away before it reached the player.
-    ///
-    /// Informational — a drop is what a barge-in watermark is *for*. It is
-    /// reported because the gate also drops frames it has no business dropping,
-    /// and when it does, the only other symptom is silence. `watermark` is the
-    /// number that made the decision, so the log says *which* interrupt ate the
-    /// frame rather than just that something did.
-    case audioFrameDropped(sequence: UInt32, watermark: UInt32)
     case failed(String)
 }
 
@@ -73,14 +65,16 @@ public enum SpeechBoundaryMode: Equatable, Sendable {
 /// 采集与播放的引擎契约。
 ///
 /// 它**同时是** `AudioSink`：`TTSPlaybackCoordinator` 的播放出口就是这个引擎，
-/// 不是另一个对象。这是有意的 —— barge-in 水位线（`AudioPlaybackGate`）和
-/// `playbackRetired` 守卫都住在 `play(frame:)` 里，让引擎之外的实现去播会静默绕过
-/// 它们，而症状是「打断后接着说」或「结束练习后又被迟到帧拉起来」。
+/// 不是另一个对象。这是有意的 —— `playbackRetired` 守卫住在 `play(pcm:)` 里，
+/// 让引擎之外的实现去播会静默绕过它，症状是「结束练习后又被迟到帧拉起来」。
+///
+/// 引擎侧曾经还有一道 `AudioPlaybackGate`（按序列号的水印）。它已随
+/// `play(frame:)` 一起删除：barge-in 的丢弃现在只有一处，在传输层
+/// （`BargeInAudioGate`），而轮次归属由 `TTSPlaybackCoordinator` 按轮判定。
 public protocol AudioEngineProtocol: AudioSink {
     func startCapture() async throws
     func events() -> AsyncStream<AudioEngineEvent>
     func stopCapture() async
-    func play(frame: WSAudioFrame) async
     /// 播放已经解码好的 16kHz mono PCM16。
     ///
     /// 带轮次归属的帧走这条：轮次归属由 `TTSPlaybackCoordinator` 判定，
@@ -333,8 +327,6 @@ public final class PlaceholderAudioEngine: AudioEngineProtocol, Sendable {
     public func events() -> AsyncStream<AudioEngineEvent> {
         stream
     }
-
-    public func play(frame: WSAudioFrame) async {}
 
     public func play(pcm: Data) async {}
 
