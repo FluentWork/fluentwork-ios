@@ -38,6 +38,13 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
         /// report a slightly larger one, turning a p50 into a p50 of the last
         /// frame of every reply.
         var firstResponseReported: Set<String> = []
+        /// 已经报过的「每轮一次」里程碑：event → 报过的 turnID。
+        ///
+        /// 与 `firstResponseReported` 同一个理由的另一半：首响是「哪一帧先到」
+        /// 的问题，这里要挡的是「同一轮的后续帧」。一轮音频有几百帧
+        /// （生产实测 276 帧一次到达），而「第一帧什么时候到」只有一个时刻 ——
+        /// 逐帧打点会把它埋在自己的重复里。
+        var onceReported: [String: String] = [:]
         /// Latest gateway↔phone clock estimate (P1-5), or `nil` when no ping
         /// round trip has completed. `nil` means "not measurable" — never
         /// "offset is zero", which would bill the clock skew to the latency.
@@ -68,6 +75,7 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
             $0.lastEvent = nil
             $0.turnStartTimes.removeAll()
             $0.firstResponseReported.removeAll()
+            $0.onceReported.removeAll()
             // The transport drops its own estimate on disconnect, so keeping
             // this one would let a stale skew outlive the socket it was measured
             // against. A fresh round trip re-establishes it within one RTT.
@@ -135,6 +143,32 @@ public final class SpeechSessionTimingsRecorder: @unchecked Sendable {
         }
 
         tracker.track(event: "timing_\(event)", properties: props)
+    }
+
+    /// Records a per-turn milestone **once per turn**: the first call for a
+    /// resolved turn wins, later calls for the same turn are dropped.
+    ///
+    /// For moments whose frames repeat but whose instant does not — audio
+    /// arrives frame by frame, and "when did the first one land" happens once.
+    /// `turnID` may be `nil`: the audio path carries no id of its own, so the
+    /// turn is resolved the same way `markTurnAnchored` resolves it (the most
+    /// recently started turn).
+    public func markTurnOnce(
+        _ event: String,
+        turnID: String?,
+        properties: [String: String] = [:]
+    ) {
+        let resolved = turnID ?? storage.withLock { $0.latestTurnID }
+        let alreadyReported = storage.withLock { state -> Bool in
+            // 没有可解析的轮次时用 "nil" 当键：那时它还不是「某一轮的第几帧」，
+            // 但同样没必要每一帧都报一次。
+            let key = resolved ?? "nil"
+            guard state.onceReported[event] != key else { return true }
+            state.onceReported[event] = key
+            return false
+        }
+        guard !alreadyReported else { return }
+        markTurnAnchored(event, turnID: turnID, properties: properties)
     }
 
     /// Records a milestone whose headline number is measured from the **turn's

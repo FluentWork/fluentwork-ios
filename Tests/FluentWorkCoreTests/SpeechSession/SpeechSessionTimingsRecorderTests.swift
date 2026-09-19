@@ -30,6 +30,40 @@ import Testing
     #expect(duration?.properties["turn_id"] == "turn-1")
 }
 
+/// 一轮音频有几百帧（生产实测 `276 frames` 一次到达），而「第一帧什么时候到」
+/// 只有一个时刻。逐帧打点会把那条真的埋在自己的重复里 —— 上一轮 250 帧的
+/// 真机日志里，`timing_ai_first_chunk` 刷了 250 行。
+@Test func speechSessionTimingsRecorderMarkTurnOnceEmitsOncePerTurn() {
+    let tracker = CapturingTracker()
+    let recorder = SpeechSessionTimingsRecorder(
+        tracker: tracker,
+        clock: { Date(timeIntervalSince1970: 1) }
+    )
+    recorder.reset()
+    recorder.markTurnStarted("turn-1")
+
+    for sequence in 0..<5 {
+        recorder.markTurnOnce(
+            "ai_first_chunk",
+            turnID: nil,
+            properties: ["sequence": String(sequence)]
+        )
+    }
+
+    let firstChunks = tracker.events.filter { $0.name == "timing_ai_first_chunk" }
+    #expect(firstChunks.count == 1, "一轮只该有一条；实际 \(firstChunks.count) 条")
+    #expect(firstChunks.first?.properties["sequence"] == "0", "留下的应该是第一帧")
+    #expect(firstChunks.first?.properties["turn_id"] == "turn-1")
+
+    // 下一轮重新计一次。
+    recorder.markTurnStarted("turn-2")
+    recorder.markTurnOnce("ai_first_chunk", turnID: nil, properties: ["sequence": "250"])
+
+    let afterSecondTurn = tracker.events.filter { $0.name == "timing_ai_first_chunk" }
+    #expect(afterSecondTurn.count == 2)
+    #expect(afterSecondTurn.last?.properties["turn_id"] == "turn-2")
+}
+
 @Test func speechSessionTimingsRecorderMissingTurnStartEmitsMissingDuration() {
     let tracker = CapturingTracker()
     let recorder = SpeechSessionTimingsRecorder(

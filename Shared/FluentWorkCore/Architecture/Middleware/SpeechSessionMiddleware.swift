@@ -650,8 +650,11 @@ private func transportEventPump(
                 switch event {
                 case let .audio(frame):
                     await dispatchBox.dispatch(.speakingRoom(.session(.aiFirstAudioChunk)))
-                    timings.mark(
-                        event: "ai_first_chunk",
+                    // 一轮的音频有几百帧，但「第一帧什么时候到」只有一个时刻：
+                    // 逐帧打点会把那条真的埋在自己的重复里（250 帧 = 250 行）。
+                    timings.markTurnOnce(
+                        "ai_first_chunk",
+                        turnID: nil,
                         properties: [
                             "sequence": String(frame.sequence),
                             "payload_bytes": String(frame.payload.count),
