@@ -1390,17 +1390,13 @@ struct I20TurnTelemetryTests {
     private func makeStore(
         audioEngine: StubAudioEngineForMiddleware,
         speechClient: StubSpeechSessionClientForMiddleware,
-        tracker: CapturingTracker,
-        decoder: MockTTSDecoder? = nil
+        tracker: CapturingTracker
     ) -> Store<AppState, AppAction> {
         let container = Container()
         container.reset()
         container.audioEngine.register { audioEngine }
         container.speechSessionClient.register { speechClient }
         container.tracker.register { tracker }
-        if let decoder {
-            container.ttsDecoder.register { decoder }
-        }
         return AppStoreFactory.make(container: container)
     }
 
@@ -1564,13 +1560,11 @@ struct I20TurnTelemetryTests {
     @Test func ttsStreamEmitsStartFirstAudioAndEndViaSharedTracker() async throws {
         let audioEngine = StubAudioEngineForMiddleware()
         let speechClient = StubSpeechSessionClientForMiddleware()
-        let decoder = MockTTSDecoder()
         let tracker = CapturingTracker()
         let store = makeStore(
             audioEngine: audioEngine,
             speechClient: speechClient,
-            tracker: tracker,
-            decoder: decoder
+            tracker: tracker
         )
 
         store.dispatch(.speakingRoom(.session(.sessionStartTap)))
@@ -1582,15 +1576,12 @@ struct I20TurnTelemetryTests {
                     turnID: "turn-9",
                     voiceID: "mock_voice_01",
                     sampleRate: 24_000,
-                    codec: "opus"
+                    codec: "pcm"
                 )
             )
         )
-        try await waitUntil() {
-            decoder.snapshotPrepares().count == 1
-        }
         speechClient.emit(.audio(WSAudioFrame(sequence: 0, payload: Data([0x0A, 0x0B]))))
-        speechClient.emit(.audio(WSAudioFrame(sequence: 1, payload: Data([0x0C]))))
+        speechClient.emit(.audio(WSAudioFrame(sequence: 1, payload: Data([0x0C, 0x0D]))))
         speechClient.emit(
             .control(.aiTTSEnd(turnID: "turn-9", completionStatus: "ok", durationMs: 40))
         )
@@ -1601,7 +1592,7 @@ struct I20TurnTelemetryTests {
         let start = tracker.events.first { $0.name == "tts_start" }
         #expect(start?.properties["turn_id"] == "turn-9")
         #expect(start?.properties["voice_id"] == "mock_voice_01")
-        #expect(start?.properties["codec"] == "opus")
+        #expect(start?.properties["codec"] == "pcm")
         let firstAudio = tracker.events.first { $0.name == "tts_first_audio" }
         #expect(firstAudio?.properties["turn_id"] == "turn-9")
         #expect(firstAudio?.properties["sequence"] == "0")
@@ -1610,7 +1601,8 @@ struct I20TurnTelemetryTests {
         #expect(end?.properties["turn_id"] == "turn-9")
         #expect(end?.properties["completion_status"] == "ok")
         #expect(end?.properties["audio_frames"] == "2")
-        #expect(decoder.snapshotFeeds().map(\.seq) == [0, 1])
+        // 追踪的那两帧确实解码到播放口 —— 不是「被认领了就当作播过了」。
+        #expect(await audioEngine.playedPCM == [Data([0x0A, 0x0B]), Data([0x0C, 0x0D])])
     }
 }
 
@@ -1826,6 +1818,10 @@ private final class StubAudioEngineForMiddleware: AudioEngineProtocol, @unchecke
     private let _voiceProcessingValues = AsyncValue<[Bool]>([])
     var voiceProcessingValues: [Bool] { get async { await _voiceProcessingValues.get() } }
 
+    /// 已经解码、走到播放口的 PCM（带轮次归属的帧走这条路）。
+    private let _playedPCM = AsyncValue<[Data]>([])
+    var playedPCM: [Data] { get async { await _playedPCM.get() } }
+
     init() {
         let pair = AsyncStream.makeStream(of: AudioEngineEvent.self)
         self.stream = pair.stream
@@ -1841,6 +1837,9 @@ private final class StubAudioEngineForMiddleware: AudioEngineProtocol, @unchecke
         await _stopCaptureCalled.set(true)
     }
     func play(frame: WSAudioFrame) async {}
+    func play(pcm: Data) async {
+        await _playedPCM.update { $0 + [pcm] }
+    }
     func interruptNow() async {
         await _interruptCalls.update { $0 + 1 }
     }

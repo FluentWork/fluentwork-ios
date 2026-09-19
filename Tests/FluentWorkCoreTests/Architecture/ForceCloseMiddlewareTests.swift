@@ -77,6 +77,7 @@ private final class StubAudioEngineForForceClose: AudioEngineProtocol, @unchecke
     func startCapture() async throws {}
     func stopCapture() async { await _stopCaptureCalled.set(true) }
     func play(frame: WSAudioFrame) async {}
+    func play(pcm: Data) async {}
     func interruptNow() async {}
     func discardActiveSpeech() async {}
     func events() -> AsyncStream<AudioEngineEvent> { stream }

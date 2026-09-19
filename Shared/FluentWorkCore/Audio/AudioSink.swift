@@ -14,8 +14,13 @@ import FluentWorkNetworking
 ///
 /// ## 实现
 ///
-/// - 生产环境: `EngineAudioSink` - 封装 `AVAudioPlayerNode` 的播放逻辑
+/// - 生产环境: `LiveAudioEngine` 自己就是这个 sink（`AudioEngineProtocol: AudioSink`）。
+///   播放必须留在引擎里，因为 barge-in 水位线（`AudioPlaybackGate`）和
+///   `playbackRetired` 守卫都住在 `play(frame:)` 上 —— 换一个对象播会静默绕过它们。
 /// - 测试环境: `RecordingSink` - 记录播放调用但不产生声音
+///
+/// 这里**没有** `drain()`：引擎不提供「等播完」的同步 API，Stage 0 曾经把它写成
+/// 到处 no-op 的协议要求，那只是让「假装能优雅收尾」变成契约的一部分。
 public protocol AudioSink: Sendable {
     /// 播放 PCM16 音频数据
     ///
@@ -39,9 +44,4 @@ public protocol AudioSink: Sendable {
     ///
     /// 用于用户打断（barge-in）场景
     func interruptNow() async
-    
-    /// 等待所有已调度的音频播放完成
-    ///
-    /// 用于会话结束时的优雅关闭
-    func drain() async
 }

@@ -75,13 +75,7 @@ public actor EngineAudioSink: AudioSink {
         playerNode.stop()
         playerNode.reset()
     }
-    
-    public func drain() async {
-        // 等待已调度的音频播放完成
-        // 当前实现：立即返回（AVAudioPlayerNode 没有提供同步等待 API）
-        // 实际的 drain 由调用方通过延迟或其他机制实现
-    }
-    
+
     // MARK: - Private
     
     /// 将 PCM16 数据转换为 `AVAudioPCMBuffer`

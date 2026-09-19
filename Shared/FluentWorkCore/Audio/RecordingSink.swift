@@ -43,8 +43,7 @@ public actor RecordingSink: AudioSink {
     public private(set) var playCalls: [PlayCall] = []
     public private(set) var legacyPlayCalls: [LegacyPlayCall] = []
     public private(set) var interruptCount = 0
-    public private(set) var drainCount = 0
-    
+
     public init() {}
     
     public func play(pcm: Data) async {
@@ -61,11 +60,7 @@ public actor RecordingSink: AudioSink {
     public func interruptNow() async {
         interruptCount += 1
     }
-    
-    public func drain() async {
-        drainCount += 1
-    }
-    
+
     // MARK: - 测试辅助方法
     
     /// 已播放的序列号列表（legacy 路径）
@@ -83,6 +78,5 @@ public actor RecordingSink: AudioSink {
         playCalls.removeAll()
         legacyPlayCalls.removeAll()
         interruptCount = 0
-        drainCount = 0
     }
 }

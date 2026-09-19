@@ -154,6 +154,9 @@ private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unche
 private actor StubAudioEngineState {
     var startCalls = 0
     var playedFrames: [WSAudioFrame] = []
+    /// 已经解码、走到播放口的 PCM。带轮次归属的帧从 `play(pcm:)` 进来 ——
+    /// 「真的出声」这条断言需要它（见 I12 静音事故：sink 收到解码结果才算数）。
+    var playedPCM: [Data] = []
     var interruptCalls = 0
     var stopCalls = 0
 
@@ -163,6 +166,10 @@ private actor StubAudioEngineState {
 
     func recordPlayedFrame(_ frame: WSAudioFrame) {
         playedFrames.append(frame)
+    }
+
+    func recordPlayedPCM(_ pcm: Data) {
+        playedPCM.append(pcm)
     }
 
     func recordInterrupt() {
@@ -201,6 +208,10 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
         await state.recordPlayedFrame(frame)
     }
 
+    func play(pcm: Data) async {
+        await state.recordPlayedPCM(pcm)
+    }
+
     func interruptNow() async {
         await state.recordInterrupt()
     }
@@ -227,6 +238,10 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
         await state.playedFrames
     }
 
+    func snapshotPlayedPCM() async -> [Data] {
+        await state.playedPCM
+    }
+
     func snapshotInterruptCalls() async -> Int {
         await state.interruptCalls
     }
@@ -248,6 +263,8 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     func stopCapture() async {}
 
     func play(frame: WSAudioFrame) async {}
+
+    func play(pcm: Data) async {}
 
     func interruptNow() async {}
 
@@ -510,16 +527,22 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(await audioEngine.snapshotPlayedFrames() == [frame])
 }
 
+/// 这条是 2026-09-12 那根保险丝的**接线级**版本。
+///
+/// 它取代的旧测试叫 `...RoutesTTSFramesToMockDecoderNotAudioEngine`，断言的是
+/// 「帧被认领进一台只记录的解码器、不碰音频引擎」—— 那正是事故的形状：网关一发
+/// `ai.tts.start`，音频就被认领进录音机，然后现场静音。
+///
+/// 新契约反过来：**start 认领的帧必须解码成 PCM 到达播放口**。如果将来有人把
+/// 解码 seam 换成一个只记录的实现，或者把 keyed 帧又接回旧派发器，这条会红。
 @MainActor
-@Test func speechSessionMiddlewareRoutesTTSFramesToMockDecoderNotAudioEngine() async {
+@Test func startClaimedTTSFramesReachTheEngineAsSound() async {
     let container = Container()
     container.reset()
     let audioEngine = StubAudioEngine()
     let speechClient = StubSpeechSessionClient()
-    let decoder = MockTTSDecoder()
     container.audioEngine.register { audioEngine }
     container.speechSessionClient.register { speechClient }
-    container.ttsDecoder.register { decoder }
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
@@ -527,21 +550,27 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
         await audioEngine.snapshotStartCalls() == 1
     }
 
+    // 没有 start 的帧 = 今天那条老路：引擎侧解码 + barge-in 水位线。
+    let beforeStart = WSAudioFrame(sequence: 7, payload: Data([0x07, 0x08]))
+    speechClient.emit(.audio(beforeStart))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await audioEngine.snapshotPlayedFrames() == [beforeStart]
+    }
+    #expect(await audioEngine.snapshotPlayedPCM().isEmpty)
+
+    // start 之后到达的帧归属这一轮。codec 是 `pcm`（网关发的是重采样后的裸 PCM16）。
     speechClient.emit(
         .control(
             .aiTTSStart(
                 turnID: "turn-9",
                 voiceID: "mock_voice_01",
-                sampleRate: 24_000,
-                codec: "opus"
+                sampleRate: 16_000,
+                codec: "pcm"
             )
         )
     )
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        decoder.snapshotPrepares().count == 1
-    }
     let first = WSAudioFrame(sequence: 0, payload: Data([0x0A, 0x0B]))
-    let second = WSAudioFrame(sequence: 1, payload: Data([0x0C]))
+    let second = WSAudioFrame(sequence: 1, payload: Data([0x0C, 0x0D]))
     speechClient.emit(.audio(first))
     speechClient.emit(.audio(second))
     speechClient.emit(
@@ -549,26 +578,34 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     )
 
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        decoder.snapshotFinishes().count == 1
+        await audioEngine.snapshotPlayedPCM().count == 2
     }
 
-    #expect(decoder.snapshotPrepares().count == 1)
-    #expect(decoder.snapshotFeeds().map(\.seq) == [0, 1])
-    #expect(decoder.snapshotFeeds().map(\.turnId) == ["turn-9", "turn-9"])
-    #expect(decoder.snapshotFinishes().map(\.status) == ["ok"])
-    #expect(await audioEngine.snapshotPlayedFrames().isEmpty)
+    #expect(
+        await audioEngine.snapshotPlayedPCM() == [first.payload, second.payload],
+        "start 认领的帧必须解码成 PCM 到播放口：停在只记录的组件上就是 2026-09-12 的静音"
+    )
+    #expect(
+        await audioEngine.snapshotPlayedFrames() == [beforeStart],
+        "带归属的帧不得再走 legacy 播放"
+    )
 }
 
+/// 一场结束后残留的 `ai.tts.start` 不得吞掉下一场的 PCM。
+///
+/// 旧的等价物（`...ResetsTTSDispatcherOnEndWithoutTTSEndFrame`）断言的是
+/// 「收尾时给解码器补一个 interrupted 的 finish」。新设计里解码器是无状态的，
+/// 要清的是**归属**：清不掉，下一场没有 start 的帧就会被认领进 keyed 路径
+/// （`play(pcm:)`），而不是走 legacy 的 `play(frame:)` —— 两者都不出声时，
+/// 症状一样，只有断言能分辨。
 @MainActor
-@Test func speechSessionMiddlewareResetsTTSDispatcherOnEndWithoutTTSEndFrame() async {
+@Test func leftoverTTSStartDoesNotClaimTheNextSessionsFrames() async {
     let container = Container()
     container.reset()
     let audioEngine = StubAudioEngine()
     let speechClient = StubSpeechSessionClient()
-    let decoder = MockTTSDecoder()
     container.audioEngine.register { audioEngine }
     container.speechSessionClient.register { speechClient }
-    container.ttsDecoder.register { decoder }
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
@@ -576,28 +613,34 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
         await audioEngine.snapshotStartCalls() == 1
     }
 
+    // 只发出 start，永远等不到 `ai.tts.end`（连接断了、回合被放弃）。
     speechClient.emit(
         .control(
             .aiTTSStart(
                 turnID: "turn-leftover",
                 voiceID: "mock_voice_01",
-                sampleRate: 24_000,
-                codec: "opus"
+                sampleRate: 16_000,
+                codec: "pcm"
             )
         )
     )
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        decoder.snapshotPrepares().count == 1
-    }
 
     store.dispatch(.speakingRoom(.session(.endTap)))
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
         store.state.speakingRoom.phase == .ended
-            && decoder.snapshotFinishes().count == 1
     }
 
-    #expect(decoder.snapshotFinishes().map(\.status) == ["interrupted"])
-    #expect(await audioEngine.snapshotPlayedFrames().isEmpty)
+    let frame = WSAudioFrame(sequence: 3, payload: Data([0x03, 0x04]))
+    speechClient.emit(.audio(frame))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await audioEngine.snapshotPlayedFrames() == [frame]
+    }
+
+    #expect(
+        await audioEngine.snapshotPlayedFrames() == [frame],
+        "残留归属若没被清掉，这一帧会被认领进 keyed 路径而不是走 legacy"
+    )
+    #expect(await audioEngine.snapshotPlayedPCM().isEmpty)
 }
 
 @MainActor

@@ -71,7 +71,12 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
     let turnTimeoutTracking = TurnTimeoutTracking()
     let speechCaptureGate = SpeechCaptureGate()
     let evaluationArrival = EvaluationArrivalBox()
-    let ttsDispatcher = TTSFrameDispatcher(decoder: resolvedContainer.ttsDecoder())
+    // 下行音频的唯一入口。它的 sink 就是引擎本身：barge-in 水位线与
+    // `playbackRetired` 守卫都住在 `play(frame:)` 上，换一个对象去播会静默绕过它们。
+    let ttsCoordinator = TTSPlaybackCoordinator(
+        decoder: resolvedContainer.audioFrameDecoder(),
+        sink: resolvedContainer.audioEngine()
+    )
     let ttsTrace = TTSStreamTrace()
     // One reader per middleware instance (= per store), for its whole life.
     // Per instance rather than global so a test that builds its own store gets
@@ -108,7 +113,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
                     timings: timings,
                     turnTimeoutTracking: turnTimeoutTracking,
                     evaluationArrival: evaluationArrival,
-                    ttsDispatcher: ttsDispatcher,
+                    ttsCoordinator: ttsCoordinator,
                     ttsTrace: ttsTrace
                 )
             )
@@ -171,7 +176,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
                 turnTimeoutTracking: turnTimeoutTracking,
                 speechCaptureGate: speechCaptureGate,
                 evaluationArrival: evaluationArrival,
-                ttsDispatcher: ttsDispatcher,
+                ttsCoordinator: ttsCoordinator,
                 ttsTrace: ttsTrace,
                 usesAutoVAD: store.state.featureFlags.isEnabled(.voiceVadAuto),
                 voiceProcessingEnabled: store.state.featureFlags.isEnabled(.voiceProcessing),
@@ -563,10 +568,9 @@ private func transportEventPump(
     timings: SpeechSessionTimingsRecorder,
     turnTimeoutTracking: TurnTimeoutTracking,
     evaluationArrival: EvaluationArrivalBox,
-    ttsDispatcher: TTSFrameDispatcher,
+    ttsCoordinator: TTSPlaybackCoordinator,
     ttsTrace: TTSStreamTrace
 ) -> Effect<AppAction> {
-    let audioEngine = container.audioEngine()
     let speechClient = container.speechSessionClient()
     let tracker = container.tracker()
     let dispatchBox = MainActorActionBox(dispatch: dispatch)
@@ -662,93 +666,68 @@ private func transportEventPump(
                     // carry a sequence and nothing else, so this resolves to the
                     // turn most recently started.
                     timings.markFirstResponse(nil, source: "audio")
-                    do {
-                        let consumedByTTS = try ttsDispatcher.handle(audio: frame)
-                        if consumedByTTS {
-                            let count = ttsTrace.recordAudio()
-                            if count == 1 {
-                                container.tracker().track(
-                                    event: "tts_first_audio",
-                                    properties: [
-                                        "turn_id": ttsDispatcher.activeTurnID() ?? "nil",
-                                        "sequence": String(frame.sequence),
-                                        "payload_bytes": String(frame.payload.count),
-                                    ]
-                                )
-                            }
-                        } else {
-                            await audioEngine.play(frame: frame)
+                    // 唯一入口：播 / 丢由协调器按轮次归属判定，这里只负责埋点。
+                    // 归属来自「当前活跃的 ai.tts.start」——二进制帧上没有 turn_id。
+                    switch await ttsCoordinator.onAudioFrame(frame) {
+                    case .playedLegacy:
+                        // 没有活跃轮次：这就是今天那条路（引擎侧解码 + barge-in
+                        // 水位线），逐字节等价于接线前的 `audioEngine.play(frame:)`。
+                        break
+                    case let .played(turnID):
+                        let count = ttsTrace.recordAudio()
+                        if count == 1 {
+                            container.tracker().track(
+                                event: "tts_first_audio",
+                                properties: [
+                                    "turn_id": turnID,
+                                    "sequence": String(frame.sequence),
+                                    "payload_bytes": String(frame.payload.count),
+                                ]
+                            )
                         }
-                    } catch {
+                    case let .dropped(turnID, reason, errorDescription):
+                        // 丢弃必须留痕。串音的旧形态是「静默地播了不该播的」，
+                        // 静音的旧形态是「静默地什么都没播」—— 两种都没有日志。
                         container.tracker().track(
-                            event: "tts_decoder_failed",
+                            event: reason == .decodeFailed ? "tts_decoder_failed" : "tts_frame_dropped",
                             properties: [
                                 "phase": "feed",
+                                "turn_id": turnID ?? "nil",
                                 "sequence": String(frame.sequence),
-                                "error": String(describing: error),
+                                "reason": reason.rawValue,
+                                "error": errorDescription ?? "n/a",
                             ]
                         )
                     }
     
+                // `ai.tts.start` 就是「轮次归属」这一刻：从这里到 `ai.tts.end` 之间
+                // 到达的二进制帧都属于这一轮（契约 `meta 83_`）。网关今天还不发它，
+                // 所以下面这一行目前是空转 —— 它正是「客户端先就绪」的那一半，
+                // 网关打开时不需要再动客户端。
                 case let .control(.aiTTSStart(turnID, voiceID, sampleRate, codec)):
-                    do {
-                        try ttsDispatcher.handle(
-                            control: .aiTTSStart(
-                                turnID: turnID,
-                                voiceID: voiceID,
-                                sampleRate: sampleRate,
-                                codec: codec
-                            )
-                        )
-                        ttsTrace.reset()
-                        container.tracker().track(
-                            event: "tts_start",
-                            properties: [
-                                "turn_id": turnID,
-                                "voice_id": voiceID,
-                                "sample_rate": String(sampleRate),
-                                "codec": codec,
-                            ]
-                        )
-                    } catch {
-                        container.tracker().track(
-                            event: "tts_decoder_failed",
-                            properties: [
-                                "phase": "prepare",
-                                "turn_id": turnID,
-                                "error": String(describing: error),
-                            ]
-                        )
-                    }
-    
+                    await ttsCoordinator.onStart(turnID: turnID)
+                    ttsTrace.reset()
+                    container.tracker().track(
+                        event: "tts_start",
+                        properties: [
+                            "turn_id": turnID,
+                            "voice_id": voiceID,
+                            "sample_rate": String(sampleRate),
+                            "codec": codec,
+                        ]
+                    )
+
                 case let .control(.aiTTSEnd(turnID, completionStatus, durationMs)):
-                    do {
-                        try ttsDispatcher.handle(
-                            control: .aiTTSEnd(
-                                turnID: turnID,
-                                completionStatus: completionStatus,
-                                durationMs: durationMs
-                            )
-                        )
-                        container.tracker().track(
-                            event: "tts_end",
-                            properties: [
-                                "turn_id": turnID,
-                                "completion_status": completionStatus,
-                                "duration_ms": durationMs.map(String.init) ?? "nil",
-                                "audio_frames": String(ttsTrace.audioFrameCount()),
-                            ]
-                        )
-                    } catch {
-                        container.tracker().track(
-                            event: "tts_decoder_failed",
-                            properties: [
-                                "phase": "finish",
-                                "turn_id": turnID,
-                                "error": String(describing: error),
-                            ]
-                        )
-                    }
+                    await ttsCoordinator.onEnd(turnID: turnID)
+                    container.tracker().track(
+                        event: "tts_end",
+                        properties: [
+                            "turn_id": turnID,
+                            "completion_status": completionStatus,
+                            "duration_ms": durationMs.map(String.init) ?? "nil",
+                            "audio_frames": String(ttsTrace.audioFrameCount()),
+                        ]
+                    )
     
                 case let .control(.feedbackBadge(badge, phraseBlockID, tier, turnID)):
                     // WSS has no eval.frame. `feedback.badge` is the turn-level
@@ -936,7 +915,7 @@ private func interpretSpeechSessionSideEffect(
     turnTimeoutTracking: TurnTimeoutTracking? = nil,
     speechCaptureGate: SpeechCaptureGate,
     evaluationArrival: EvaluationArrivalBox,
-    ttsDispatcher: TTSFrameDispatcher,
+    ttsCoordinator: TTSPlaybackCoordinator,
     ttsTrace: TTSStreamTrace,
     usesAutoVAD: Bool = false,
     voiceProcessingEnabled: Bool = false,
@@ -1067,13 +1046,15 @@ private func interpretSpeechSessionSideEffect(
 
     case .stopPlayback:
         return .fireAndForget {
-            let turnID = ttsDispatcher.activeTurnID() ?? "nil"
-            try? ttsDispatcher.interrupt()
+            let turnID = await ttsCoordinator.currentTurnID()
+            // 协调器做两件事：把这一轮标记为作废（挡住还在链路上的帧），
+            // 并让 sink 清空已经排进播放器的缓冲。第二条由它自己调 ——
+            // sink 就是 `audioEngine`，这里再调一次是重复的。
+            await ttsCoordinator.onInterrupt(turnID: turnID)
             container.tracker().track(
                 event: "tts_interrupt",
-                properties: ["turn_id": turnID]
+                properties: ["turn_id": turnID ?? "nil"]
             )
-            await audioEngine.interruptNow()
         }
 
     case .pausePlayback:
@@ -1121,10 +1102,10 @@ private func interpretSpeechSessionSideEffect(
         // B15: cancel all session-scoped tasks including the turn timeout.
         // disarm() is safe to call even if the timer was never started.
         turnTimeoutTracking?.disarm()
-        // Clear TTS binding on the middleware thread so a leftover start cannot
-        // swallow the next session's PCM if the host restarts immediately.
-        try? ttsDispatcher.reset()
         return .merge(
+            // Clear the turn attribution so a leftover `ai.tts.start` cannot claim
+            // the next session's PCM if the host restarts immediately.
+            .fireAndForget { await ttsCoordinator.reset() },
             // No `.cancel(id: transportEvents)`: the reader belongs to the
             // connection. Cancelling it here killed the *next* session's
             // consumer when the timing fell wrong, and the room sat on
@@ -1149,9 +1130,9 @@ private func interpretSpeechSessionSideEffect(
         // would double-end. Buy a background window, stop capture, send
         // `session.end`, then disconnect. Skip `end` when begin returns 0.
         turnTimeoutTracking?.disarm()
-        try? ttsDispatcher.reset()
         let backgroundTasks = container.backgroundTaskPort()
         return .merge(
+            .fireAndForget { await ttsCoordinator.reset() },
             // No `.cancel(id: transportEvents)`: the reader belongs to the
             // connection. Cancelling it here killed the *next* session's
             // consumer when the timing fell wrong, and the room sat on

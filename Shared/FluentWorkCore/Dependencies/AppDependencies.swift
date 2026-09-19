@@ -70,11 +70,26 @@ public enum SpeechBoundaryMode: Equatable, Sendable {
     case manual
 }
 
-public protocol AudioEngineProtocol: Sendable {
+/// 采集与播放的引擎契约。
+///
+/// 它**同时是** `AudioSink`：`TTSPlaybackCoordinator` 的播放出口就是这个引擎，
+/// 不是另一个对象。这是有意的 —— barge-in 水位线（`AudioPlaybackGate`）和
+/// `playbackRetired` 守卫都住在 `play(frame:)` 里，让引擎之外的实现去播会静默绕过
+/// 它们，而症状是「打断后接着说」或「结束练习后又被迟到帧拉起来」。
+public protocol AudioEngineProtocol: AudioSink {
     func startCapture() async throws
     func events() -> AsyncStream<AudioEngineEvent>
     func stopCapture() async
     func play(frame: WSAudioFrame) async
+    /// 播放已经解码好的 16kHz mono PCM16。
+    ///
+    /// 带轮次归属的帧走这条：轮次归属由 `TTSPlaybackCoordinator` 判定，
+    /// 引擎侧那道「按序列号的水位线」管不到它（也没有序列号可用）。
+    ///
+    /// 是**要求**而不是扩展默认实现 —— 同 `setVoiceProcessingEnabled` 那条注释
+    /// 的理由：默认实现会在 `any AudioEngineProtocol` 上静态派发，测试全绿而真机
+    /// 不出声。
+    func play(pcm: Data) async
     func interruptNow() async
     /// Hold TTS without dumping scheduled buffers. Cancel of 结束练习 resumes.
     func pausePlayback() async
@@ -104,6 +119,14 @@ public protocol AudioEngineProtocol: Sendable {
 }
 
 extension AudioEngineProtocol {
+    /// legacy 帧的播放就是今天那条路：`play(frame:)`（引擎侧解码 + 水位线）。
+    ///
+    /// 默认实现是**对的**，不是偷懒：这条路上没有任何引擎特有的分支要写，
+    /// 而它必须逐字节等于今天的出声路径，否则过渡期就会变味。
+    public func play(legacy frame: WSAudioFrame) async {
+        await play(frame: frame)
+    }
+
     public func setSpeechBoundaryMode(_ mode: SpeechBoundaryMode) async {}
     /// Declares whether the session should run engine-level voice processing.
     ///
@@ -328,6 +351,8 @@ public final class PlaceholderAudioEngine: AudioEngineProtocol, Sendable {
 
     public func play(frame: WSAudioFrame) async {}
 
+    public func play(pcm: Data) async {}
+
     public func interruptNow() async {}
 
     public func discardActiveSpeech() async {}
@@ -533,6 +558,14 @@ public extension Container {
 
     var wsAudioFrameDecoder: Factory<any WSAudioFrameDecoder> {
         self { RawPCM16FrameDecoder() }.cached
+    }
+
+    /// 带轮次归属的帧的解码 seam（`TTSPlaybackCoordinator` 用）。
+    ///
+    /// 复用 `wsAudioFrameDecoder` 这个工厂，而不是另起一个绑定：两个调用点必须
+    /// 解同一个 codec，否则又回到「双解码器」那条老路。
+    var audioFrameDecoder: Factory<any AudioFrameDecoder> {
+        self { WSAudioFrameDecoderAdapter(decoder: self.wsAudioFrameDecoder()) }.cached
     }
 
     var ttsDecoder: Factory<any TTSDecoder> {

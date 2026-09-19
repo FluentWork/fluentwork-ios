@@ -741,6 +741,33 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         enqueueWithoutWaiting(buffer)
     }
 
+    /// Plays PCM that a decoder has already produced (`AudioSink.play(pcm:)`).
+    ///
+    /// The turn-keyed path arrives here: `TTSPlaybackCoordinator` decided this
+    /// frame belongs to a live turn and decoded it. Two guards from
+    /// `play(frame:)` are deliberately kept and one is deliberately absent:
+    ///
+    /// - `playbackRetired` **kept**: a session that ended while the socket was
+    ///   still delivering must not be resurrected by a frame in flight.
+    /// - `makePCMBuffer` validation **kept**: it is the only thing standing
+    ///   between a malformed payload and a `scheduledBuffer` that never plays.
+    /// - the sequence watermark **absent**: `AudioPlaybackGate` is a
+    ///   "not at or below the interrupt watermark" test on the *sequence*
+    ///   axis, and there is no sequence here. Turn ownership answers the same
+    ///   question on the axis that actually matters — the coordinator drops
+    ///   the frames of a superseded turn before they ever reach this call.
+    public func play(pcm: Data) async {
+        guard !playbackRetired else { return }
+
+        guard let buffer = makePCMBuffer(from: pcm) else {
+            continuation.yield(.failed("scheduling dropped: PCM length \(pcm.count) not multiple of 2"))
+            return
+        }
+
+        guard startPlaybackIfNeeded() else { return }
+        enqueueWithoutWaiting(buffer)
+    }
+
     /// Queues a buffer and returns immediately.
     ///
     /// Deliberately **not** `await playerNode.scheduleBuffer(...)`, which is the

@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import FluentWorkNetworking
 @testable import FluentWorkCore
 
 /// TTSPlaybackCoordinator 的核心测试套件。
@@ -232,6 +233,134 @@ struct TTSPlaybackCoordinatorTests {
         ))
 
         #expect(await sink.legacyPlayCalls.count == 1)
+    }
+}
+
+// MARK: - 裸帧归属（契约 83：归属由 ai.tts.start / ai.tts.end 括起来决定）
+
+@Suite("裸帧归属与 draining 窗口")
+struct TTSPlaybackCoordinatorBareFrameTests {
+
+    @Test("没有 start 时，裸帧走 legacy 路径（今天的出声路径）")
+    func bareFrameWithoutStartPlaysAsLegacy() async {
+        let sink = RecordingSink()
+        let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
+
+        let outcome = await coordinator.onAudioFrame(
+            WSAudioFrame(sequence: 0, payload: Data([0x01, 0x02]))
+        )
+
+        #expect(outcome == .playedLegacy)
+        #expect(await sink.legacyPlayCalls.count == 1)
+    }
+
+    @Test("start 之后的裸帧归属该轮，经解码 seam 后播放")
+    func bareFrameAfterStartIsKeyedToThatTurn() async {
+        let sink = RecordingSink()
+        let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
+
+        await coordinator.onStart(turnID: "T1")
+        let outcome = await coordinator.onAudioFrame(
+            WSAudioFrame(sequence: 7, payload: Data([0x0A, 0x0B]))
+        )
+
+        #expect(outcome == .played(turnID: "T1"))
+        #expect(await sink.playCalls.count == 1)
+        #expect(await sink.legacyPlayCalls.isEmpty)
+    }
+
+    /// 这一条是 P0-11 在**裸帧入口**上的形状：打断之后、`ai.tts.end` 之前到达的
+    /// 帧仍然属于被打断的那一轮，必须被丢弃。如果归属指针在 interrupt 时被清空，
+    /// 它们会因为没有活跃轮次而退回 legacy —— 也就是「打断后上一轮接着说」。
+    @Test("打断之后、end 之前的裸帧被丢弃，而不是退回 legacy")
+    func bareFrameBetweenInterruptAndEndIsDropped() async {
+        let sink = RecordingSink()
+        let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
+
+        await coordinator.onStart(turnID: "T1")
+        await coordinator.onInterrupt(turnID: "T1")
+
+        let outcome = await coordinator.onAudioFrame(
+            WSAudioFrame(sequence: 8, payload: Data([0x08, 0x09]))
+        )
+
+        #expect(outcome == .dropped(turnID: "T1", reason: .superseded, errorDescription: nil))
+        #expect(await sink.playCalls.isEmpty, "被打断轮次的在途帧不得播放")
+        #expect(await sink.legacyPlayCalls.isEmpty, "也不得退回 legacy 播放")
+    }
+
+    @Test("end 之后裸帧退回 legacy（下一轮没有 start 时的老路）")
+    func bareFrameAfterEndFallsBackToLegacy() async {
+        let sink = RecordingSink()
+        let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
+
+        await coordinator.onStart(turnID: "T1")
+        await coordinator.onEnd(turnID: "T1")
+
+        let outcome = await coordinator.onAudioFrame(
+            WSAudioFrame(sequence: 9, payload: Data([0x09, 0x0A]))
+        )
+
+        #expect(outcome == .playedLegacy)
+        #expect(await sink.legacyPlayCalls.count == 1)
+    }
+
+    /// 契约 83 §4.3：一轮被打断后可能**永远收不到** `ai.tts.end`（连接断了、回合被
+    /// 放弃）。下一个 start 必须结束这个窗口，否则它会把下一轮的音频一起吞掉，
+    /// 而唯一的症状是静音。
+    @Test("新的 start 结束卡住的 draining 窗口")
+    func newStartEndsStuckDrainingWindow() async {
+        let sink = RecordingSink()
+        let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
+
+        await coordinator.onStart(turnID: "T1")
+        await coordinator.onInterrupt(turnID: "T1")
+        await coordinator.onStart(turnID: "T2")
+
+        let outcome = await coordinator.onAudioFrame(
+            WSAudioFrame(sequence: 12, payload: Data([0x0C, 0x0D]))
+        )
+
+        #expect(outcome == .played(turnID: "T2"))
+        #expect(await sink.playCalls.count == 1)
+    }
+
+    @Test("reset 清空归属，下一场的裸帧走 legacy")
+    func resetClearsAttribution() async {
+        let sink = RecordingSink()
+        let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
+
+        await coordinator.onStart(turnID: "T1")
+        await coordinator.reset()
+
+        let outcome = await coordinator.onAudioFrame(
+            WSAudioFrame(sequence: 0, payload: Data([0x01, 0x02]))
+        )
+
+        #expect(outcome == .playedLegacy)
+        #expect(await coordinator.currentTurnID() == nil)
+    }
+
+    @Test("没有活跃轮次时打断仍然清空 sink")
+    func interruptWithoutATurnStillFlushesSink() async {
+        let sink = RecordingSink()
+        let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
+
+        await coordinator.onInterrupt(turnID: nil)
+
+        #expect(await sink.interruptCount == 1)
+    }
+
+    @Test("空 payload 的裸帧被丢弃并带上原因")
+    func emptyPayloadIsDroppedWithReason() async {
+        let sink = RecordingSink()
+        let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
+
+        await coordinator.onStart(turnID: "T1")
+        let outcome = await coordinator.onAudioFrame(WSAudioFrame(sequence: 0, payload: Data()))
+
+        #expect(outcome == .dropped(turnID: "T1", reason: .decodeFailed, errorDescription: "empty payload"))
+        #expect(await sink.playCalls.isEmpty)
     }
 }
 

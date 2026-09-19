@@ -47,16 +47,14 @@ struct AudioSinkTests {
         #expect(await sink.legacyPlayCalls[1].payloadLength == 3)
     }
     
-    @Test("RecordingSink 记录中断和 drain 调用")
+    @Test("RecordingSink 记录中断调用")
     func recordingSinkCapturesControlCalls() async {
         let sink = RecordingSink()
-        
+
         await sink.interruptNow()
         await sink.interruptNow()
-        await sink.drain()
-        
+
         #expect(await sink.interruptCount == 2)
-        #expect(await sink.drainCount == 1)
     }
     
     @Test("RecordingSink 可以重置状态")
