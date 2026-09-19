@@ -270,36 +270,87 @@ internal final class SessionPhaseBox: @unchecked Sendable {
 /// captured" leaks audio the user never opened a turn for. The gateway
 /// commits its provider buffer on `user.speech.end`, so that leaked audio
 /// lands in the *next* turn's transcript.
+///
+/// **The gate counts what it decides.** It used to be silent, and it was the
+/// last completely invisible stage on the uplink — the engine reports every
+/// format-level drop, while a chunk refused here left no counter, no event and
+/// no timing mark anywhere. That matters because "the gate was shut while the
+/// user was talking" is indistinguishable, from the wire, from "the microphone
+/// produced nothing": both are a turn with zero uplink bytes. The number that
+/// separates them is `forwarded`, and it is now recorded per utterance
+/// (`audio_uplink_turn`).
 internal final class SpeechCaptureGate: @unchecked Sendable {
+    /// What the gate did during one utterance.
+    ///
+    /// `droppedOutside` is context, not a fault: most of a session is dropped by
+    /// design (inter-turn gaps, the whole time the AI is speaking), so a bare
+    /// drop count cannot be read as a problem. `forwarded` is the assertion —
+    /// a user who spoke for two seconds and produced `forwarded: 0` is the
+    /// `102_` silence, and it will now say so on the same turn it happened.
+    struct TurnCounts: Equatable, Sendable {
+        var forwarded: Int
+        var droppedOutside: Int
+    }
+
     private struct State {
         var open = false
+        var forwarded = 0
+        var droppedOutside = 0
     }
 
     private let storage = OSAllocatedUnfairLock<State>(initialState: State())
 
     func beginSpeech() {
-        storage.withLock { $0.open = true }
+        // Per-utterance, so `forwarded` cannot carry a previous turn's audio
+        // into this one's reading — the count has to be about *this* turn to
+        // answer "did the user's words reach the wire".
+        storage.withLock {
+            $0.open = true
+            $0.forwarded = 0
+        }
     }
 
     /// Normal turn end (`vadSpeechEnd` / `endManualSpeech`).
-    func endSpeech() {
-        storage.withLock { $0.open = false }
+    @discardableResult
+    func endSpeech() -> TurnCounts {
+        storage.withLock {
+            $0.open = false
+            return TurnCounts(forwarded: $0.forwarded, droppedOutside: $0.droppedOutside)
+        }
     }
 
     /// I20 recording abort. Identical wire effect to `endSpeech`; kept as a
     /// separate entry point because the call site also relies on the closed
     /// gate to swallow the trailing `speechEnded`.
-    func abort() {
-        storage.withLock { $0.open = false }
+    @discardableResult
+    func abort() -> TurnCounts {
+        storage.withLock {
+            $0.open = false
+            return TurnCounts(forwarded: $0.forwarded, droppedOutside: $0.droppedOutside)
+        }
     }
 
     var isOpen: Bool {
         storage.withLock { $0.open }
     }
 
-    /// PCM only leaves the device while the user has an utterance open.
-    var shouldForwardPCM: Bool {
-        storage.withLock { $0.open }
+    /// Decide *and* count in one lock acquisition — the only PCM egress path.
+    ///
+    /// Split into "ask, then record" it would need two acquisitions, and a close
+    /// landing between them would count a chunk that never left (or forward one
+    /// after the turn ended, which is the transcript-pollution defect the gate
+    /// exists to prevent).
+    ///
+    /// - Returns: `true` if this chunk may go on the wire.
+    func takeForwardDecision() -> Bool {
+        storage.withLock {
+            if $0.open {
+                $0.forwarded += 1
+                return true
+            }
+            $0.droppedOutside += 1
+            return false
+        }
     }
 }
 
@@ -443,7 +494,20 @@ private func audioEventPump(
                             pcmBuffer.removeAll()
                             continue
                         }
-                        speechCaptureGate.endSpeech()
+                        let uplink = speechCaptureGate.endSpeech()
+                        // Read together with the boundary it belongs to: a
+                        // `speech_end` with `forwarded: 0` after a multi-second
+                        // utterance is the `102_` silence stated as a number,
+                        // and it is the one shape that cannot be diagnosed from
+                        // either side alone — the client sent nothing, and the
+                        // gateway correctly heard nothing.
+                        timings.mark(
+                            event: "audio_uplink_turn",
+                            properties: [
+                                "forwarded": String(uplink.forwarded),
+                                "dropped_outside": String(uplink.droppedOutside),
+                            ]
+                        )
     
                         // B14 change: Server-side ASR (Volcengine Duplex relay) now provides
                         // the authoritative transcript via WSS `client.asr.transcription` frame.
@@ -489,7 +553,11 @@ private func audioEventPump(
                         if isCapturingSpeech {
                             pcmBuffer.append(data)
                         }
-                        guard speechCaptureGate.shouldForwardPCM else { continue }
+                        // The gate counts this decision, so a chunk refused here
+                        // is no longer invisible. It is the normal path for most
+                        // of a session; the count is what makes "shut the whole
+                        // time" readable.
+                        guard speechCaptureGate.takeForwardDecision() else { continue }
     
                         try await speechClient.sendAudioPCM(data)
                     } catch {
@@ -500,6 +568,31 @@ private func audioEventPump(
                 case .interruptedBySystem:
                     await dispatchBox.dispatch(.speakingRoom(.session(.interruptedBySystem)))
     
+                case let .captureKick(started, detail):
+                    // The render-cycle kick's outcome. Informational, and the
+                    // one diagnostic that makes the device run readable: with
+                    // `.connecting` waiting on the microphone, "kicked but never
+                    // delivered" and "never kicked" fail identically at the
+                    // watchdog and are different bugs.
+                    timings.mark(
+                        event: "audio_capture_kick",
+                        properties: [
+                            "started": started ? "true" : "false",
+                            "detail": detail,
+                        ]
+                    )
+
+                case let .captureInterruptionLifted(droppedBuffers):
+                    // Not a failure and no dispatch — the session continues
+                    // exactly as before. Recorded because the guard that ate
+                    // these buffers was invisible, and an interruption is the
+                    // one event that can explain a gap in the uplink without
+                    // anything being broken.
+                    timings.mark(
+                        event: "audio_capture_interruption_lifted",
+                        properties: ["dropped_buffers": String(droppedBuffers)]
+                    )
+
                 case .systemInterruptEnded:
                     await dispatchBox.dispatch(.speakingRoom(.session(.systemInterruptEnded)))
     
@@ -568,6 +661,13 @@ private func audioEventPump(
                     // but not delivering — which no format or converter
                     // diagnostic can see.
                     timings.mark(event: "audio_capture_first_buffer")
+                    // And it is more than a diagnostic: this is the half of
+                    // "ready" the socket cannot speak for. `.connecting` now
+                    // waits on both, so this dispatch is what opens the room for
+                    // talking. A session that never reaches here now fails on the
+                    // `connectWait` watchdog with a message the user can act on,
+                    // instead of transcribing silence.
+                    await dispatchBox.dispatch(.speakingRoom(.session(.captureLive)))
     
                 case let .failed(message):
                     timings.mark(event: "audio_engine_failed", properties: ["message": message])

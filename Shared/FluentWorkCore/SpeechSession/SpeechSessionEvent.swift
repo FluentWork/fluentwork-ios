@@ -7,6 +7,24 @@ import Foundation
 public enum SpeechSessionEvent: Equatable, Sendable {
     case sessionStartTap
     case socketReady
+    /// The input tap delivered its first buffer: the microphone is **proven to be
+    /// producing audio**, not merely installed.
+    ///
+    /// A different fact from `.socketReady`, and the one `.connecting` was
+    /// missing. `.connecting` used to end at `socketReady` alone, so a session
+    /// could announce "you can talk now" in front of a tap that had never
+    /// produced a single buffer — engine `isRunning`, formats correct, converter
+    /// non-nil, and nothing arriving. Measured on device 2026-09-20: the tap
+    /// delivered nothing for the whole first utterance, and its first buffer
+    /// landed 284ms *after* the first playback (twice, within 0.3ms). See `102_`
+    /// §2–4.
+    ///
+    /// Both this and `.socketReady` must arrive before the machine leaves
+    /// `.connecting`. `ProcessingTimeouts.connectWait` bounds the wait with a
+    /// user-visible, retryable failure.
+    ///
+    /// Producer: `audioEventPump`, from `AudioEngineEvent.captureFirstBuffer`.
+    case captureLive
     case aiTurnEnd
     case vadSpeechStart
     case holdStart

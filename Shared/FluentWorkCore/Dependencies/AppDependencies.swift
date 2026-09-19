@@ -74,6 +74,35 @@ public enum AudioEngineEvent: Equatable, Sendable {
     /// installed and never fired, which is a different bug from every one that
     /// has a format or a converter in it.
     case captureFirstBuffer
+    /// The system interruption lifted. `droppedBuffers` is how many the
+    /// `isSystemInterrupted` guard swallowed while it lasted.
+    ///
+    /// Emitted once per interruption, not once per buffer — at 48 kHz the tap
+    /// keeps firing through a phone call, so a per-buffer line would be thousands
+    /// a minute and would bury the interruption itself.
+    ///
+    /// The count is the point. Dropping buffers during an interruption is
+    /// correct, so nothing was ever worth reporting — but the guard was also
+    /// **silent**, which made "the system interrupted us" and "the microphone
+    /// produced nothing" the same observation from the outside. It is the
+    /// difference between a user whose call was briefly in the way and a session
+    /// that was broken before the call arrived.
+    case captureInterruptionLifted(droppedBuffers: Int)
+    /// The result of trying to start the render cycle at session start.
+    ///
+    /// Emitted once per `startCapture()`, right before `captureArmed`. The
+    /// microphone does not deliver a single buffer until something plays, and
+    /// `.connecting` waits for the microphone — so this is what breaks the
+    /// circle, and the pair of this event and `captureFirstBuffer` is the whole
+    /// verdict: `started: true` + no first buffer means the kick did not work,
+    /// `started: false` with a `detail` means it never got the chance.
+    ///
+    /// `detail` names which of the six exits was taken. The previous attempt at
+    /// this (`ff2c142`, a silent `AVAudioSourceNode`) reported nothing at all,
+    /// so "the fix did not work" and "the fix was never installed" were
+    /// indistinguishable — which is the failure mode this project keeps paying
+    /// for, and the reason this event exists rather than a comment.
+    case captureKick(started: Bool, detail: String)
     case failed(String)
 }
 

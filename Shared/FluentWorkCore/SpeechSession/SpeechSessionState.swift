@@ -202,6 +202,32 @@ public struct SpeechSessionState: Equatable, Sendable {
     /// `processingStageIsNonNilExactlyWhileProcessing`.
     public var processingStage: ProcessingStage?
 
+    /// The transport reported the socket is up. **Half of "ready", not all of it.**
+    public var socketReady: Bool
+    /// The engine proved the microphone actually delivers: the input tap
+    /// produced its first buffer.
+    ///
+    /// The proof matters because the weaker claim is not enough. `startCapture()`
+    /// can succeed on every check it can make on this side — permission granted,
+    /// session configured, format read, converter built, tap installed, engine
+    /// running — and still carry nothing, because `AVAudioEngine`'s input I/O in
+    /// this graph does not begin at `start()`; it follows the first playback.
+    /// Measured on device: zero buffers for a whole 2.07s utterance, first buffer
+    /// 284ms after the first playback (`102_` §2).
+    ///
+    /// So this is set by evidence, never by intent. Anything that infers it from
+    /// "we called startCapture and it did not throw" reintroduces the silent
+    /// session it exists to prevent.
+    public var captureLive: Bool
+
+    /// Both halves of "this session can carry a conversation" are proven.
+    ///
+    /// `.connecting` ends on this, not on `socketReady` alone. The gate is
+    /// bounded by `ProcessingTimeouts.connectWait`, so a microphone that never
+    /// delivers fails visibly ("连接超时，请重试") instead of leaving the user
+    /// talking into a room that looks like it is transcribing.
+    public var isReadyToSpeak: Bool { socketReady && captureLive }
+
     /// The cross-service log tag, resolved with the pipeline stage.
     ///
     /// `.processing` alone cannot answer this — `asr` / `llm` / `review` are
@@ -241,7 +267,9 @@ public struct SpeechSessionState: Equatable, Sendable {
         failureReason: String? = nil,
         userTurnCount: Int = 0,
         lastTurnOutcome: TurnOutcome? = nil,
-        processingStage: ProcessingStage? = nil
+        processingStage: ProcessingStage? = nil,
+        socketReady: Bool = false,
+        captureLive: Bool = false
     ) {
         self.phase = phase
         self.suspendedPhase = suspendedPhase
@@ -249,6 +277,8 @@ public struct SpeechSessionState: Equatable, Sendable {
         self.failureReason = failureReason
         self.userTurnCount = userTurnCount
         self.lastTurnOutcome = lastTurnOutcome
+        self.socketReady = socketReady
+        self.captureLive = captureLive
         // Normalised in the safe direction only: a stage that outlives its
         // phase is drift, but a `.processing` phase constructed without a
         // stage is a caller mistake and is left visible rather than papered

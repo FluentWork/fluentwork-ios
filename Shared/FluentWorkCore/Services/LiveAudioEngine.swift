@@ -164,9 +164,12 @@ enum PlaybackTeardown {
     enum Step: Equatable, Sendable {
         case stopPlayer
         case resetPlayer
+        case stopKeepAlive
+        case resetKeepAlive
         case stopEngine
         case removeTap
         case detachPlayer
+        case detachKeepAlive
     }
 
     /// The steps to run, in order, for the state capture is being stopped from.
@@ -182,12 +185,22 @@ enum PlaybackTeardown {
     static func steps(
         playerAttached: Bool,
         engineRunning: Bool,
-        tapInstalled: Bool = false
+        tapInstalled: Bool = false,
+        keepAliveAttached: Bool = false
     ) -> [Step] {
         var steps: [Step] = []
         if playerAttached {
             steps.append(.stopPlayer)
             steps.append(.resetPlayer)
+        }
+        // The keep-alive node gets the TTS player's treatment in full, including
+        // the detach. It renders silence, so no one would hear it survive a
+        // session — but a node left attached across a teardown is exactly the
+        // state the next session's `play()` crashes on, and "it was only the
+        // silent one" is not a property `AVAudioPlayerNode` cares about.
+        if keepAliveAttached {
+            steps.append(.stopKeepAlive)
+            steps.append(.resetKeepAlive)
         }
         if engineRunning {
             steps.append(.stopEngine)
@@ -197,6 +210,9 @@ enum PlaybackTeardown {
         }
         if playerAttached {
             steps.append(.detachPlayer)
+        }
+        if keepAliveAttached {
+            steps.append(.detachKeepAlive)
         }
         return steps
     }
@@ -230,6 +246,9 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// diagnostic would bury the fact it exists to reveal. Reset when capture
     /// starts, so a *new* session that starts dropping says so again.
     private var captureDropReported = false
+    /// Buffers the `isSystemInterrupted` guard swallowed during the interruption
+    /// in progress. Reset when one begins, reported when it lifts.
+    private var interruptionDroppedBuffers = 0
     private var speechTracker = AudioSpeechActivityTracker.forMode(.manual)
     /// When the current utterance opened, so its length can be reported
     /// alongside how it closed. The tracker cannot hold this itself: it has no
@@ -260,10 +279,46 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     // tests that only exercise the capture / event side.
     private let playerNode = AVAudioPlayerNode()
     private var playerAttached = false
-    /// A source that renders silence, connected to the mixer for the session's
-    /// whole life. See `attachSilentSourceIfNeeded` for why an engine without
-    /// one refuses to pull its own input tap.
-    private var silentSource: AVAudioSourceNode?
+    /// A player that loops silence for the session's whole life, so the render
+    /// cycle is running before anything is asked of the microphone.
+    ///
+    /// **A player, not a source node, and that distinction is measured.** The
+    /// first attempt at this used an `AVAudioSourceNode` rendering zeros
+    /// (`ff2c142`) and changed nothing: the tap's first buffer still arrived
+    /// 283.9ms after the first playback, the same as the 283.6ms before it. A
+    /// silent source does not start the render cycle; a player *playing* does.
+    /// The mechanism is not fully understood, but the evidence is one-sided
+    /// enough to pick the side it supports.
+    ///
+    /// Deliberately **not** `playerNode`. That node is the TTS player, and
+    /// `interruptNow()` stops and resets it on every barge-in — sharing it would
+    /// put the microphone back to sleep exactly when the user is talking.
+    private let keepAliveNode = AVAudioPlayerNode()
+    private var keepAliveAttached = false
+    /// Whether the looping buffer is already queued. Scheduling it twice would
+    /// queue a second loop over the first.
+    private var keepAliveBufferScheduled = false
+    /// Silence at 16 kHz mono, looping. One second is long enough that the loop
+    /// point is irrelevant and short enough to stay trivial to render.
+    private let keepAliveBuffer: AVAudioPCMBuffer? = {
+        guard
+            let buffer = AVAudioPCMBuffer(
+                pcmFormat: LiveAudioEngine.targetFormat,
+                frameCapacity: 16_000
+            )
+        else { return nil }
+        // `frameLength` before the memset, or `mDataByteSize` still describes an
+        // empty buffer and nothing gets zeroed. Zeroed through the buffer list
+        // rather than `int16ChannelData`, which is not the channel accessor for
+        // an interleaved format.
+        buffer.frameLength = 16_000
+        for entry in UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList) {
+            if let data = entry.mData {
+                memset(data, 0, Int(entry.mDataByteSize))
+            }
+        }
+        return buffer
+    }()
 
     /// Set when `stopCapture()` tears the audio graph down.
     ///
@@ -512,8 +567,10 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // happened together.
         attachPlayerIfNeeded()
         // Same window, same reason: the graph is finished before the engine
-        // starts and is never mutated after.
-        attachSilentSourceIfNeeded()
+        // starts and is never mutated after. The keep-alive player is started
+        // later, once the engine is confirmed running — attaching and starting
+        // in one synchronous block is the crash described above.
+        attachKeepAliveIfNeeded()
 
         let wasRunning = engine.isRunning
         var startAttempted = false
@@ -571,6 +628,16 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         playbackRetired = false
         playbackPaused = false
         startInterruptionObservation()
+
+        // Kick the render cycle before returning. `.connecting` waits for the
+        // microphone to prove itself (`SpeechSessionEvent.captureLive`), and on
+        // device the microphone does not deliver a single buffer until
+        // something plays — so a session that armed and played nothing could
+        // never become ready. Reported either way: this is a hypothesis under
+        // test, not a guarantee, and the event distinguishes "playing" from
+        // each of the five ways it can fail to be.
+        let kick = startKeepAlive()
+        continuation.yield(.captureKick(started: kick.started, detail: kick.detail))
 
         // The last line of startCapture, so its presence proves the graph was
         // armed — not merely that it reached the format read. It is the other
@@ -689,13 +756,21 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         for step in PlaybackTeardown.steps(
             playerAttached: playerAttached,
             engineRunning: engine.isRunning,
-            tapInstalled: shouldRemoveTap
+            tapInstalled: shouldRemoveTap,
+            keepAliveAttached: keepAliveAttached
         ) {
             switch step {
             case .stopPlayer:
                 playerNode.stop()
             case .resetPlayer:
                 playerNode.reset()
+            case .stopKeepAlive:
+                keepAliveNode.stop()
+            case .resetKeepAlive:
+                keepAliveNode.reset()
+                // The queued loop went with the reset, so the next session has
+                // to schedule it again rather than assume it is still there.
+                keepAliveBufferScheduled = false
             case .stopEngine:
                 engine.stop()
             case .removeTap:
@@ -703,6 +778,9 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             case .detachPlayer:
                 engine.detach(playerNode)
                 playerAttached = false
+            case .detachKeepAlive:
+                engine.detach(keepAliveNode)
+                keepAliveAttached = false
             }
         }
 
@@ -935,6 +1013,9 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         switch kind {
         case .began:
             isSystemInterrupted = true
+            // Counted from here so the number that comes out at `.ended` is
+            // about *this* interruption, not every one this engine has seen.
+            interruptionDroppedBuffers = 0
             _ = speechTracker.reset()
             if playerAttached {
                 playerNode.pause()
@@ -961,6 +1042,9 @@ public actor LiveAudioEngine: AudioEngineProtocol {
                 return
             }
             isSystemInterrupted = false
+            // Before the lift, so the count is attributed to the interruption
+            // that just ended rather than to whatever comes next.
+            continuation.yield(.captureInterruptionLifted(droppedBuffers: interruptionDroppedBuffers))
             continuation.yield(.systemInterruptEnded)
         case .routeChanged(let reason):
             continuation.yield(.routeChanged(reason))
@@ -977,7 +1061,14 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             captureFirstBufferSeen = true
             continuation.yield(.captureFirstBuffer)
         }
-        guard !isSystemInterrupted else { return }
+        // Correct to drop, and it used to be silent — which made "the system
+        // interrupted us" and "the microphone produced nothing" the same thing
+        // from the outside. Counted here, reported once when the interruption
+        // lifts (`captureInterruptionLifted`).
+        guard !isSystemInterrupted else {
+            interruptionDroppedBuffers += 1
+            return
+        }
         // The three `return nil`s inside `convertToPCM16`, plus the bare `return`
         // that used to sit here, were the last silent gate on the uplink. At
         // 48 kHz the tap fires ~86 times a second, and a graph whose every buffer
@@ -1332,6 +1423,38 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         engine.isRunning
     }
 
+    /// Test-only hook feeding one synthetic buffer through the real
+    /// `processInput`.
+    ///
+    /// The tap needs audio hardware, so every guard inside `processInput` — the
+    /// interruption counter, the converter check, the conversion guard — was
+    /// unreachable from a test. That is not a small gap: "the tap fired and a
+    /// guard ate the buffer" is the exact shape of the 2026-09-20 silence
+    /// (`102_` §2), and it was the one shape with no way to reproduce it off a
+    /// device. This hook closes it without making the guards testable through a
+    /// second, divergent code path.
+    ///
+    /// The buffer is built here rather than passed in because `AVAudioPCMBuffer`
+    /// is not `Sendable`: handing one across the actor boundary from a test
+    /// trips region isolation, and working around that would mean the test no
+    /// longer drives the same call the tap does.
+    ///
+    /// Silence is enough for the guards this exists for — they decide before any
+    /// sample is read.
+    func _testProcessInputSilentBuffer(frames: AVAudioFrameCount = 160) async {
+        guard
+            let format = AVAudioFormat(
+                commonFormat: .pcmFormatInt16,
+                sampleRate: 16_000,
+                channels: 1,
+                interleaved: true
+            ),
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames)
+        else { return }
+        buffer.frameLength = frames
+        await processInput(buffer)
+    }
+
 
     /// Test-only hook exercising `convertToPCM16` for the supplied input
     /// buffer + input format. Production callers should keep using
@@ -1404,41 +1527,72 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         playerAttached = true
     }
 
-    /// Gives the render cycle something to pull, so the input tap is live from
-    /// the first second of a session rather than from the first playback.
+    /// Attaches the keep-alive player. Same window as the TTS player — **before
+    /// `engine.start()`, never after** — because graph mutation on a running
+    /// engine is the F14/F15 crash family.
+    private func attachKeepAliveIfNeeded() {
+        guard !keepAliveAttached else { return }
+        engine.attach(keepAliveNode)
+        engine.connect(keepAliveNode, to: engine.mainMixerNode, format: Self.targetFormat)
+        keepAliveAttached = true
+    }
+
+    /// Starts the render cycle before anything is asked of the microphone.
     ///
     /// Measured on device 2026-09-20. `captureArmed` reported `running: true`
     /// with the tap installed — and then the tap delivered **no buffer at all**
     /// for the first eleven seconds. The user spoke and tapped 说完了 inside
     /// that window; the gateway received zero bytes and the turn ended
     /// `partial`. The tap's first buffer arrived **283 ms after the rescue
-    /// ladder began playing audio**.
+    /// ladder began playing audio**, and 283.6ms against 283.9ms across two
+    /// runs: deterministic, not a race.
     ///
-    /// So the input is pulled by the output. An engine whose only source is a
-    /// player that is not playing renders nothing, and an unpulled tap is a
-    /// silent microphone — which looks exactly like a working one from every
-    /// other angle. That is the whole of "the first session after launch cannot
-    /// be heard": before the first playback there is nothing to pull.
+    /// So the input follows the output, and `.connecting` now waits for the
+    /// microphone to prove itself — which means a session that never plays
+    /// anything can no longer start at all. This is what breaks that circle.
     ///
-    /// Silence is the correct signal to add: the mixer sums it with the player,
-    /// so it contributes nothing to what the user hears. It is attached in the
-    /// same window as the player — **before `engine.start()`, and never touched
-    /// again** — because graph mutation after start is the F14/F15 family.
-    private func attachSilentSourceIfNeeded() {
-        guard silentSource == nil else { return }
-        let format = engine.mainMixerNode.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else { return }
-        let source = AVAudioSourceNode(format: format) { _, _, _, audioBufferList in
-            // Real-time thread: write zeros, allocate nothing, return noErr.
-            for buffer in UnsafeMutableAudioBufferListPointer(audioBufferList) {
-                guard let data = buffer.mData else { continue }
-                memset(data, 0, Int(buffer.mDataByteSize))
-            }
-            return noErr
+    /// Six outcomes, and the event carries which one happened, because
+    /// `ff2c142`'s silent source taught the cost of an unverified fix that
+    /// reports nothing: it may never have been attached at all (its format
+    /// guard could fail unnoticed), and there was no way to tell that from
+    /// "attached and useless".
+    ///
+    /// - Returns: whether the cycle was asked to start, for the caller's log.
+    private func startKeepAlive() -> (started: Bool, detail: String) {
+        attachKeepAliveIfNeeded()
+        guard keepAliveAttached else {
+            return (false, "keep-alive node not attached")
         }
-        engine.attach(source)
-        engine.connect(source, to: engine.mainMixerNode, format: format)
-        silentSource = source
+        guard let buffer = keepAliveBuffer else {
+            return (false, "keep-alive buffer could not be built")
+        }
+        guard engine.isRunning else {
+            return (false, "engine not running")
+        }
+        guard keepAliveNode.engine === engine else {
+            keepAliveAttached = false
+            return (false, "keep-alive node detached from the engine")
+        }
+        if keepAliveNode.isPlaying {
+            return (true, "already playing")
+        }
+        if !keepAliveBufferScheduled {
+            // `.loops` rather than a one-shot: if the input really follows the
+            // output, a single kick would go quiet again the moment it drained
+            // — the same silence, forty milliseconds later.
+            keepAliveNode.scheduleBuffer(buffer, at: nil, options: [.loops], completionHandler: nil)
+            keepAliveBufferScheduled = true
+        }
+        // Raises rather than returns when the node has nothing to play into —
+        // measured on macOS 2026-09-20 as "player did not see an IO cycle",
+        // i.e. the engine reported `isRunning` while its render cycle had never
+        // ticked. That is the same confusion the `captureLive` gate exists for,
+        // from the other direction.
+        var raised: NSError?
+        guard FWTryCatch({ keepAliveNode.play() }, &raised) else {
+            return (false, "play() raised: \(raised?.localizedDescription ?? "unknown")")
+        }
+        return (true, "playing")
     }
 
     /// Wraps raw 16 kHz mono interleaved PCM16 bytes in an `AVAudioPCMBuffer`

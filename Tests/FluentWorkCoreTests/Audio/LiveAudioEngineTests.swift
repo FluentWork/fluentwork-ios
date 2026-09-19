@@ -916,6 +916,34 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
     #expect(event == .systemInterruptEnded)
 }
 
+/// The interruption guard dropped buffers silently, so the two ways to end up
+/// with no uplink audio looked the same.
+///
+/// Dropping while the system holds an interruption is *correct* — which is
+/// exactly why it never looked worth reporting. But "the call was briefly in the
+/// way" and "the microphone was producing nothing before the call arrived" are
+/// different problems with the same log, and only the second one is a bug. The
+/// count is what tells them apart (`102_` §6.1).
+@available(iOS 17, macOS 14, *)
+@Test func liveAudioEngineCountsBuffersDroppedDuringAnInterruption() async throws {
+    let engine = LiveAudioEngine(
+        decoder: RawPCM16FrameDecoder(),
+        interruptionObserver: RecordingAudioInterruptionObserver()
+    )
+    let stream = engine.events()
+
+    await engine.handleInterruption(.began)
+    for _ in 0..<5 {
+        await engine._testProcessInputSilentBuffer()
+    }
+    await engine.handleInterruption(.ended(shouldResume: true))
+
+    let lifted = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        if case .captureInterruptionLifted = event { return event } else { return nil }
+    }
+    #expect(lifted == .captureInterruptionLifted(droppedBuffers: 5))
+}
+
 // MARK: - Test doubles
 
 final class ThrowingAudioSessionManager: AudioSessionManaging, @unchecked Sendable {
@@ -1128,6 +1156,71 @@ final class VoiceProcessingRecorder: @unchecked Sendable {
     #expect(
         PlaybackTeardown.steps(playerAttached: false, engineRunning: true, tapInstalled: true)
             == [.stopEngine, .removeTap]
+    )
+}
+
+/// The keep-alive player is a second `AVAudioPlayerNode` on the same engine, so
+/// it inherits every ordering rule the first one has — including the detach.
+///
+/// It renders silence, which is why it is tempting to let it slide: nobody would
+/// *hear* it survive a teardown. But a node left attached across a teardown is
+/// precisely the state the next session's `play()` raises on ("player started
+/// when in a disconnected state", an uncaught `NSException`), and
+/// `AVAudioPlayerNode` has no notion of "only the silent one".
+@Test func teardownHandlesTheKeepAlivePlayerWithTheSameOrdering() {
+    let steps = PlaybackTeardown.steps(
+        playerAttached: true,
+        engineRunning: true,
+        tapInstalled: true,
+        keepAliveAttached: true
+    )
+
+    #expect(
+        steps == [
+            .stopPlayer, .resetPlayer,
+            .stopKeepAlive, .resetKeepAlive,
+            .stopEngine, .removeTap,
+            .detachPlayer, .detachKeepAlive,
+        ],
+        "got \(steps)"
+    )
+
+    let stopEngine = steps.firstIndex(of: .stopEngine)
+    if let stopEngine,
+       let stopKeepAlive = steps.firstIndex(of: .stopKeepAlive),
+       let resetKeepAlive = steps.firstIndex(of: .resetKeepAlive),
+       let detachKeepAlive = steps.firstIndex(of: .detachKeepAlive)
+    {
+        #expect(
+            stopKeepAlive < stopEngine && resetKeepAlive < stopEngine,
+            "the loop is stopped and its queue dumped before the engine stops, or a partial silent buffer drains through the teardown. Got \(steps)."
+        )
+        #expect(
+            stopEngine < detachKeepAlive,
+            "graph mutation on a running engine is the F14/F15 crash family. Got \(steps)."
+        )
+    } else {
+        Issue.record("the keep-alive node was not stopped, reset and detached: \(steps)")
+    }
+}
+
+/// Attaching the keep-alive player is the new default for a session, but the
+/// teardown must not assume it: a session that never got as far as attaching it
+/// (a start that threw at the format guard) tears down exactly as before.
+@Test func teardownWithoutTheKeepAlivePlayerIsUnchanged() {
+    #expect(
+        PlaybackTeardown.steps(playerAttached: true, engineRunning: true, tapInstalled: true)
+            == [.stopPlayer, .resetPlayer, .stopEngine, .removeTap, .detachPlayer],
+        "the keep-alive parameter must not add steps for a graph that has no keep-alive node"
+    )
+    #expect(
+        PlaybackTeardown.steps(
+            playerAttached: false,
+            engineRunning: true,
+            tapInstalled: false,
+            keepAliveAttached: true
+        ) == [.stopKeepAlive, .resetKeepAlive, .stopEngine, .detachKeepAlive],
+        "a session that attached the keep-alive but no TTS player still has to take it apart"
     )
 }
 

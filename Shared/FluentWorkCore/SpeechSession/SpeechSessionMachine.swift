@@ -33,11 +33,26 @@ public enum SpeechSessionMachine {
             state.suspendedPhase = nil
             state.processingStage = nil
             state.lastTurnOutcome = nil
+            // A new session proves both halves again. Carrying either forward
+            // would let the previous session's socket or microphone stand in for
+            // this one's — the gate would open on last session's evidence.
+            state.socketReady = false
+            state.captureLive = false
             effects.append(.createSession)
 
+        // Two independent facts, either order, both required. Whichever arrives
+        // second is the one that opens the session; the first is recorded and
+        // waits. `connectWait` bounds the wait from the `.connecting` entry, so
+        // a half that never arrives fails visibly rather than hanging on
+        // 「连接中」.
         case (.connecting, .socketReady):
-            state.phase = .aiSpeaking
             state.isReconnecting = false
+            state.socketReady = true
+            if state.captureLive { state.phase = .aiSpeaking }
+
+        case (.connecting, .captureLive):
+            state.captureLive = true
+            if state.socketReady { state.phase = .aiSpeaking }
 
         case (.connecting, .failed(let message)):
             state.phase = .failed
@@ -262,10 +277,20 @@ public enum SpeechSessionMachine {
         case (_, .socketReady) where state.isReconnecting:
             effects.append(contentsOf: completeReconnect(&state))
 
-        // Idempotent: duplicate socketReady while already live.
+        // Idempotent: duplicate socketReady while already live. `socketReady`
+        // is recorded even here so the invariant "past `.connecting` implies
+        // `isReadyToSpeak`" holds for every path that got there, not just the
+        // one that used the gate.
         case (.aiSpeaking, .socketReady), (.waitingUser, .socketReady), (.recording, .socketReady),
              (.processing, .socketReady), (.degradedText, .socketReady):
             state.isReconnecting = false
+            state.socketReady = true
+
+        // Late or duplicate liveness: nothing to promote, but the fact is true
+        // and the state should not say otherwise. Arrives here whenever the tap's
+        // first buffer lands after the session already moved on.
+        case (_, .captureLive) where state.phase.isActive:
+            state.captureLive = true
 
         default:
             return []
@@ -337,8 +362,14 @@ public enum SpeechSessionMachine {
         _ state: inout SpeechSessionState
     ) -> [SpeechSessionSideEffect] {
         state.isReconnecting = false
+        state.socketReady = true
         if state.phase == .connecting {
-            state.phase = .aiSpeaking
+            // The same gate as a first connect: the socket coming back says
+            // nothing about the microphone. If capture was never proven, the
+            // session stays `.connecting` and waits for `.captureLive` (or the
+            // watchdog) — promoting here would reopen the hole from the
+            // reconnect side.
+            if state.isReadyToSpeak { state.phase = .aiSpeaking }
             return []
         }
         guard state.discardsTurnOnReconnect else { return [] }
