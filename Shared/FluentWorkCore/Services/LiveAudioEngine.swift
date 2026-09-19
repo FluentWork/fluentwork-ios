@@ -222,6 +222,8 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     private var converter: AVAudioConverter?
     private var sourceFormat: AVAudioFormat?
     private var hasInstalledTap = false
+    /// Whether this capture session's tap has delivered its first buffer.
+    private var captureFirstBufferSeen = false
     /// Whether this capture session has already reported a dropped buffer.
     ///
     /// The tap fires ~86 times a second at 48 kHz, so an unreported-per-buffer
@@ -484,6 +486,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // Committed together, and only once there is a tap to use them.
         hasInstalledTap = true
         self.captureDropReported = false
+        self.captureFirstBufferSeen = false
         self.sourceFormat = inputFormat
         self.converter = converter
         // Rebuild from the configured mode, not from the initializer defaults.
@@ -537,6 +540,12 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         playbackRetired = false
         playbackPaused = false
         startInterruptionObservation()
+
+        // The last line of startCapture, so its presence proves the graph was
+        // armed — not merely that it reached the format read. It is the other
+        // half of `captureFirstBuffer`: together they separate "the tap exists
+        // but the graph never delivers" from "buffers arrive and die later".
+        continuation.yield(.captureArmed(engineRunning: engine.isRunning))
     }
 
     public func reconfigureForRouteChange() async {
@@ -924,6 +933,13 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
     private func processInput(_ buffer: AVAudioPCMBuffer) async {
         guard !isSystemInterrupted else { return }
+        // Reported before any guard can drop the buffer: the point is that the
+        // tap fired at all, which is a fact about the graph, not about this
+        // buffer's fate.
+        if !captureFirstBufferSeen {
+            captureFirstBufferSeen = true
+            continuation.yield(.captureFirstBuffer)
+        }
         // The three `return nil`s inside `convertToPCM16`, plus the bare `return`
         // that used to sit here, were the last silent gate on the uplink. At
         // 48 kHz the tap fires ~86 times a second, and a graph whose every buffer

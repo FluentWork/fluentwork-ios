@@ -545,6 +545,21 @@ private func audioEventPump(
                     // never heard, and neither side can say why. Emitted once per
                     // capture session by the engine.
                     timings.mark(event: "audio_capture_dropped", properties: ["reason": reason])
+
+                case let .captureArmed(engineRunning):
+                    // Proves the graph was armed, not merely that it reached the
+                    // format read. Paired with `audio_capture_first_buffer`.
+                    timings.mark(
+                        event: "audio_capture_armed",
+                        properties: ["engine_running": engineRunning ? "true" : "false"]
+                    )
+
+                case .captureFirstBuffer:
+                    // The tap fired. Without this line, a session that armed
+                    // cleanly and then sent nothing means the graph is installed
+                    // but not delivering — which no format or converter
+                    // diagnostic can see.
+                    timings.mark(event: "audio_capture_first_buffer")
     
                 case let .failed(message):
                     timings.mark(event: "audio_engine_failed", properties: ["message": message])

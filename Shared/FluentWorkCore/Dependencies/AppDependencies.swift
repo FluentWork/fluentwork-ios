@@ -56,6 +56,20 @@ public enum AudioEngineEvent: Equatable, Sendable {
     /// notice the gateway received no audio and the turn timed out. The client
     /// could not say why it sent nothing; now it can.
     case captureDropped(reason: String)
+    /// Capture is fully committed: the tap is in and the engine is up.
+    ///
+    /// Emitted at the very end of `startCapture()`, so its presence proves the
+    /// graph was armed rather than merely that it got as far as the format read.
+    /// Paired with `captureFirstBuffer`, it is what separates "the tap exists
+    /// but the graph is not delivering" from "buffers arrive and die later" —
+    /// two failures that look identical from the network side.
+    case captureArmed(engineRunning: Bool)
+    /// The tap delivered its first buffer of this capture session.
+    ///
+    /// Once per session, like `captureDropped`. Absent means the tap was
+    /// installed and never fired, which is a different bug from every one that
+    /// has a format or a converter in it.
+    case captureFirstBuffer
     case failed(String)
 }
 
