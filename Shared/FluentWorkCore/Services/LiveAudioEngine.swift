@@ -508,10 +508,15 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // happened together.
         attachPlayerIfNeeded()
 
+        let wasRunning = engine.isRunning
+        var startAttempted = false
+        var startThrew = false
         if !engine.isRunning {
+            startAttempted = true
             do {
                 try startCaptureEngine(engine)
             } catch {
+                startThrew = true
                 // If start fails (e.g., another app holds the audio session),
                 // tear down the tap we just installed so a retry from a clean
                 // state doesn't trip the "tap already installed" precondition.
@@ -545,7 +550,12 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // armed — not merely that it reached the format read. It is the other
         // half of `captureFirstBuffer`: together they separate "the tap exists
         // but the graph never delivers" from "buffers arrive and die later".
-        continuation.yield(.captureArmed(engineRunning: engine.isRunning))
+        continuation.yield(.captureArmed(
+            wasRunning: wasRunning,
+            startAttempted: startAttempted,
+            startThrew: startThrew,
+            running: engine.isRunning
+        ))
     }
 
     public func reconfigureForRouteChange() async {

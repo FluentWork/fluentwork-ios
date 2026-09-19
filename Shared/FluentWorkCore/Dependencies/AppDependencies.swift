@@ -60,10 +60,14 @@ public enum AudioEngineEvent: Equatable, Sendable {
     ///
     /// Emitted at the very end of `startCapture()`, so its presence proves the
     /// graph was armed rather than merely that it got as far as the format read.
-    /// Paired with `captureFirstBuffer`, it is what separates "the tap exists
-    /// but the graph is not delivering" from "buffers arrive and die later" —
-    /// two failures that look identical from the network side.
-    case captureArmed(engineRunning: Bool)
+    ///
+    /// The four flags describe the start transition, because "the engine is not
+    /// running" has two very different causes that the final state alone cannot
+    /// tell apart: `wasRunning` (the start was skipped because the engine was
+    /// believed to be up), and `startAttempted` + `startThrew` (it was started,
+    /// did not throw, and is nevertheless not running). Measured on device
+    /// 2026-09-20: armed with `running: false` and a tap that never fired.
+    case captureArmed(wasRunning: Bool, startAttempted: Bool, startThrew: Bool, running: Bool)
     /// The tap delivered its first buffer of this capture session.
     ///
     /// Once per session, like `captureDropped`. Absent means the tap was
