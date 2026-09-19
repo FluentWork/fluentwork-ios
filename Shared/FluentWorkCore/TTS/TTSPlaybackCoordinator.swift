@@ -194,9 +194,8 @@ public actor TTSPlaybackCoordinator {
     }
 
     private func playKeyed(_ frame: TurnKeyedAudioFrame, turnID: String) async -> TTSFrameOutcome {
-        // 空 payload 在旧派发器里是 `TTSDecoderError.emptyPayload`，在引擎侧是
-        // 「PCM 长度不是偶数」。前者带得动 turn_id，后者带不动 —— 在归属这一层
-        // 拦下来，日志才能说清是哪一轮的第几帧空的。
+        // 空 payload 在引擎侧只会变成「PCM 长度不是偶数」，那条日志带不动 turn_id ——
+        // 在归属这一层拦下来，日志才能说清是哪一轮的第几帧是空的。
         guard !frame.payload.isEmpty else {
             return .dropped(turnID: turnID, reason: .decodeFailed, errorDescription: "empty payload")
         }

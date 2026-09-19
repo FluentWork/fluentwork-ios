@@ -3,6 +3,29 @@ import FluentWorkCore
 import FluentWorkNetworking
 import Testing
 
+/// `ai.tts.*` 的**线格式**测试。
+///
+/// ## 这个文件删掉了什么（Stage 4）
+///
+/// 原先这里还有 9 条 `MockTTSDecoder` / `TTSFrameDispatcher` 的测试。它们钉住的是
+/// 旧派发器的状态机（`.idle` 漏帧、`.draining` 认领不播、第二个出口防卡死），
+/// 而那个状态机正是要消灭的东西 —— 契约 `meta 83_` §1 说二进制帧格式不变、
+/// 归属由 start/end 括起来决定，新实现把「谁在这段区间里」做成显式的查表
+/// （`TTSPlaybackCoordinator`），不再是「漏出去还是被接住」。
+///
+/// 那条状态机里**值得保留的意图**已经迁到对的载体上，逐条对应：
+///
+/// | 旧测试 | 现在钉在哪 |
+/// |--------|-----------|
+/// | `testTTSDispatcher_IgnoresAudioBeforeStart` | `bareFrameWithoutStartPlaysAsLegacy`（旧契约本身就是要消灭的 bug） |
+/// | `testTTSDispatcher_InterruptDrainsUntilEndWithoutDoubleFinish` | `bareFrameBetweenInterruptAndEndIsDropped` |
+/// | `testTTSDispatcher_NewStartEndsAStuckDrainingStream` | `newStartEndsStuckDrainingWindow` |
+/// | `testTTSDispatcher_ResetClearsActiveStreamSoLegacyPCMCanPlay` | `resetClearsAttribution` + `leftoverTTSStartDoesNotClaimTheNextSessionsFrames` |
+/// | `testTTSDispatcher_RejectsEmptyPayload` | `emptyPayloadIsDroppedWithReason` |
+/// | `testMockDecoder_*`（记录 prepare/feed/finish） | 随 Mock 消失；「播了什么」由 `RecordingSink` / `RecordingAudioFrameDecoder` 记录 |
+///
+/// 时间线一侧由此文件保证：帧怎么编解码、`ai.tts.audio` 为什么不是 JSON 控制帧。
+
 @Test func testAITTSStart_DecodeValid() throws {
     let json = """
     {"type":"ai.tts.start","turn_id":"turn-1","voice_id":"mock_voice_01","sample_rate":24000,"codec":"opus"}
@@ -23,6 +46,16 @@ import Testing
     let encoded = WSAudioFrameCodec.encode(frame)
     let decoded = try WSAudioFrameCodec.decode(encoded)
     #expect(decoded == frame)
+}
+
+/// 二进制布局是 4 字节大端 seq + payload，**帧上不带 turn_id**（契约 `83_` §1：
+/// 格式一个字节都不改，归属由 start/end 括起来决定）。这条把那个「不带」钉住：
+/// 后端如果哪天想塞 turn_id 进帧里，会先在这里红。
+@Test func testAITTSAudio_BinaryLayoutIsSequenceThenPayload() throws {
+    let encoded = WSAudioFrameCodec.encode(
+        WSAudioFrame(sequence: 0x0102_0304, payload: Data([0xAA, 0xBB]))
+    )
+    #expect(encoded == Data([0x01, 0x02, 0x03, 0x04, 0xAA, 0xBB]))
 }
 
 @Test func testAITTSEnd_OptionalDurationMs() throws {
@@ -54,164 +87,6 @@ import Testing
     let endJSON = try JSONSerialization.jsonObject(with: end) as? [String: Any]
     #expect(startJSON?["type"] as? String == "ai.tts.start")
     #expect(endJSON?["type"] as? String == "ai.tts.end")
-}
-
-@Test func testMockDecoder_PrepareFeedFinish_Sequence() throws {
-    let decoder = MockTTSDecoder()
-    let dispatcher = TTSFrameDispatcher(decoder: decoder)
-
-    try dispatcher.handle(
-        control: .aiTTSStart(
-            turnID: "turn-1",
-            voiceID: "mock_voice_01",
-            sampleRate: 24_000,
-            codec: "opus"
-        )
-    )
-    #expect(dispatcher.activeTurnID() == "turn-1")
-    try dispatcher.handle(audio: WSAudioFrame(sequence: 0, payload: Data([0x0A])))
-    try dispatcher.handle(audio: WSAudioFrame(sequence: 1, payload: Data([0x0B])))
-    try dispatcher.handle(
-        control: .aiTTSEnd(turnID: "turn-1", completionStatus: "ok", durationMs: 40)
-    )
-    #expect(dispatcher.activeTurnID() == nil)
-
-    #expect(decoder.snapshotPrepares().count == 1)
-    #expect(decoder.snapshotFeeds().count == 2)
-    #expect(decoder.snapshotFinishes().count == 1)
-    #expect(decoder.snapshotFeeds().map(\.seq) == [0, 1])
-    #expect(decoder.snapshotFeeds().map(\.turnId) == ["turn-1", "turn-1"])
-    #expect(decoder.snapshotFinishes()[0].status == "ok")
-    #expect(decoder.snapshotFinishes()[0].durationMs == 40)
-}
-
-@Test func testMockDecoder_RecordAllCalls() throws {
-    let decoder = MockTTSDecoder()
-
-    try decoder.prepare(voiceId: "v-opus", sampleRate: 24_000, codec: "opus")
-    try decoder.prepare(voiceId: "v-pcm", sampleRate: 16_000, codec: "pcm")
-    try decoder.prepare(voiceId: "v-48", sampleRate: 48_000, codec: "opus")
-    try decoder.feed(seq: 3, bytes: Data([0xFF]), turnId: "turn-2")
-    try decoder.finish(turnId: "turn-2", status: "error", durationMs: nil)
-
-    #expect(decoder.snapshotPrepares().map(\.codec) == ["opus", "pcm", "opus"])
-    #expect(decoder.snapshotPrepares().map(\.sampleRate) == [24_000, 16_000, 48_000])
-    #expect(decoder.snapshotFeeds().count == 1)
-    #expect(decoder.snapshotFinishes().map(\.status) == ["error"])
-}
-
-@Test func testMockDecoder_RejectsUnsupportedCodecAndSampleRate() {
-    let decoder = MockTTSDecoder()
-    #expect(throws: TTSDecoderError.unsupportedCodec("aac")) {
-        try decoder.prepare(voiceId: "v", sampleRate: 24_000, codec: "aac")
-    }
-    #expect(throws: TTSDecoderError.unsupportedSampleRate(8_000)) {
-        try decoder.prepare(voiceId: "v", sampleRate: 8_000, codec: "opus")
-    }
-}
-
-@Test func testTTSDispatcher_IgnoresAudioBeforeStart() throws {
-    let decoder = MockTTSDecoder()
-    let dispatcher = TTSFrameDispatcher(decoder: decoder)
-
-    let consumed = try dispatcher.handle(audio: WSAudioFrame(sequence: 0, payload: Data([0x01])))
-    #expect(consumed == false)
-    #expect(decoder.snapshotFeeds().isEmpty)
-    #expect(dispatcher.activeTurnID() == nil)
-}
-
-@Test func testTTSDispatcher_RejectsEmptyPayload() throws {
-    let decoder = MockTTSDecoder()
-    let dispatcher = TTSFrameDispatcher(decoder: decoder)
-    try dispatcher.handle(
-        control: .aiTTSStart(
-            turnID: "turn-1",
-            voiceID: "v",
-            sampleRate: 24_000,
-            codec: "opus"
-        )
-    )
-    #expect(throws: TTSDecoderError.emptyPayload) {
-        try dispatcher.handle(audio: WSAudioFrame(sequence: 0, payload: Data()))
-    }
-}
-
-@Test func testTTSDispatcher_InterruptDrainsUntilEndWithoutDoubleFinish() throws {
-    let decoder = MockTTSDecoder()
-    let dispatcher = TTSFrameDispatcher(decoder: decoder)
-    try dispatcher.handle(
-        control: .aiTTSStart(
-            turnID: "turn-1",
-            voiceID: "v",
-            sampleRate: 24_000,
-            codec: "opus"
-        )
-    )
-    try dispatcher.interrupt()
-    let leftoverConsumed = try dispatcher.handle(
-        audio: WSAudioFrame(sequence: 9, payload: Data([0x99]))
-    )
-    try dispatcher.handle(
-        control: .aiTTSEnd(turnID: "turn-1", completionStatus: "ok", durationMs: 20)
-    )
-
-    #expect(leftoverConsumed == true)
-    #expect(decoder.snapshotFeeds().isEmpty)
-    #expect(decoder.snapshotFinishes().map(\.status) == ["interrupted"])
-}
-
-/// **The case that makes a stuck `.draining` harmless mid-session.**
-///
-/// `.draining` ends on `ai.tts.end` — which an interrupted turn does receive in
-/// the ordinary course of things, but which it will never receive if the turn
-/// was abandoned or the connection dropped. Without a second exit, the stream
-/// would sit in `.draining` and **eat the next turn's audio too**, and the only
-/// symptom would be silence.
-///
-/// There is a second exit: `ai.tts.start` overwrites the state unconditionally.
-/// This pins it, because it is load-bearing now — until 2026-09-12 the gateway
-/// sent no `ai.tts.start` at all and every frame missed the dispatcher, so a
-/// stuck stream could not swallow anything. Teaching the gateway to send one
-/// (`meta docs/30_技术方案/83_`) is what makes this path live.
-@Test func testTTSDispatcher_NewStartEndsAStuckDrainingStream() throws {
-    let decoder = MockTTSDecoder()
-    let dispatcher = TTSFrameDispatcher(decoder: decoder)
-    try dispatcher.handle(
-        control: .aiTTSStart(turnID: "turn-1", voiceID: "v", sampleRate: 24_000, codec: "opus")
-    )
-    try dispatcher.interrupt()
-
-    // No `ai.tts.end` for turn-1 — the turn was abandoned. The next turn starts.
-    try dispatcher.handle(
-        control: .aiTTSStart(turnID: "turn-2", voiceID: "v", sampleRate: 24_000, codec: "opus")
-    )
-    let consumed = try dispatcher.handle(
-        audio: WSAudioFrame(sequence: 1, payload: Data([0x01]))
-    )
-
-    #expect(consumed == true, "turn-2's audio must reach the decoder, not be eaten by turn-1's leftovers")
-    #expect(
-        decoder.snapshotFeeds().map(\.turnId) == ["turn-2"],
-        "the frame belongs to turn-2 and must be fed as turn-2"
-    )
-}
-
-@Test func testTTSDispatcher_ResetClearsActiveStreamSoLegacyPCMCanPlay() throws {
-    let decoder = MockTTSDecoder()
-    let dispatcher = TTSFrameDispatcher(decoder: decoder)
-    try dispatcher.handle(
-        control: .aiTTSStart(
-            turnID: "turn-1",
-            voiceID: "v",
-            sampleRate: 24_000,
-            codec: "opus"
-        )
-    )
-    try dispatcher.reset()
-    let consumed = try dispatcher.handle(audio: WSAudioFrame(sequence: 0, payload: Data([0x01])))
-
-    #expect(consumed == false)
-    #expect(decoder.snapshotFinishes().map(\.status) == ["interrupted"])
 }
 
 @Test func controlFrameCodecRejectsJSONTTSAudio() throws {

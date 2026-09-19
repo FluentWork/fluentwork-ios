@@ -568,26 +568,13 @@ public extension Container {
         self { WSAudioFrameDecoderAdapter(decoder: self.wsAudioFrameDecoder()) }.cached
     }
 
-    var ttsDecoder: Factory<any TTSDecoder> {
-        // Unique so parallel tests do not share a recording mock, and so each
-        // middleware instance owns its own decoder for the session lifetime.
-        // ROLLED BACK 2026-09-12 to `MockTTSDecoder` for production too.
-        //
-        // `EngineBackedTTSDecoder` is written, tested (ordering, payload
-        // validation) and still in the tree — but wiring it in silenced the
-        // assistant on device the moment the gateway started sending
-        // `ai.tts.start`. The dispatcher claims every frame once it has seen a
-        // start, so the fallback that used to make audio work is gone, and one
-        // of the two changes (this one, or the server's withheld audio) is what
-        // broke it. Both were rolled back; the analysis is in
-        // `meta docs/30_技术方案/84_`.
-        //
-        // Restoring this line is one half of re-landing that work. The other
-        // half is on the gateway, and the two must be re-landed together with a
-        // device check between them — the failure mode is silence, which no
-        // unit test here can see.
-        self { MockTTSDecoder() }.unique
-    }
+    // 这里曾经有一个 `ttsDecoder` 绑定，指向 `MockTTSDecoder`（只记录、不出声）。
+    // 2026-09-12 的静音事故就是它：网关一发 `ai.tts.start`，帧被旧派发器认领，
+    // 音频从此交给一台录音机。Stage 4 把整条并行路径删掉了 —— 现在带轮次归属的帧
+    // 走 `audioFrameDecoder`（真实解码）→ `AudioSink.play(pcm:)`（真的出声）。
+    //
+    // 回滚方式也随之改变：网关停发 `ai.tts.start`，帧自动退回 legacy 路径，
+    // 客户端不需要改任何一行（契约 `meta 83_` §2）。
 
     var speechSessionClient: Factory<SpeechSessionClientProtocol> {
         self {

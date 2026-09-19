@@ -338,6 +338,56 @@ import Testing
     #expect(message.contains("decode failed"))
 }
 
+/// `AudioSink.play(pcm:)` —— 带轮次归属的帧的播放出口。
+///
+/// 这两条是从被删掉的 `EngineAudioSink` 缓冲测试迁过来的不变量（Stage 4）：
+/// 半个样本构不出缓冲，偶数长度则真的入队并启动播放节点。区别在于它们现在钉在
+/// **真正会出声**的那条路径上，而不是一个没有生产接线、只是长得像播放器的 actor。
+@available(iOS 17, macOS 14, *)
+@Test func playPCMSchedulingRejectsAnOddByteCount() async {
+    let engine = LiveAudioEngine(decoder: RawPCM16FrameDecoder())
+    let stream = engine.events()
+
+    await engine.play(pcm: Data([0x01, 0x02, 0x03]))
+
+    let failure = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        if case .failed = event { return event } else { return nil }
+    }
+    guard case let .failed(message) = failure else {
+        Issue.record("expected .failed for an odd byte count, got \(String(describing: failure))")
+        return
+    }
+    #expect(message.contains("not multiple of 2"))
+    #expect(await engine._testPlaybackStarted() == false)
+}
+
+@available(iOS 17, macOS 14, *)
+@Test func playPCMSchedulingRejectsEmptyPCM() async {
+    let engine = LiveAudioEngine(decoder: RawPCM16FrameDecoder())
+    let stream = engine.events()
+
+    await engine.play(pcm: Data())
+
+    let failure = await consumeFirstEvent(stream, within: .milliseconds(250)) { event in
+        if case .failed = event { return event } else { return nil }
+    }
+    #expect(failure != nil, "空 PCM 必须报错，而不是悄悄入队一个空缓冲")
+}
+
+@available(iOS 17, macOS 14, *)
+@Test func playPCMSchedulingStartsPlaybackForScheduledAudio() async {
+    let engine = LiveAudioEngine(decoder: RawPCM16FrameDecoder())
+
+    #expect(await engine._testPlaybackStarted() == false)
+
+    await engine.play(pcm: Data([0x01, 0x02, 0x03, 0x04]))
+
+    #expect(
+        await engine._testPlaybackStarted() == true,
+        "入了队却没启动播放节点 = 静音，且没有任何断言会红"
+    )
+}
+
 /// Consumes the first matching event from `stream` within `timeout`, cancelling
 /// the stream iterator on either branch so the source actor can deinit.
 private func consumeFirstEvent<T: Sendable>(
