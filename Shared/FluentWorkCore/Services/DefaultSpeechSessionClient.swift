@@ -138,8 +138,14 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
 
     public func submitTranscript(_ text: String) async {
         // Interrupt marker from SpeechSession middleware.
+        //
+        // The control frame *is* the interrupt — that is the whole of it. This
+        // used to also arm a transport-side sequence watermark
+        // (`transport.markInterrupted()`), whose only effect was to make the
+        // transport drop inbound audio by sequence. That gate is gone: the
+        // transport delivers every frame, and attribution happens in
+        // `TTSPlaybackCoordinator` on the turn axis.
         guard text == "__interrupt__" else { return }
-        await transport.markInterrupted()
         try? await transport.send(control: .interrupt)
     }
 

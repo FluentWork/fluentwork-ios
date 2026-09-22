@@ -111,79 +111,18 @@ import Testing
     #expect(description?.contains("4") == true)
 }
 
-@Test func dropPolicyNeverDropsWithoutInterruptWatermark() {
-    #expect(AudioFrameDropPolicy.shouldDrop(frameSequence: 0, interruptMaxSequence: nil) == false)
-    #expect(AudioFrameDropPolicy.shouldDrop(frameSequence: 99, interruptMaxSequence: nil) == false)
-}
-
-@Test func dropPolicyDropsEqualAndLowerSequences() {
-    #expect(AudioFrameDropPolicy.shouldDrop(frameSequence: 10, interruptMaxSequence: 10) == true)
-    #expect(AudioFrameDropPolicy.shouldDrop(frameSequence: 9, interruptMaxSequence: 10) == true)
-    #expect(AudioFrameDropPolicy.shouldDrop(frameSequence: 11, interruptMaxSequence: 10) == false)
-}
-
-@Test func dropGateTracksMaxAndAppliesInclusiveWatermark() {
-    var gate = AudioFrameDropGate()
-    gate.observe(sequence: 3)
-    gate.observe(sequence: 7)
-    gate.observe(sequence: 5)
-    #expect(gate.maxObservedSequence == 7)
-
-    gate.markInterrupted()
-    #expect(gate.shouldDeliver(sequence: 7) == false)
-    #expect(gate.shouldDeliver(sequence: 6) == false)
-    #expect(gate.shouldDeliver(sequence: 8) == true)
-}
-
-/// The gate drops silently, and a silent run of drops is what turns a numbering
-/// regression on the gateway side into "the reply is half missing" with nothing
-/// in any log to explain it.
-@Test func audioDropReportAnnouncesTheRunThenClosesWithTheLoss() {
-    var report = AudioDropReport()
-
-    // Opening report: the first drop is what makes a run visible.
-    #expect(
-        report.recordDrop(sequence: 3, watermark: 240)
-            == .audioFrameDropped(sequence: 3, watermark: 240, dropped: 1)
-    )
-    // Same run, already announced — no repeat for every frame of a 300-frame loss.
-    #expect(report.recordDrop(sequence: 4, watermark: 240) == nil)
-
-    // Closing report carries the size of the loss.
-    #expect(
-        report.closeRun(watermark: 240)
-            == .audioFrameDropped(sequence: 0, watermark: 240, dropped: 2)
-    )
-    #expect(report.closeRun(watermark: 240) == nil)
-    #expect(report.dropped == 0)
-}
-
-/// A run that never closes is the worst case — the watermark keeps suppressing
-/// everything after it — so it must not be the one case that reports nothing.
-@Test func audioDropReportKeepsAnUnclosedRunVisible() {
-    var report = AudioDropReport()
-
-    _ = report.recordDrop(sequence: 1, watermark: 500)
-
-    #expect(report.dropped == 1)
-    #expect(report.reportedWatermark == 500)
-}
-
-@Test func audioDropReportResetStartsAFreshRun() {
-    var report = AudioDropReport()
-
-    _ = report.recordDrop(sequence: 9, watermark: 240)
-    report.reset()
-
-    #expect(report.dropped == 0)
-    #expect(report.reportedWatermark == nil)
-    #expect(
-        report.recordDrop(sequence: 1, watermark: 240)
-            == .audioFrameDropped(sequence: 1, watermark: 240, dropped: 1)
-    )
-}
-
-@Test func inMemoryTransportDropsStaleAudioAfterInterrupt() async {
+/// The transport has no drop decision of its own.
+///
+/// It used to run every inbound frame past a barge-in sequence watermark:
+/// `AudioFrameDropPolicy`, `AudioFrameDropGate`, `AudioDropReport` and the
+/// `BargeInAudioGate` that composed them are all gone — see
+/// `18_删除传输层序号水印.md`, and `aBargeInMustNotSwallowTheNextTurnsAudio`
+/// below for why a sequence number cannot express turn membership.
+///
+/// What is left is the transport's actual contract: **every frame it is handed
+/// reaches the consumer.** Ascending, repeated and restarted numbering are all
+/// in the list, because the transport does not read the value.
+@Test func inMemoryTransportDeliversEveryFrameItIsGiven() async {
     let transport = InMemorySocketTransport()
     try? await transport.connect(
         url: URL(string: "ws://127.0.0.1/ws")!,
@@ -191,13 +130,14 @@ import Testing
         ticket: "ticket"
     )
 
-    #expect(await transport.emitAudio(WSAudioFrame(sequence: 1, payload: Data([0x01]))) == true)
-    #expect(await transport.emitAudio(WSAudioFrame(sequence: 2, payload: Data([0x02]))) == true)
-
-    await transport.markInterrupted()
-
-    #expect(await transport.emitAudio(WSAudioFrame(sequence: 2, payload: Data([0x02]))) == false)
-    #expect(await transport.emitAudio(WSAudioFrame(sequence: 3, payload: Data([0x03]))) == true)
+    for sequence: UInt32 in [1, 2, 2, 0, 1] {
+        #expect(
+            await transport.emitAudio(
+                WSAudioFrame(sequence: sequence, payload: Data([UInt8(sequence)]))
+            ) == true,
+            "the transport dropped frame \(sequence): it has no drop policy to drop it with"
+        )
+    }
 }
 
 @Test func transportFailureMapsToSpeakingRoomFailedAction() {
@@ -533,8 +473,21 @@ private actor TransportHolder {
         self.transport = transport
     }
 
-    func markInterrupted() async {
-        await transport?.markInterrupted()
+    /// Sends the barge-in the way the app does — as the `control.interrupt`
+    /// frame, and nothing else.
+    ///
+    /// There used to be a second call here, `markInterrupted()`, which armed a
+    /// transport-side drop watermark. It is gone: a barge-in on the transport is
+    /// now exactly one outbound control frame, and nothing the transport learns
+    /// from it can change how it treats inbound audio. That is what the test
+    /// below pins.
+    ///
+    /// This harness never calls `connect()`, so the send itself throws
+    /// `notConnected` and is discarded. That is deliberate — what matters is
+    /// that the barge-in goes through the real `send(control:)` path, so an
+    /// implementation that armed a drop policy from it would be caught.
+    func sendInterrupt() async {
+        try? await transport?.send(control: .interrupt)
     }
 
     func run(_ source: any SocketMessageSource) async {
@@ -546,37 +499,53 @@ private actor TransportHolder {
     }
 }
 
-/// The barge-in watermark must not outlive the turn that set it.
+/// A barge-in must not make the transport swallow the **next** turn's audio.
 ///
-/// `AudioFrameDropGate.interruptMaxSequence` was cleared only by `connect()`, so
-/// within a session it never cleared at all — `clearInterrupt()` had **no
-/// production caller**. The thing the gate does is per-turn (drop the audio
-/// already in flight when the user barges in); the lifetime it was given is
-/// per-session. `77_` P1-7.
+/// The transport used to carry a sequence watermark: the barge-in captured the
+/// highest sequence seen so far, and every later frame at or below it was
+/// dropped until `ai.turn.end` cleared it. Two things were wrong with that, and
+/// they were independent:
 ///
-/// The two only diverge when the sequence numbering goes backwards, which is
-/// exactly what F18 was: a transparent reopen restarted numbering at 1 while the
-/// watermark sat in the hundreds, and every frame after it was dropped **in
-/// silence** — text kept arriving, audio was simply gone. The gateway no longer
-/// restarts numbering, but the gate still relies on that. This pins the gate
-/// instead of the gateway.
-@Test func theBargeInWatermarkDoesNotOutliveItsTurn() async {
+/// 1. It could not do the job it was written for. The stated purpose was to drop
+///    the audio still in flight for the turn the user interrupted — but the
+///    WebSocket stream is ordered, so a frame arriving *after* the interrupt
+///    necessarily carries a sequence **above** the watermark and was let
+///    through. Only duplicates and out-of-order frames could be caught, and
+///    neither is what the comment described.
+/// 2. It *could* swallow a whole later turn. The gateway's numbering restarts
+///    per turn (`08_` §2 measured frames numbered from 0), so while the
+///    watermark was armed the next turn's `0..N` were all at or below it.
+///
+/// `ai.turn.end` releasing the watermark is the only thing that hid (2), and it
+/// was a gateway promise rather than a client invariant. A turn that is
+/// abandoned — the connection drops, or the server treats the barge-in as a
+/// session-level abort — never sends it, and the watermark stayed armed for the
+/// rest of the session. That is the script below: the interrupt is never
+/// followed by `ai.turn.end`, and the next turn restarts its numbering at 0.
+///
+/// Every frame must be delivered. Attribution is not the transport's question: a
+/// sequence number cannot say which turn a frame belongs to
+/// (`07_Stage4_删除死路径.md` §2). `TTSPlaybackCoordinator` answers it on the
+/// turn axis, and reports what it drops as `tts_frame_dropped`.
+@Test func aBargeInMustNotSwallowTheNextTurnsAudio() async {
     // The holder owns the transport so it can be released before the stream is
     // drained: its `deinit` is what finishes the event stream. Holding a plain
     // reference leaves the loop below waiting on a stream that never ends.
     let (holder, events) = TransportHolder.make()
     let source = InterleavingMessageSource([
+        // Turn 1.
         .message(.data(WSAudioFrameCodec.encode(WSAudioFrame(sequence: 1, payload: Data([0x01]))))),
         .message(.data(WSAudioFrameCodec.encode(WSAudioFrame(sequence: 2, payload: Data([0x02]))))),
-        // The user barges in: the gate records the highest sequence seen.
-        .perform { await holder.markInterrupted() },
-        // The interrupted turn ends. Everything it had in flight is now moot,
-        // so the watermark has done its job and must go.
-        .message(.string(#"{"type":"ai.turn.end","turn_id":"turn-1","outcome":"ok"}"#)),
-        // A later frame whose numbering went backwards — the F18 shape. It is
-        // a *new* turn's audio and must be delivered, not swallowed by a
-        // watermark that belongs to a turn that is over.
-        .message(.data(WSAudioFrameCodec.encode(WSAudioFrame(sequence: 1, payload: Data([0x03]))))),
+        // The user barges in. On the transport this is one outbound control
+        // frame and nothing else — there is no drop policy left to arm.
+        .perform { await holder.sendInterrupt() },
+        // Turn 2, numbering restarted from 0. Under the old watermark all three
+        // of these were at or below it and were swallowed in silence. No
+        // `ai.turn.end` for turn 1, deliberately: the turn was abandoned, so the
+        // watermark would never have been released.
+        .message(.data(WSAudioFrameCodec.encode(WSAudioFrame(sequence: 0, payload: Data([0x03]))))),
+        .message(.data(WSAudioFrameCodec.encode(WSAudioFrame(sequence: 1, payload: Data([0x04]))))),
+        .message(.data(WSAudioFrameCodec.encode(WSAudioFrame(sequence: 2, payload: Data([0x05]))))),
     ])
 
     await holder.run(source)
@@ -587,47 +556,24 @@ private actor TransportHolder {
         if case let .audio(frame) = event { delivered.append(frame.sequence) }
     }
 
-    // First turn: 1 and 2 arrive before the barge-in and are played.
-    #expect(delivered.contains(1))
-    #expect(delivered.contains(2))
-    // The last frame shares a sequence with the first, so "delivered twice" is
-    // the signature that the watermark was cleared rather than a coincidence.
-    #expect(delivered.filter { $0 == 1 }.count == 2, "the post-turn frame was dropped: watermark outlived its turn")
-}
-
-/// The test double must report drops the way production does.
-///
-/// `InMemorySocketTransport` shared the drop **decision** with the real
-/// transport but not the drop **report**: production emitted an
-/// `audioFrameDropped` diagnostic for every run and the double emitted nothing.
-/// So a test could not observe a drop at all — and "is the drop observable" is
-/// the first question worth asking when a reply comes back half missing.
-///
-/// Both now go through ``BargeInAudioGate``, so neither can take the decision
-/// without the report. `77_` P1-22.
-@Test func inMemoryTransportReportsTheDropsItMakes() async {
-    let transport = InMemorySocketTransport()
-    try? await transport.connect(
-        url: URL(string: "ws://127.0.0.1/ws")!,
-        sessionID: "s-1",
-        ticket: "ticket"
+    // Turn 1 played, then turn 2 — in arrival order, nothing swallowed. The
+    // repeated 1 and 2 are the signature: the same sequence value appears in two
+    // different turns, and a watermark that decides by sequence cannot tell them
+    // apart.
+    #expect(
+        delivered == [1, 2, 0, 1, 2],
+        "the transport dropped audio a barge-in did not make stale: \(delivered)"
     )
-
-    #expect(await transport.emitAudio(WSAudioFrame(sequence: 1, payload: Data([0x01]))) == true)
-    #expect(await transport.emitAudio(WSAudioFrame(sequence: 2, payload: Data([0x02]))) == true)
-
-    await transport.markInterrupted()
-
-    // Dropped — and, crucially, *said to have been dropped*.
-    #expect(await transport.emitAudio(WSAudioFrame(sequence: 2, payload: Data([0x02]))) == false)
-    // A later frame closes the run with its size.
-    #expect(await transport.emitAudio(WSAudioFrame(sequence: 3, payload: Data([0x03]))) == true)
-
-    // The opening report (the first drop makes the run visible) and the closing
-    // one (its size) — the same two the production transport emits.
-    let reported = await transport.emittedDiagnostics.compactMap { diagnostic -> Int? in
-        guard case let .audioFrameDropped(_, _, dropped) = diagnostic else { return nil }
-        return dropped
-    }
-    #expect(reported == [1, 1], "the double made a drop it never reported: \(reported)")
 }
+
+// The drop **report** that used to be pinned here — `77_` P1-22, "is the drop
+// observable when a reply comes back half missing?" — moved with the drop
+// *decision* itself, and it moved to the better owner.
+//
+// The transport no longer drops anything, so there is nothing for it to report.
+// The decision is `TTSPlaybackCoordinator.onAudio`'s `.dropped(reason:)`, which
+// is tracked as `tts_frame_dropped` / `tts_decoder_failed` in
+// `SpeechSessionMiddleware` and carries the datum a sequence watermark never
+// had: the `turn_id`, plus a reason (`.superseded` / `.unknownTurn` /
+// `.decodeFailed`). See `TTSPlaybackCoordinatorTests.bareFrameBetweenInterruptAndEndIsDropped`
+// for the superseded case.

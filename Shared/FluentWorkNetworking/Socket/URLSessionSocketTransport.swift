@@ -39,7 +39,6 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
     private var webSocketTask: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
-    private var bargeIn = BargeInAudioGate()
     /// Gateway↔phone clock estimate, fed by the app-level ping/pong round trip.
     /// See ``ClockOffsetEstimator`` for why it is not simply "server time minus
     /// local time".
@@ -105,7 +104,6 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         activeURL = url
         activeSessionID = sessionID
         activeTicket = ticket
-        bargeIn = BargeInAudioGate()
         consecutivePingFailures = 0
 
         emit(.stateChanged(.connecting))
@@ -166,10 +164,6 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         } catch {
             throw SocketTransportError.network(error.localizedDescription)
         }
-    }
-
-    public func markInterrupted() async {
-        bargeIn.markInterrupted()
     }
 
     // MARK: - Private
@@ -318,7 +312,6 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
             do {
                 let frame = try WSControlFrameCodec.decode(data)
                 recordClockOffsetIfPong(frame)
-                releaseInterruptWatermarkIfTurnEnded(frame)
                 emit(.control(frame))
             } catch let error as WSControlFrameCodingError {
                 // An unknown `type` is a version difference, not a broken
@@ -349,11 +342,20 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         case let .data(data):
             do {
                 let frame = try WSAudioFrameCodec.decode(data)
-                let (deliver, diagnostic) = bargeIn.accept(frame.sequence)
-                if let diagnostic { emit(.diagnostic(diagnostic)) }
-                if deliver {
-                    emit(.audio(frame))
-                }
+                // Delivered unconditionally: **the transport has no drop policy.**
+                //
+                // Every inbound binary frame used to be run past a sequence
+                // watermark armed by the last barge-in. That gate could not do the
+                // job it was written for — this stream is ordered, so a frame
+                // arriving after the interrupt always carries a sequence *above*
+                // the watermark and was let through anyway — and it *could* swallow
+                // a whole later turn, whose numbering restarts at 0.
+                //
+                // Attribution needs the turn axis, and a sequence number cannot
+                // supply it. `TTSPlaybackCoordinator` decides by turn and reports
+                // what it drops (`tts_frame_dropped`). See
+                // `docs/70_tts_wss_refactor/18_删除传输层序号水印.md`.
+                emit(.audio(frame))
             } catch {
                 throw SocketTransportError.decodingFailed(
                     "audio frame decode failed: \(error.localizedDescription) (bytes=\(data.count))"
@@ -363,33 +365,6 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         @unknown default:
             throw SocketTransportError.decodingFailed("unsupported websocket message")
         }
-    }
-
-    /// A finished turn releases the barge-in watermark it set.
-    ///
-    /// The gate drops frames at or below the watermark, and the watermark was
-    /// cleared **only by `connect()`** — so within a session it never cleared at
-    /// all, and `AudioFrameDropGate.clearInterrupt()` had no production caller.
-    ///
-    /// What the gate does is per-turn: when the user barges in, drop the audio
-    /// already in flight for the turn they interrupted. What it was given is a
-    /// per-session lifetime. The two only diverge when the sequence numbering
-    /// goes backwards — which is exactly F18, where a transparent reopen
-    /// restarted numbering at 1 while the watermark sat in the hundreds, and
-    /// every frame afterwards was dropped **in silence**. The gateway no longer
-    /// restarts numbering; this makes the gate stop depending on that.
-    ///
-    /// `ai.turn.end` is the boundary: it is terminal for its turn, B15
-    /// guarantees it on every exit path, and audio for a turn always precedes
-    /// it. Deliberately **not** a "the sequence went backwards" heuristic — that
-    /// would fire on a genuinely out-of-order frame and hide the real defect.
-    ///
-    /// The drop run is closed *before* the watermark goes, so the record of
-    /// what the watermark swallowed survives the release. Clearing first would
-    /// erase the only evidence that anything was lost.
-    private func releaseInterruptWatermarkIfTurnEnded(_ frame: WSControlFrame) {
-        guard case .aiTurnEnd = frame else { return }
-        if let diagnostic = bargeIn.clearInterrupt() { emit(.diagnostic(diagnostic)) }
     }
 
     /// Completes a clock-probe round trip when a pong lands.

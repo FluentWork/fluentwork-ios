@@ -128,8 +128,12 @@ public enum SpeechBoundaryMode: Equatable, Sendable {
 /// 让引擎之外的实现去播会静默绕过它，症状是「结束练习后又被迟到帧拉起来」。
 ///
 /// 引擎侧曾经还有一道 `AudioPlaybackGate`（按序列号的水印）。它已随
-/// `play(frame:)` 一起删除：barge-in 的丢弃现在只有一处，在传输层
-/// （`BargeInAudioGate`），而轮次归属由 `TTSPlaybackCoordinator` 按轮判定。
+/// `play(frame:)` 一起删除。传输层那道同类的水印（`BargeInAudioGate`）也在
+/// 2026-09-22 删掉了，理由是同一个：序号说不出一个帧属于哪一轮。
+///
+/// 所以**现在没有任何一层按序号丢弃音频**——两道都去掉了，而不是把两处合成一处。
+/// 归属与丢弃都由 `TTSPlaybackCoordinator` 在轮次轴上判定，并留下
+/// `tts_frame_dropped` 埋点。
 public protocol AudioEngineProtocol: AudioSink {
     func startCapture() async throws
     func events() -> AsyncStream<AudioEngineEvent>

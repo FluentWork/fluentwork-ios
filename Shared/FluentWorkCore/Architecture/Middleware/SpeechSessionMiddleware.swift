@@ -937,12 +937,6 @@ internal func makeTransportEventRouter(
                 ]
             )
 
-        // The barge-in watermark discarding inbound audio. Reported
-        // at the start and end of each run, so `dropped` is the size
-        // of the loss. A `sequence` at or below `watermark` on a
-        // later turn is the signature of the gateway's numbering
-        // going backwards — which is what makes this event worth
-        // more than the silence it replaces.
         case let .clockOffsetEstimated(offset):
             // P1-5: a tighter gateway↔phone clock estimate. Handed to the
             // recorder rather than logged here — its only consumer is the
@@ -963,16 +957,6 @@ internal func makeTransportEventRouter(
                 properties: [
                     "type": type,
                     "size_bytes": String(sizeBytes),
-                ]
-            )
-
-        case let .audioFrameDropped(sequence, watermark, dropped):
-            container.tracker().track(
-                event: "transport_audio_dropped",
-                properties: [
-                    "sequence": String(sequence),
-                    "watermark": String(watermark),
-                    "dropped": String(dropped),
                 ]
             )
         }

@@ -5,7 +5,6 @@ public actor InMemorySocketTransport: SocketTransportProtocol {
     public private(set) var connectCalls: [(url: URL, sessionID: String, ticket: String)] = []
     public private(set) var sentControlFrames: [WSControlFrame] = []
     public private(set) var sentAudioPayloads: [Data] = []
-    public private(set) var interruptMarks = 0
     /// Diagnostics the double emitted. Recorded as well as streamed, so a test
     /// can assert on them without draining a stream that never finishes — the
     /// double has no `deinit` that would end it.
@@ -14,7 +13,6 @@ public actor InMemorySocketTransport: SocketTransportProtocol {
 
     nonisolated public let events: AsyncStream<SocketTransportEvent>
     private let continuation: AsyncStream<SocketTransportEvent>.Continuation
-    private var bargeIn = BargeInAudioGate()
     private var isConnected = false
 
     public init() {
@@ -26,7 +24,6 @@ public actor InMemorySocketTransport: SocketTransportProtocol {
     public func connect(url: URL, sessionID: String, ticket: String) async throws {
         connectCalls.append((url, sessionID, ticket))
         isConnected = true
-        bargeIn = BargeInAudioGate()
 
         continuation.yield(.stateChanged(.connecting))
         continuation.yield(
@@ -55,11 +52,6 @@ public actor InMemorySocketTransport: SocketTransportProtocol {
         sentAudioPayloads.append(data)
     }
 
-    public func markInterrupted() async {
-        interruptMarks += 1
-        bargeIn.markInterrupted()
-    }
-
     public func emitFailure(_ error: SocketTransportError) async {
         continuation.yield(.failure(error))
     }
@@ -72,21 +64,17 @@ public actor InMemorySocketTransport: SocketTransportProtocol {
         continuation.yield(.control(frame))
     }
 
-    /// Injects an audio frame through the same drop-gate path as production transport.
+    /// Injects an audio frame exactly as production transport does.
     ///
-    /// "The same path" now includes the **report**: this used to share only the
-    /// drop decision, so a test could not observe a drop that production would
-    /// have reported. Both go through ``BargeInAudioGate`` so they cannot drift.
+    /// "Exactly as" now means **no drop decision at all**. This used to run the
+    /// frame past a barge-in sequence watermark, and it used to report the drops
+    /// it made so the double and production could not drift. Both went with the
+    /// watermark: a sequence number cannot say which turn a frame belongs to, so
+    /// there was nothing for the gate to decide correctly. The drop decision
+    /// lives in `TTSPlaybackCoordinator`, on the turn axis.
     @discardableResult
     public func emitAudio(_ frame: WSAudioFrame) -> Bool {
-        let (deliver, diagnostic) = bargeIn.accept(frame.sequence)
-        if let diagnostic {
-            emittedDiagnostics.append(diagnostic)
-            continuation.yield(.diagnostic(diagnostic))
-        }
-        if deliver {
-            continuation.yield(.audio(frame))
-        }
-        return deliver
+        continuation.yield(.audio(frame))
+        return true
     }
 }

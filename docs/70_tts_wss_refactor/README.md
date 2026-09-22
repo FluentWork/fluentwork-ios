@@ -22,6 +22,12 @@
 
 **双水印门禁（P-D）已经收敛成一道**（2026-09-20）。引擎侧那道 `AudioPlaybackGate` 连同它的入口 `play(frame:)` 一起删除了——它不只是没有读者，而是**不可能被武装**：watermark 的唯一赋值点写的是 `lastAcceptedSequence`，而后者只在 `shouldAccept` 内写，`shouldAccept` 的唯一调用点又是永不执行的 `play(frame:)`。证据链与 2026-09-12 03:57 那段原始记录见 [`07`](./07_Stage4_删除死路径.md) §2。今天 barge-in 的丢弃**只在传输层发生一次**（`BargeInAudioGate`）。
 
+> **补记（2026-09-22）：「只剩一道」这个说法本身是错的——两道都删了。** 上面最后那句把「少了一道」当成了「留下的那道是对的」，这两件事不一样。传输层那道和引擎侧那道**同轴（序号）、同类（水位线）**，而 `07` §2 用来删掉引擎侧的论证**逐字适用**于它：**序号说不出一个帧属于哪一轮**。
+>
+> 它有两处毛病，互相独立：**(a)** 它做不到被声称的工作——WS 保序，所以打断**之后**到达的帧序号必然**大于**水位，一律被放行；它只能挡住重复帧/乱序帧，那不是注释里写的职责。**(b)** 它却是**唯一能无声吞掉整轮音频**的机制——网关编号每轮从 0 起，水位武装期间到达的下一轮 `0..N` 全部 ≤ 水位，于是**整轮静音**。**(b)** 一直靠后端「被打断那一轮必定先发 `ai.turn.end`」这条**承诺**遮住，而客户端自己没有不变量；回合被放弃（连接断了、后端按会话级中止处理）就永远等不到它。
+>
+> **现在没有任何一层按序号丢弃音频**——两道都去掉了，而不是把两处合成一处。归属与丢弃由 `TTSPlaybackCoordinator` 在轮次轴上判定，并留下 `tts_frame_dropped` 埋点。见 [`18`](./18_删除传输层序号水印.md)。
+
 **巨石中间件（P-E）原封未动**——这一条仍然成立，而且现在有准确数字：路由只占它 1470 行里的约 275 行（19%），拆出去的只是那个 switch 壳；`audioEventPump`（209 行）仍是第二个大 switch，`TransportEventRouter` 不覆盖它。
 
 另外 P-G 那根 `EngineBackedTTSDecoder` 的 AsyncStream 单消费者桥，文件被 `f3bb127` 加回来过、**本轮已再次删除**（`07` §1）。
@@ -47,6 +53,7 @@
 | 15 | [`15_D4_waitingUser下的打断必须停播.md`](./15_D4_waitingUser下的打断必须停播.md) | D4：`.waitingUser` 下的 barge-in 为什么不停残留音频、为什么只该停播不该发 interrupt | 实施记录（`swift test` 587/587）；**真机未验**，另记一批既有 2 秒超时 flaky |
 | 16 | [`16_测试进程不再构造真的音频引擎.md`](./16_测试进程不再构造真的音频引擎.md) | 测试里为什么会构造真的 `LiveAudioEngine`（真麦克风）？三处「是不是在测试里」的判据为什么全是死码 | 实施记录（`swift test` 588/588）；真引擎构造实测 39 → 0 |
 | 17 | [`17_测试进程里的麦克风替身恒开.md`](./17_测试进程里的麦克风替身恒开.md) | 权限请求为什么在测试里会走到真 `AVAudioSession`？`MockDeviceMode` 的判据为什么在测试里恒假 | 实施记录（`swift test` 590/590）；生产与真机路径零变化 |
+| 18 | [`18_删除传输层序号水印.md`](./18_删除传输层序号水印.md) | D2：传输层的 barge-in 水印为什么既做不到它被声称的工作、又是唯一能无声吞掉整轮音频的机制 | 实施记录（`swift test` 583/583）；**真机未验**（与本改动正交） |
 
 ## 与既有文档/台账的对应关系
 
@@ -78,7 +85,7 @@
 | `WSAudioFrame`（只有 seq、无 turn_id） | `Shared/FluentWorkNetworking/Socket/WSAudioFrameCodec.swift:9` |
 | **`LiveAudioEngine.play(pcm:)`**（引擎唯一的播放入口；`playbackRetired` 守卫在此） | `Shared/FluentWorkCore/Services/LiveAudioEngine.swift:697` |
 | `RawPCM16FrameDecoder`（`audioFrameDecoder` 的底层实现，一个 codec 两个调用点） | `Shared/FluentWorkCore/Dependencies/AppDependencies.swift:562-564` |
-| **传输层的 barge-in 门**（唯一一道；每帧入站二进制都过它） | `Shared/FluentWorkNetworking/Socket/AudioFrameDropGate.swift`（`BargeInAudioGate`） |
+| ~~传输层的 barge-in 门~~ / ~~`AudioFrameDropGate.swift`~~ | **已删除**（2026-09-22）。整文件（`AudioFrameDropPolicy` / `AudioFrameDropGate` / `AudioDropReport` / `BargeInAudioGate`）连同 `SocketTransportDiagnostic.audioFrameDropped` 与 `SocketTransportProtocol.markInterrupted()` 一起删除。理由见 `18` §2 |
 | ~~`TTSFrameDispatcher`~~ / ~~`MockTTSDecoder`~~ | 已删除（Stage 4）。文件与 DI 绑定都不在了 |
 | ~~`LiveAudioEngine.play(frame:)`~~ / ~~`AudioPlaybackGate`~~ | **已删除**（2026-09-20）。理由与证据见 `07` §2 |
 | ~~`EngineBackedTTSDecoder`~~ / ~~`TTSFrameDispatcher`~~ | **已重新删除**（2026-09-20）。`e64237e` 删过、`f3bb127` 加了回来、本轮再次删除 |
@@ -108,9 +115,30 @@
 三处 API 更正是接线的前提，其中一处会直接造成故障：`.failure` 原被硬编码成 `.ignored`，照原样接线会**静默吞掉 socket 断线**。
 
 **2. 引擎侧的水印与其入口删除了。** `AudioPlaybackGate` 不只是没有读者——它的 watermark 唯一赋值点写的是 `lastAcceptedSequence`，而后者只在 `shouldAccept` 内写，`shouldAccept` 的唯一调用点又是永不执行的 `play(frame:)`。**它不可能被武装，即使有帧路由到那里也一个都拦不住。** `play(frame:)` 一并删除；barge-in 的丢弃现在只在传输层发生一次。证据链与 2026-09-12 03:57 的原始记录见 [`07`](./07_Stage4_删除死路径.md) §2。
+> **注（2026-09-22）**：本条末尾「只在传输层发生一次」在当时成立，但当时把「少了一道」误读成了「留下的那道是对的」。传输层那道已于 2026-09-22 删除，见 `18_`。
 
 **3. 顺带重新删掉了两个孤儿文件**：`TTSDecoder.swift`(164) 与 `EngineBackedTTSDecoder.swift`(86)——`e64237e` 删过、`f3bb127` 加了回来、本轮再次删除（删前核对全仓零引用，只剩两处墓碑注释）。
 
 **4. 仍然没有做到的**：中间件没有被拆小——路由只占它 19% 的行数，`audioEventPump` 那个 209 行的 switch 不归 router 管。
 
 > **⚠️ 本轮只跑 `swift test`（565/565），没有做真机验证。** 删除那部分不需要——被删代码不可达是论证过的。**但接线那部分需要**：它改的是活的 dispatch 路径，而这条链路的失败模式历来是「转写正常、没有声音」，两侧单测全绿也照样发生过两次（2026-09-12 静音事故、2026-09-20 的 start 顺序缺陷）。真机验证另开一轮，重点 barge-in 与断线重连。在那一轮通过之前，本轮描述的接线状态应视为**单测已验、真机未验**。
+
+### 2026-09-22：按 `11_` §6.2 的推荐顺序收口（`12_`–`18_`）
+
+`11_两方案评审与决策.md` §6.2 给的收口顺序是「**先删传输层水印（D2c 的论证已备），再合并两个 interrupt 触发点（D3），最后给打断一个显式入口（D10）**」。本日按它推进，另加两条测试基础设施的缺陷：
+
+| 笔记 | 缺陷 | 一句话 |
+|------|------|--------|
+| `12_` | D1 🟠 | 被丢弃的音频帧会宣告「AI 开始说话」并把会话推进到 `.aiSpeaking`，污染 `first_response_ms` |
+| `13_` | D5 🟡 | 缺必需字段的致命解码失败说不出是哪个字段；**并推翻了 D5 本身的立论** |
+| `14_` | D3 🟠 | 一次 barge-in 发两次 `interrupt`，第二次必定晚于 `user.speech.start` |
+| `15_` | D4 🟠 | `.waitingUser` 下的 barge-in 不停残留音频 |
+| `16_` | 测试基础设施 | 三处「是不是在测试进程里」的判据在 Swift Testing 下**从不取真值**，测试里因此在构造真的 `LiveAudioEngine`（实测 39 次） |
+| `17_` | 测试基础设施 | `MockDeviceMode` 的判据在测试里恒假，权限请求会走到真 `AVAudioSession` |
+| `18_` | D2 🔴 | 传输层序号水印既做不到被声称的工作，又是唯一能无声吞掉整轮音频的机制 |
+
+其中 `16_`/`17_` 有共同形状，值得单独记住：**一个从不取真值的判据**。三处守卫判 `XCTestConfigurationFilePath`，而那是 XCTest 运行器才设的变量；本仓跑 Swift Testing，它为 `nil`，于是三道守卫全部失效——代码看起来有保护，实际没有。
+
+`18_` 是这一轮里唯一改动**生产行为**的（其余六条是补效果、改判据、或改测试）。它也是唯一一条**删掉一整道防线**的改动，所以论证写得最细：为什么「补水位生命周期」不够、为什么收益是数量级不对称的、以及 `77_` P1-22 的可观测性关切迁到了哪里。
+
+**仍未关闭**：`11_` §7 的四个待决问题（D5 失败策略、Stage 3 的 `turn_id` 上帧、D2 的删/留——**本条已按「删」落地**、两个设计分支的处置）；以及 D6/D7/D8/D9/D10/D11 六条未修缺陷。真机验证（`08_` §3）仍未做。

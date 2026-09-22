@@ -72,7 +72,7 @@ public enum ClockProbe {
 /// Accumulates ping/pong round trips into the best clock-offset estimate seen.
 ///
 /// Pure and mutable-by-value on purpose: ``URLSessionSocketTransport`` holds one
-/// as actor state, the same shape as ``AudioFrameDropGate`` — the *rule* lives
+/// as actor state, the same shape as ``ClockProbe`` — the *rule* lives
 /// here so it is testable without a socket, and the transport only decides
 /// where the samples come from.
 public struct ClockOffsetEstimator: Equatable, Sendable {

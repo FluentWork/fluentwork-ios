@@ -47,15 +47,6 @@ public enum SocketTransportDiagnostic: Equatable, Sendable {
     /// show up next to the frame type instead of being averaged out.
     case receiveLatency(frameType: String, sizeBytes: Int, elapsedMs: Double)
 
-    /// A barge-in watermark discarded an inbound audio frame.
-    ///
-    /// Reported once per watermark rather than once per frame: the gate drops
-    /// silently, and a run of silent drops is what turns a numbering regression
-    /// into "the reply is half missing" with nothing in any log to say why. The
-    /// watermark value is the datum — an audio sequence at or below it, arriving
-    /// after the turn that set it, is what says the numbering went backwards.
-    case audioFrameDropped(sequence: UInt32, watermark: UInt32, dropped: Int)
-
     /// A control frame arrived carrying a `type` this client does not know.
     ///
     /// Forward compatibility has to be symmetric. The gateway already ignores
@@ -106,9 +97,6 @@ public protocol SocketTransportProtocol: Sendable {
     func send(control frame: WSControlFrame) async throws
     func send(audio data: Data) async throws
 
-    /// Marks the interrupt watermark using the highest observed audio sequence so far.
-    func markInterrupted() async
-
     /// Server → client events (state, control, audio, failures).
     var events: AsyncStream<SocketTransportEvent> { get }
 }
@@ -136,6 +124,4 @@ public final class PlaceholderSocketTransport: SocketTransportProtocol, Sendable
     public func send(control frame: WSControlFrame) async throws {}
 
     public func send(audio data: Data) async throws {}
-
-    public func markInterrupted() async {}
 }

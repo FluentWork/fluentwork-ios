@@ -823,7 +823,10 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// 里 2026-09-12 03:57 那段）。轮次归属由协调器在正确的轴上回答——
     /// 被作废那一轮的帧根本到不了这里。
     ///
-    /// 丢弃只在传输层发生一次（`BargeInAudioGate`），而不是在音频的两个高度各来一遍。
+    /// 另一道同类的水印在传输层（`BargeInAudioGate`，按入站帧序号），
+    /// 2026-09-22 也删了，理由与上面完全相同。所以**现在没有任何一层按序号丢弃
+    /// 音频**——两道都去掉了，而不是把两处合成一处。证据见
+    /// `18_删除传输层序号水印.md`。
     public func play(pcm: Data) async {
         guard !playbackRetired else { return }
 

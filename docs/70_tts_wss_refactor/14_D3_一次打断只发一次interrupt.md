@@ -11,6 +11,7 @@
 两半都不可省，而且理由不同：
 
 - **「一次」**——`submitTranscript("__interrupt__")` 不幂等：它做两件事，`transport.markInterrupted()`（武装传输层的丢弃水印）与 `send(control: .interrupt)`（`DefaultSpeechSessionClient.swift:139-144`）。调两次就重发一次帧、并把水印用同一个值重新武装，顺带触发 `BargeInAudioGate.markInterrupted()` 里的 `report.reset()`，**丢掉第一段丢弃运行的报告**。
+  > **修订（2026-09-22，`18_`）**：它现在只做**一件**事——`transport.markInterrupted()` 与水印一起删了（`DefaultSpeechSessionClient.swift:139-148` 现在只有 `send(control: .interrupt)`）。本节「一次打断只发一次 `interrupt`」的结论**不受影响**，反而更干净：删掉的正是上面那句「顺带重新武装水印、丢掉第一段报告」。见 [`18_`](./18_删除传输层序号水印.md) §4.3。
 - **「之前」**——`audioEventPump` 自己的注释写明了代价：
   > Sending start first is what made gateway delivered_chars: 0 on 2026-09-12 — start resets the previous turn's interrupt accounting.
 

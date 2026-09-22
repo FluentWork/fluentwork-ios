@@ -33,8 +33,6 @@ private actor FailingSessionStartTransport: SocketTransportProtocol {
     }
 
     func send(audio data: Data) async throws {}
-
-    func markInterrupted() async {}
 }
 
 private actor RecordingEndTransport: SocketTransportProtocol {
@@ -61,8 +59,6 @@ private actor RecordingEndTransport: SocketTransportProtocol {
     }
 
     func send(audio data: Data) async throws {}
-
-    func markInterrupted() async {}
 
     func snapshotSentControls() async -> [WSControlFrame] {
         sentControls

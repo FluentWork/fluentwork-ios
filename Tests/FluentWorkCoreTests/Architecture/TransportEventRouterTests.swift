@@ -111,7 +111,13 @@ struct TransportEventRouterTests {
         let handler = RecordingTransportHandler()
         let router = TransportEventRouter(diagnosticHandler: handler)
 
-        let diagnostic = SocketTransportEvent.diagnostic(.audioFrameDropped(sequence: 10, watermark: 5, dropped: 1))
+        // Any diagnostic will do: this test is about the router sending every
+        // diagnostic to the diagnostic handler. (This used to be
+        // `.audioFrameDropped`, which went with the transport's sequence
+        // watermark — see `18_删除传输层序号水印.md`.)
+        let diagnostic = SocketTransportEvent.diagnostic(
+            .receiveLatency(frameType: "audio_binary", sizeBytes: 644, elapsedMs: 0.5)
+        )
         await router.route(event: diagnostic)
 
         let calls = await handler.calls
