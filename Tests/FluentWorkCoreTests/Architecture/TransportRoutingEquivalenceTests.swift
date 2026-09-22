@@ -13,13 +13,15 @@ import FluentWorkNetworking
 @Suite("路由接线的等价性")
 struct TransportRoutingEquivalenceTests {
 
-    /// 生产表**应当**注册的类型：六个有专属 handler 的控制帧。
+    /// 生产表**应当**注册的类型：七个有专属 handler 的控制帧。
     ///
-    /// 其余 13 类走 fallback，与接线前逐字一致——它们原本就落在 pump 的
-    /// `default` 臂、由 `SocketTransportEventMapper` 有意忽略。这不是路由表漏了。
+    /// 其余 12 类走 fallback——其中 11 类被 mapper 有意忽略、`.error` 触发 teardown。
+    /// 这 11 类不是路由表漏了，逐条理由在
+    /// `ProductionRoutingWiringTests.unownedControlFramesChangeNothing` 的名单里。
     static let ownedTypes: [WSControlFrameType] = [
         .aiTTSStart,
         .aiTTSEnd,
+        .aiAudioChunk,
         .feedbackBadge,
         .aiTurnEnd,
         .aiTextDelta,
@@ -88,9 +90,9 @@ struct TransportRoutingEquivalenceTests {
         let owned = await log.ownedTypes
         let fallen = await log.fallbackControlTypes
 
-        // 六个各有专属 handler 的，只被自己的那个接走。
+        // 七个各有专属 handler 的，只被自己的那个接走。
         #expect(owned == Set(Self.ownedTypes))
-        // 其余 13 类，全部落到 fallback，且一个不少。
+        // 其余 12 类，全部落到 fallback，且一个不少。
         let unowned = Set(WSControlFrameType.allCases).subtracting(Set(Self.ownedTypes))
         #expect(fallen == unowned)
         // 没有哪一类既走专属又走 fallback。
@@ -181,33 +183,90 @@ struct ProductionRoutingWiringTests {
         }
     }
 
-    @Test("13 类没有专属 handler 的控制帧什么都不做")
+    /// `ai.audio.chunk` 是**唯一一类会承载音频、却一个 handler 都没有**的控制帧。
+    ///
+    /// 它解码成功、落 fallback、被 mapper 有意忽略——于是**连一条日志都没有**。
+    /// 对照：一个**未知** type 会走 `.unsupportedControlFrame` 诊断、被记成
+    /// `transport_control_frame_ignored`（`SocketTransportTests` 有一条钉着），
+    /// `ai.tts.audio` 这种不认识的名字也一样。**已知、但没人接**的那一类，
+    /// 恰恰是唯一无声的。
+    ///
+    /// 后端目前没有生产者：`voiceproto/frames.go:21` 只有常量声明，全仓再无一处引用
+    /// （`frames_test.go` 的冻结断言把它记成 "no producer, no consumer, no test,
+    /// on either side of the wire"），V2 设计也明确「❌ 不加」。所以这条测试要钉的
+    /// 不是"客户端该播这种帧"，而是**它一旦来了必须看得见**——音频改走控制帧、
+    /// 客户端仍只播二进制帧，用户听到的是安静，而日志里什么都没有。
+    ///
+    /// 这条对「它落在 fallback、mapper 返回 nil」的实现是红的。
+    @Test("ai.audio.chunk 到达必须留痕，而不是被静默忽略")
+    func audioChunkControlFrameLeavesATrace() async {
+        let tracker = CapturingTracker()
+        let (router, recorder, _) = makeProductionRouter(tracker: tracker)
+
+        await router.route(event: .control(.aiAudioChunk(sequence: 7)))
+
+        let trace = tracker.events.first { $0.name == "tts_audio_chunk_ignored" }
+        #expect(
+            trace != nil,
+            "ai.audio.chunk 到达了，日志里却没有一条痕迹：\(tracker.events.map(\.name))"
+        )
+        #expect(trace?.properties["type"] == "ai.audio.chunk")
+        #expect(trace?.properties["sequence"] == "7")
+        // 留痕不等于补上播放：客户端没有播这种帧的能力，也不该在这里假装有。
+        #expect(recorder.actions.isEmpty, "它不该产生动作：\(recorder.actions)")
+    }
+
+    /// 没有专属 handler 的控制帧，逐条写明**为什么**它可以安静。
+    ///
+    /// 一张"没人接"的名单如果只列类型、不写理由，下一个人就分不清某一项是
+    /// **有意忽略**还是**漏了**。D11（`ai.audio.chunk`）正是后者：它在这个名单里
+    /// 待过，而没人说得清它为什么在这。所以名单的每一项都带一句理由。
+    ///
+    /// 断言写成集合相等，于是新增一类 `WSControlFrame` 会让这条红——要么给它
+    /// 注册 handler，要么在这里补一条带理由的。这就是"分类不会靠纪律维持"。
+    @Test("11 类没有专属 handler 的控制帧什么都不做，且这 11 类逐条写明理由")
     func unownedControlFramesChangeNothing() async {
-        let unowned: [WSControlFrame] = [
-            .auth(ticket: "t"),
-            .handshake(ticket: "t", sessionID: "s"),
-            .sessionReady(sessionID: "s", userID: nil),
-            .sessionStart(.init(materialID: "m")),
-            .userSpeechStart,
-            .userSpeechEnd(text: nil, turnID: "turn-1"),
-            .clientTurnAbort(turnID: "turn-1", outcome: .userAbandoned),
-            .aiAudioChunk(sequence: 1),
-            .interrupt,
-            .sessionEnd(reason: nil),
-            .ping(ts: 1),
-            .pong(ts: 1),
-            // `.error` 不在此列：它是这 13 类里唯一有动作的，见上一条。
+        let unowned: [(frame: WSControlFrame, reason: String)] = [
+            // 只上行：客户端发出去，这一侧收不到。
+            (.auth(ticket: "t"), "客户端 → 网关的首帧"),
+            (.sessionStart(.init(materialID: "m")), "客户端 → 网关"),
+            (.userSpeechStart, "客户端 → 网关"),
+            (.userSpeechEnd(text: nil, turnID: "turn-1"), "客户端 → 网关"),
+            (.clientTurnAbort(turnID: "turn-1", outcome: .userAbandoned), "客户端 → 网关"),
+            (.interrupt, "客户端 → 网关；网关不回声"),
+            (.ping(ts: 1), "客户端 → 网关；网关回的是 pong"),
+
+            // 传输层在 emit 之前已经消费掉了。
+            (.pong(ts: 1), "`recordClockOffsetIfPong` 先拿它算时钟偏移，再原样 emit"),
+
+            // 网关的应答：收到即无需动作。
+            (.sessionReady(sessionID: "s", userID: nil), "auth 之后客户端自己就 emit 了 .connected，session_id 它本来就有"),
+            (.sessionEnd(reason: nil), "客户端自己发的那个帧的回执（`handler_control.go:443`），会话在本地已经拆掉"),
+
+            // 死面：这一侧既不构造、也不接收。
+            (.handshake(ticket: "t", sessionID: "s"), "`connect` 发的是 auth（`URLSessionSocketTransport.swift:117`），后端也没有这个常量；只有测试在造它"),
+
+            // `.error` 不在此列：它是落到 fallback 的 12 类里唯一有动作的，见上一条。
         ]
 
-        for frame in unowned {
+        for (frame, reason) in unowned {
             let (router, recorder, evaluationArrival) = makeProductionRouter()
             await router.route(event: .control(frame))
             #expect(
                 recorder.actions.isEmpty,
-                "\(frame.wireType) 产生了 dispatch：\(recorder.actions) —— 它本该被 mapper 有意忽略"
+                "\(frame.wireType) 产生了 dispatch：\(recorder.actions) —— 理由写的是「\(reason)」，那它就不该有动作"
             )
             #expect(!evaluationArrival.consume(), "\(frame.wireType) 意外地 mark 了评测等待")
         }
+
+        // 这 11 类加上 `.error`，正好是 19 − 7：没有哪一类是"谁都没想过"的。
+        let classified = Set(unowned.map(\.frame.wireType)).union([.error])
+        let unownedByTable = Set(WSControlFrameType.allCases)
+            .subtracting(Set(TransportRoutingEquivalenceTests.ownedTypes))
+        #expect(
+            classified == unownedByTable,
+            "有控制帧既没有 handler、也不在这张带理由的名单里：\(unownedByTable.subtracting(classified))"
+        )
     }
 
     /// 被丢弃的音频帧不是「AI 开始说话了」——它一声不响。
@@ -259,13 +318,19 @@ private func isFirstAudioChunk(_ action: AppAction) -> Bool {
     return false
 }
 
-/// 用生产工厂搭一个路由器，dispatch 落进 `recorder`。
+/// 用生产工厂搭一个路由器，dispatch 落进 `recorder`、埋点落进 `tracker`。
+///
+/// `tracker` 可传，是因为"这一类帧到了有没有留痕"只能从埋点看——它不产生动作，
+/// 所以 `recorder.actions` 对它是瞎的。
 @MainActor
-private func makeProductionRouter() -> (TransportEventRouter, ActionRecorder, EvaluationArrivalBox) {
+private func makeProductionRouter(
+    tracker: CapturingTracker = CapturingTracker()
+) -> (TransportEventRouter, ActionRecorder, EvaluationArrivalBox) {
     let container = Container()
     container.reset()
     let recorder = ActionRecorder()
     let evaluationArrival = EvaluationArrivalBox()
+    container.tracker.register { tracker }
     let dispatchBox = MainActorActionBox(dispatch: { recorder.record($0) })
 
     let router = makeTransportEventRouter(

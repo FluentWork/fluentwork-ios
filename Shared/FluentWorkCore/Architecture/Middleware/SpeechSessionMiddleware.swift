@@ -800,6 +800,31 @@ internal func makeTransportEventRouter(
         )
     }
 
+    // `ai.audio.chunk` 是**唯一一类会承载音频、而客户端一个 handler 都没有**的控制帧。
+    // 它以前落在兜底里被 mapper 有意忽略，于是它的到达**不留任何痕迹**——
+    // 连一条日志都没有。
+    //
+    // 这里不做音频处理，因为后端根本没有生产者：`voiceproto/frames.go:21` 只有常量
+    // 声明，全仓再无一处引用（`frames_test.go` 的冻结断言把它记成 "no producer,
+    // no consumer, no test, on either side of the wire"），V2 设计也明确「❌ 不加」。
+    // 要补的是**可见性**，不是播放：它一旦真的来了，就意味着音频改走控制帧、
+    // 而客户端仍只播二进制帧，用户听到的是安静——日志里必须有东西能指认这件事。
+    //
+    // 对照：一个**未知** type 走 `.unsupportedControlFrame` 诊断、记成
+    // `transport_control_frame_ignored`。已知、但没人接的那一类，才是唯一无声的。
+    controlHandlers[.aiAudioChunk] = AnyControlFrameHandler { frame in
+        guard case let .aiAudioChunk(sequence) = frame else {
+            return
+        }
+        container.tracker().track(
+            event: "tts_audio_chunk_ignored",
+            properties: [
+                "type": frame.wireType.rawValue,
+                "sequence": String(sequence),
+            ]
+        )
+    }
+
     controlHandlers[.feedbackBadge] = AnyControlFrameHandler { frame in
         guard case let .feedbackBadge(badge, phraseBlockID, tier, turnID) = frame else {
             return
@@ -962,11 +987,13 @@ internal func makeTransportEventRouter(
         }
     }
 
-    // 兜底：`.stateChanged`、`.failure`、以及 13 类没有专属 handler 的控制帧。
+    // 兜底：`.stateChanged`、`.failure`、以及 12 类没有专属 handler 的控制帧。
     //
     // 它们**本来就都落在这里**——这不是路由表漏了。其中只有 `.error` 会产生动作
-    // （`.session(.failed)` → 完整 teardown），其余被 mapper 有意忽略。把这条写下来，
-    // 是为了下一个人不必同时读两个 switch 才能确认某类帧是被忽略的。
+    // （`.session(.failed)` → 完整 teardown），其余 11 类被 mapper 有意忽略，
+    // 逐条理由见 `TransportRoutingEquivalenceTests.unownedControlFramesChangeNothing`
+    // 里那张带理由的名单。把这条写下来，是为了下一个人不必同时读两个 switch
+    // 才能确认某类帧是被忽略的。
     let fallbackHandler = AnyTransportEventHandler { event in
         guard let mapped = SocketTransportEventMapper.speakingRoomAction(for: event),
               let action = SpeakingRoomAction(mapped)
