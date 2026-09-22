@@ -389,6 +389,57 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
     )
 }
 
+/// A barge-in puts **exactly one** frame on the wire, and it is the interrupt.
+///
+/// This is D10's guard, and it is the first coverage this path has ever had at
+/// the client level. The middleware tests observe a *stub's* call count, so what
+/// the real client does with the call — one `control.interrupt`, nothing else —
+/// was never asserted anywhere.
+///
+/// The test could not be written against the old shape without re-encoding the
+/// defect. The interrupt used to be reached through
+/// `submitTranscript("__interrupt__")`, so "did the client send an interrupt"
+/// could only be asked by passing the sentinel and inspecting a recorded string
+/// — which is precisely the coupling D10 names. Now the interrupt is an API, and
+/// its wire effect is directly assertable.
+///
+/// Two regressions it catches:
+///
+/// - **a second outbound effect smuggled back in.** The deleted
+///   `transport.markInterrupted()` was exactly that, and it was invisible
+///   because the method's name said "submit transcript" and mentioned no such
+///   thing.
+/// - **an extra frame on the interrupt path.** A stray `user.speech.start` here
+///   would be read by the gateway as "a new turn began", which resets the
+///   previous turn's interrupt accounting — the 2026-09-12 failure that
+///   `audioEventPump`'s ordering comment is about.
+@MainActor
+@Test func sendInterruptPutsExactlyOneInterruptFrameOnTheWire() async throws {
+    let transport = InMemorySocketTransport()
+    try await transport.connect(
+        url: URL(string: "ws://127.0.0.1/ws")!,
+        sessionID: "s-1",
+        ticket: "ticket"
+    )
+    let client = DefaultSpeechSessionClient(
+        api: SessionAPIClient(
+            network: StubNetworkClient { _ in Data() },
+            baseURL: URL(string: "http://127.0.0.1:8080/api/v1")!
+        ),
+        tokens: RecordingSpeechSessionTokenStore(deviceID: "interrupt-device"),
+        transport: transport
+    )
+
+    await client.sendInterrupt()
+
+    let sentControls = await transport.sentControlFrames
+    #expect(
+        sentControls == [.interrupt],
+        "一次 barge-in 在线上不是「恰好一帧 control.interrupt」：\(sentControls)"
+    )
+    #expect(await transport.sentAudioPayloads.isEmpty, "barge-in 不该发音频")
+}
+
 @MainActor
 @Test func defaultSpeechSessionClientClearsActiveSessionWhenEnded() async throws {
     let transport = InMemorySocketTransport()

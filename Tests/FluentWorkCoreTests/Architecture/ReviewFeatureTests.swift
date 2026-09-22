@@ -73,7 +73,7 @@ import TGReduxKitTesting
         func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {}
         func sendTurnAbort(turnID: String, outcome: TurnOutcome) async throws {}
         func sendAudioPCM(_ data: Data) async throws {}
-        func submitTranscript(_ text: String) async {}
+        func sendInterrupt() async {}
         func transportEvents() -> AsyncStream<SocketTransportEvent> {
             AsyncStream { continuation in
                 continuation.finish()
@@ -134,7 +134,7 @@ import TGReduxKitTesting
         func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {}
         func sendTurnAbort(turnID: String, outcome: TurnOutcome) async throws {}
         func sendAudioPCM(_ data: Data) async throws {}
-        func submitTranscript(_ text: String) async {}
+        func sendInterrupt() async {}
         func transportEvents() -> AsyncStream<SocketTransportEvent> {
             AsyncStream { continuation in
                 continuation.finish()

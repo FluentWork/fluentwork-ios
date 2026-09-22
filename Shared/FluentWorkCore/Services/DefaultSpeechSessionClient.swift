@@ -136,16 +136,35 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         await activeSession.get()
     }
 
-    public func submitTranscript(_ text: String) async {
-        // Interrupt marker from SpeechSession middleware.
-        //
-        // The control frame *is* the interrupt — that is the whole of it. This
-        // used to also arm a transport-side sequence watermark
-        // (`transport.markInterrupted()`), whose only effect was to make the
-        // transport drop inbound audio by sequence. That gate is gone: the
-        // transport delivers every frame, and attribution happens in
-        // `TTSPlaybackCoordinator` on the turn axis.
-        guard text == "__interrupt__" else { return }
+    /// Interrupts the in-flight reply (barge-in).
+    ///
+    /// **Exactly one thing goes on the wire: `control.interrupt`.** That is the
+    /// whole of a barge-in as far as the transport is concerned — the gateway
+    /// resets the previous turn's interrupt accounting when it sees the frame.
+    ///
+    /// This replaced `submitTranscript("__interrupt__")`, which was the same
+    /// call behind a name that said something else. Two things were wrong with
+    /// it:
+    ///
+    /// 1. **It was not a transcript submission.** Its body was
+    ///    `guard text == "__interrupt__" else { return }` — every other string
+    ///    was silently discarded. So a caller passing real text got no error and
+    ///    no effect. The real carrier for a client transcript is
+    ///    `sendSpeechBoundary(started: false, turnID:text:)`'s `text`
+    ///    (`:171-178`), which already exists and reaches the wire on
+    ///    `user.speech.end`. Deleting the misleading method turns "pass the wrong
+    ///    string, hear nothing" into a compile error.
+    /// 2. **It hid a second effect.** Until 2026-09-22 it also armed a
+    ///    transport-side sequence watermark before sending the frame. The
+    ///    watermark is gone (`18_删除传输层序号水印.md`), but the shape that
+    ///    allowed it to hide — one call doing an unnamed amount of work — is what
+    ///    this method's own name removes.
+    ///
+    /// The send failure is still swallowed. That is unchanged and deliberate:
+    /// a barge-in must not turn a dead socket into a session failure on top of
+    /// the disconnect the socket itself will report. It is a separate concern
+    /// from D10 and is not addressed here.
+    public func sendInterrupt() async {
         try? await transport.send(control: .interrupt)
     }
 

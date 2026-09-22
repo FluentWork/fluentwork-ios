@@ -279,7 +279,19 @@ public protocol SpeechSessionClientProtocol: Sendable {
     /// I20 T-I20-1: abort an in-progress recording turn. Not `session.end`.
     func sendTurnAbort(turnID: String, outcome: TurnOutcome) async throws
     func sendAudioPCM(_ data: Data) async throws
-    func submitTranscript(_ text: String) async
+    /// Interrupts the in-flight reply (barge-in).
+    ///
+    /// Its own entry point, not a mode of `sendSpeechBoundary` or of a
+    /// transcript submission. A barge-in is the only thing that puts
+    /// `control.interrupt` on the wire, and it puts nothing else there.
+    ///
+    /// This replaced `submitTranscript("__interrupt__")`: a method named for
+    /// submitting a transcript, whose body ignored every string except a magic
+    /// sentinel. The real carrier for a client transcript is
+    /// `sendSpeechBoundary(started: false, turnID:text:)`'s `text` — so the old
+    /// method was not a redundant way to submit text, it was a misleading one.
+    /// See `docs/70_tts_wss_refactor/19_打断改成显式入口.md`.
+    func sendInterrupt() async
     func transportEvents() -> AsyncStream<SocketTransportEvent>
     func pollReview(sessionID: String) async throws -> ReviewPollResponse
     func sendDegradedTextMessage(_ text: String) async throws -> PostMessageResponse
@@ -432,7 +444,7 @@ public final class PlaceholderSpeechSessionClient: SpeechSessionClientProtocol, 
 
     public func activeSessionID() async -> String? { nil }
 
-    public func submitTranscript(_ text: String) async {}
+    public func sendInterrupt() async {}
 
     public func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {}
 

@@ -10,7 +10,13 @@ private actor StubSpeechSessionClientState {
     var startCalls = 0
     var boundaries: [Bool] = []
     var audioPayloads: [Data] = []
-    var transcripts: [String] = []
+    /// Barge-ins the client was asked to send.
+    ///
+    /// Was `transcripts: [String]`, holding the magic `"__interrupt__"` the
+    /// middleware used to pass to `submitTranscript`. Counting the calls is the
+    /// same observation with less indirection, and it cannot silently stop
+    /// working if a caller passes a different string — there is no string.
+    var interruptCalls = 0
     var endCalls = 0
     var boundaryTurnIDs: [String?] = []
     var sessionID: String?
@@ -32,8 +38,8 @@ private actor StubSpeechSessionClientState {
         audioPayloads.append(data)
     }
 
-    func recordTranscript(_ text: String) {
-        transcripts.append(text)
+    func recordInterrupt() {
+        interruptCalls += 1
     }
 
     func recordEnd() {
@@ -97,8 +103,8 @@ private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unche
         await state.recordAudioPayload(data)
     }
 
-    func submitTranscript(_ text: String) async {
-        await state.recordTranscript(text)
+    func sendInterrupt() async {
+        await state.recordInterrupt()
     }
 
     func transportEvents() -> AsyncStream<SocketTransportEvent> {
@@ -134,8 +140,8 @@ private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unche
         await state.audioPayloads
     }
 
-    func snapshotTranscripts() async -> [String] {
-        await state.transcripts
+    func snapshotInterruptCalls() async -> Int {
+        await state.interruptCalls
     }
 
     func snapshotBoundaryTurnIDs() async -> [String?] {
@@ -986,13 +992,13 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     store.dispatch(.speakingRoom(.session(.holdStart)))
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        let interruptCalls = await audioEngine.snapshotInterruptCalls()
-        let transcripts = await speechClient.snapshotTranscripts()
-        return interruptCalls == 1 && transcripts == ["__interrupt__"]
+        let engineInterrupts = await audioEngine.snapshotInterruptCalls()
+        let clientInterrupts = await speechClient.snapshotInterruptCalls()
+        return engineInterrupts == 1 && clientInterrupts == 1
     }
 
     #expect(await audioEngine.snapshotInterruptCalls() == 1)
-    #expect(await speechClient.snapshotTranscripts() == ["__interrupt__"])
+    #expect(await speechClient.snapshotInterruptCalls() == 1)
 }
 
 /// 一次 barge-in 只发**一次** interrupt，而且必须落在 `user.speech.start` 之前。
@@ -1037,10 +1043,10 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     try? await Task.sleep(for: .milliseconds(100))
 
     #expect(await speechClient.snapshotBoundaries() == [true])
-    let transcripts = await speechClient.snapshotTranscripts()
+    let interrupts = await speechClient.snapshotInterruptCalls()
     #expect(
-        transcripts == ["__interrupt__"],
-        "一次 barge-in 发了 \(transcripts.count) 次 interrupt：\(transcripts)"
+        interrupts == 1,
+        "一次 barge-in 发了 \(interrupts) 次 interrupt"
     )
 }
 

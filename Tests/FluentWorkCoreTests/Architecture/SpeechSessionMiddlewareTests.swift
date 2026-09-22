@@ -2025,10 +2025,8 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
     }
 
     func sendAudioPCM(_ data: Data) async throws {}
-    func submitTranscript(_ text: String) async {
-        if text == "__interrupt__" {
-            await _wireOrder.update { $0 + ["interrupt"] }
-        }
+    func sendInterrupt() async {
+        await _wireOrder.update { $0 + ["interrupt"] }
     }
 
     /// Counted so a test can assert the reader is built once per store rather

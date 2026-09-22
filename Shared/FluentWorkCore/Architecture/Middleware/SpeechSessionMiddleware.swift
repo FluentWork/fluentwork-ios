@@ -468,7 +468,7 @@ private func audioEventPump(
                         // delivered_chars: 0 on 2026-09-12 — start resets
                         // the previous turn's interrupt accounting.
                         if phaseBox.get() == .aiSpeaking {
-                            await speechClient.submitTranscript("__interrupt__")
+                            await speechClient.sendInterrupt()
                         }
 
                         // No turnID on start — backend uses the next
@@ -1218,7 +1218,7 @@ private func interpretSpeechSessionSideEffect(
 
     case .sendInterrupt:
         return .fireAndForget {
-            await speechClient.submitTranscript("__interrupt__")
+            await speechClient.sendInterrupt()
         }
 
     case let .sendTurnAbort(turnID, outcome):
