@@ -9,8 +9,18 @@ import Foundation
 /// 音频会话的类别（`.playAndRecord` 会让系统一直显示麦克风在用）。
 public enum MockDeviceMode {
     /// 是否开着麦克风替身。
+    ///
+    /// **测试进程里恒为 `true`。** 这条判据是 `MicrophonePermission.request()` 的
+    /// 第一道分支（为真则直接返回 true、不碰 `AVAudioSession`），而它原先只读
+    /// `FW_MOCK_MIC` —— 测试进程没人设这个变量，于是测试里它恒为假，权限请求会
+    /// 一路走到真的 `requestRecordPermission`。macOS 上被 `#if os(iOS)` 挡住，
+    /// 但 iOS 模拟器上跑测试会真的去问系统：那就是「测试在调用真机的麦克风」。
+    ///
+    /// 与 `AppDependencies.TestProcess` 用同一个判据，避免两处对「这是不是测试」
+    /// 给出不同答案。真机验证时 `FW_MOCK_MIC` 仍然说了算。
     public static var isMicrophoneMocked: Bool {
-        MockAudioEngine.Script.fromEnvironment() != nil
+        if TestProcess.isRunning { return true }
+        return MockAudioEngine.Script.fromEnvironment() != nil
     }
 }
 

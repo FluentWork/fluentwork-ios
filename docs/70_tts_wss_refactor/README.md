@@ -46,6 +46,7 @@
 | 14 | [`14_D3_一次打断只发一次interrupt.md`](./14_D3_一次打断只发一次interrupt.md) | D3：一次 barge-in 为什么发两次 `interrupt`、第二次为什么必定晚于 `user.speech.start` | 实施记录（`swift test` 584/584）；**含一处已知残留窗口**，待真机验证 |
 | 15 | [`15_D4_waitingUser下的打断必须停播.md`](./15_D4_waitingUser下的打断必须停播.md) | D4：`.waitingUser` 下的 barge-in 为什么不停残留音频、为什么只该停播不该发 interrupt | 实施记录（`swift test` 587/587）；**真机未验**，另记一批既有 2 秒超时 flaky |
 | 16 | [`16_测试进程不再构造真的音频引擎.md`](./16_测试进程不再构造真的音频引擎.md) | 测试里为什么会构造真的 `LiveAudioEngine`（真麦克风）？三处「是不是在测试里」的判据为什么全是死码 | 实施记录（`swift test` 588/588）；真引擎构造实测 39 → 0 |
+| 17 | [`17_测试进程里的麦克风替身恒开.md`](./17_测试进程里的麦克风替身恒开.md) | 权限请求为什么在测试里会走到真 `AVAudioSession`？`MockDeviceMode` 的判据为什么在测试里恒假 | 实施记录（`swift test` 590/590）；生产与真机路径零变化 |
 
 ## 与既有文档/台账的对应关系
 

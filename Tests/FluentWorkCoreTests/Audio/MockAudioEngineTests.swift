@@ -105,6 +105,42 @@ struct MockAudioEngineTests {
         #expect(MockAudioEngine.Script.fromEnvironment(["FW_MOCK_MIC": ""]) == nil)
     }
 
+    /// 测试进程里，麦克风必须**恒被视为已被替身接管**。
+    ///
+    /// `MockDeviceMode.isMicrophoneMocked` 是权限那一处的判据：`MicrophonePermission
+    /// .request()` 的第一件事就是查它，为真则直接返回 true、不碰 `AVAudioSession`。
+    /// 而它原先只读 `FW_MOCK_MIC` —— 测试进程没人设这个变量，于是测试里那个判据
+    /// 恒为假，权限请求会一路走到真 `AVAudioSession.requestRecordPermission`。
+    ///
+    /// macOS 上这条路的后果被 `#if os(iOS)` 挡住了（返回 true），但 iOS 模拟器上
+    /// 跑测试时会真的去问系统 —— 正是「测试在调用真机的麦克风」的那一类。
+    ///
+    /// 所以测试进程要和 `AppDependencies.TestProcess` 用同一个判据。
+    @Test("测试进程里替身恒开：不依赖 FW_MOCK_MIC")
+    func microphoneIsMockedInTheTestProcess() {
+        // 反证：环境里没有 FW_MOCK_MIC，所以「只从环境读」这条路上替身是关的。
+        #expect(
+            MockAudioEngine.Script.fromEnvironment() == nil,
+            "测试进程不该设 FW_MOCK_MIC；设了就说明这条反证失效，测试本身要改"
+        )
+
+        // 而测试进程必须视为「麦克风已被接管」。
+        #expect(
+            MockDeviceMode.isMicrophoneMocked,
+            "测试进程里麦克风没被替身接管：权限请求会走到真 AVAudioSession"
+        )
+    }
+
+    /// 「短路」这件事本身在 macOS 上观测不到（`#if os(iOS)` 那一支本来就返回 true），
+    /// 所以这里钉的是**结果**：测试进程里权限请求必须成功。
+    ///
+    /// **机制**由上面那条钉住 —— `request()` 读的第一件事就是
+    /// `MockDeviceMode.isMicrophoneMocked`，那个标志为真即短路。
+    @Test("测试进程里权限请求必须成功（否则会话根本起不来）")
+    func permissionRequestSucceedsInTheTestProcess() async {
+        #expect(await MicrophonePermission.request() == true)
+    }
+
     @Test("fromEnvironment：解析时长与自动周期")
     func scriptReadsEnvironment() {
         let script = MockAudioEngine.Script.fromEnvironment([
