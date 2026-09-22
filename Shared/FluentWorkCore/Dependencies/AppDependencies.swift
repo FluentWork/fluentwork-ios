@@ -370,6 +370,33 @@ public struct DefaultNetworkPluginFactory: NetworkPluginFactoryProtocol {
     }
 }
 
+/// 「当前进程是不是测试进程」。
+///
+/// 原先三处守卫各自判 `XCTestConfigurationFilePath` —— 那是 **XCTest 的运行器**
+/// 才会设的变量。本仓跑的是 Swift Testing（`swift test`），该变量为 `nil`
+/// （2026-09-22 实测），于是三道守卫**从不生效**：
+///
+/// - `audioEngine`：37 条与音频无关的接线测试各自构造了一个真的
+///   `LiveAudioEngine`（真 `AVAudioSession`、真麦克风；`deinit` 还会无条件去碰
+///   输入节点）。它们只是顺手解析了整个依赖图，本意是拿 `PlaceholderAudioEngine`。
+/// - `dailyReadAudioPlayer`：测试拿到真播放器，而它直接操作真 `AVAudioSession`。
+/// - `backgroundTaskPort`：iOS 上测试拿到 `UIKitBackgroundTaskPort`。
+///
+/// 改判「XCTest 是否被加载」：`swift test` 经由 `swiftpm-testing-helper` 运行、
+/// `xcodebuild test` 经由 XCTest 运行器运行，两者都能解析出 `XCTestCase`；
+/// 生产 app 不链接 XCTest，所以为 `nil`。
+///
+/// 两条都留着：环境变量那条覆盖「运行器在、但类还没加载」的极早时刻。
+/// 钉住它的是 `AudioEngineResolutionTests`。
+enum TestProcess {
+    static var isRunning: Bool {
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return true
+        }
+        return NSClassFromString("XCTestCase") != nil
+    }
+}
+
 public final class PlaceholderAudioEngine: AudioEngineProtocol, Sendable {
     private nonisolated let stream: AsyncStream<AudioEngineEvent>
 
@@ -558,7 +585,7 @@ public extension Container {
     var backgroundTaskPort: Factory<BackgroundTaskPorting> {
         self {
             #if os(iOS)
-            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            if TestProcess.isRunning {
                 return NoOpBackgroundTaskPort()
             }
             return UIKitBackgroundTaskPort()
@@ -588,11 +615,10 @@ public extension Container {
                 #endif
             }
             #endif
-            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
-                // XCTest path: keep `PlaceholderAudioEngine` so unit tests that
-                // exercise reducer/middleware wiring without AVFoundation can
-                // still resolve `audioEngine()` without spinning up an
-                // `AVAudioEngine` graph.
+            if TestProcess.isRunning {
+                // 测试进程：给 `PlaceholderAudioEngine`，不要构造 `AVAudioEngine` 图。
+                // 判据不能只看 `XCTestConfigurationFilePath`（Swift Testing 下为 nil），
+                // 理由与实测见 `TestProcess`。
                 return PlaceholderAudioEngine()
             }
             #if canImport(AVFoundation)
@@ -665,7 +691,7 @@ public extension Container {
 
     var dailyReadAudioPlayer: Factory<DailyReadAudioPlayerProtocol> {
         self {
-            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            if TestProcess.isRunning {
                 return StubDailyReadAudioPlayer()
             }
             return DailyReadAudioPlayer()
