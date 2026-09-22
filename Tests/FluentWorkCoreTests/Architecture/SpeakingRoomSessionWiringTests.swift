@@ -1044,6 +1044,67 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     )
 }
 
+/// `.waitingUser` 下的打断必须停掉残留音频。
+///
+/// 这是「徽章早到」那个窗口的兜底：`ai.turn.end` 到达时若 `userTurnCount == 0`
+/// （greeting / 首轮），相位落到 `.waitingUser`（`SpeechSessionMachine.swift:75-79`），
+/// 而这一轮的全部音频**已经到达客户端、正排在播放器里**——burst 到达只要几十毫秒，
+/// 播完要几十秒。此时用户开口，相位 `.waitingUser → .recording`，**改动前不停播**，
+/// 残留 TTS 与用户的话叠在一起，正是 `:96-99` 承认的那个形状。
+///
+/// 这一次 pump 帮不上忙：它的 barge-in 判定是 `phaseBox == .aiSpeaking`，
+/// `.waitingUser` 不满足。所以只能由状态机发——而它原先一个 effect 都不发。
+@MainActor
+@Test func bargeInFromWaitingUserStopsLeftoverPlayback() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await speechClient.snapshotStartCalls() == 1
+    }
+
+    makeSessionLive(store)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .aiSpeaking
+    }
+
+    // 这一轮的音频已经排进播放器。
+    speechClient.emit(
+        .control(
+            .aiTTSStart(turnID: "turn-1", voiceID: "mock_voice_01", sampleRate: 16_000, codec: "pcm")
+        )
+    )
+    speechClient.emit(.audio(WSAudioFrame(sequence: 1, payload: Data([0x01, 0x02]))))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await audioEngine.snapshotPlayedPCM().count == 1
+    }
+
+    // 轮次结束，但音频还在播。userTurnCount 仍是 0，所以落到 `.waitingUser`。
+    speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: nil, logID: nil)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .waitingUser
+    }
+
+    let interruptsBefore = await audioEngine.snapshotInterruptCalls()
+    audioEngine.emit(.speechStarted)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .recording
+    }
+    // `.stopPlayback` 是 fire-and-forget，给它落地的时间。
+    try? await Task.sleep(for: .milliseconds(100))
+
+    #expect(
+        await audioEngine.snapshotInterruptCalls() == interruptsBefore + 1,
+        "用户从 .waitingUser 开口时没有停掉残留音频"
+    )
+}
+
 @MainActor
 @Test func speechSessionMiddlewareCleansUpResourcesOnFailure() async {
     let container = Container()

@@ -123,10 +123,35 @@ public enum SpeechSessionMachine {
             state.processingStage = nil
             effects.append(contentsOf: [.stopPlayback, .sendInterrupt])
 
-        // `aiAnswer` (I21's abort landing pad) starts a new turn exactly like
-        // `waitingUser` does — nothing is playing, so nothing needs stopping.
-        case (.waitingUser, .vadSpeechStart), (.waitingUser, .holdStart),
-             (.processing, .vadSpeechStart) where state.processingStage == .aiAnswer,
+        // `.waitingUser` **可以**还有声音在播，所以它必须停播。
+        //
+        // 徽章能在回复音频还在播的时候到达：`.processing/.evaluation` 收到
+        // `evaluationReceived` → `.waitingUser`（`:81-83`），而那条路径不停播——
+        // 它的注释（`:96-99`）承认「Next utterance may overlap leftover TTS after
+        // ai.turn.end」。于是「下一句开口时先掐掉残留音频」这件事就落在 `vadSpeechStart`
+        // / `holdStart` 身上，而这条 arm 之前什么都不做。
+        //
+        // 只停播、**不发 interrupt**：`ai.turn.end` 已经到了，服务端这一轮已经结束，
+        // 没有可打断的流；剩下的是已到达客户端、排在播放器里的音频，那是本地的事。
+        // 与 `.evaluation` 那条 arm 的政策一致（`:161-166` 同样只有 `.stopPlayback`）。
+        //
+        // 真机记录 `08_` §5.1 早已看到过这个现象（「属于状态机（高风险区），建议
+        // 单独立项」），一直没修。这条 arm 的 effects 在此之前从没被断言过。
+        case (.waitingUser, .vadSpeechStart), (.waitingUser, .holdStart):
+            state.phase = .recording
+            state.processingStage = nil
+            effects.append(.stopPlayback)
+
+        // `aiAnswer`（I21 的 abort 落点）与 `waitingUser` 前提不同，不能共用一条
+        // arm：它确实没有东西要停。
+        //
+        // `aiAnswer` 只有一条来路——`(.recording, .recordingTimedOut)`（`:174-187`，
+        // `state.processingStage = .aiAnswer` 全仓唯一写入点），而 `.recording` 只从
+        // 「可能有声在播」的相位进入，那些入口全都带 `.stopPlayback`，所以上一轮的
+        // 声音已经清过。本轮的声音也还没到：`aiAnswer` 里若收到 `aiFirstAudioChunk`
+        // 就会升到 `.aiSpeaking`（`:234-236`）。`discardsTurnOnReconnect`
+        // （`SpeechSessionState.swift:257`）用的是同一个判断。
+        case (.processing, .vadSpeechStart) where state.processingStage == .aiAnswer,
              (.processing, .holdStart) where state.processingStage == .aiAnswer:
             state.phase = .recording
             state.processingStage = nil

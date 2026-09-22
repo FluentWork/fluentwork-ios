@@ -168,6 +168,54 @@ import Testing
     #expect(effects.contains(.sendInterrupt))
 }
 
+/// `.waitingUser` 是第三条「用户开口时可能还有声音」的路径，它必须停播。
+///
+/// 徽章可以在回复音频**还在播**的时候到达：`.processing/.evaluation` 收到
+/// `evaluationReceived` → `.waitingUser`（`SpeechSessionMachine.swift:81-83`），
+/// 而那条路径**没有**停播——`:96-99` 的注释自己承认「Next utterance may overlap
+/// leftover TTS after ai.turn.end」。
+///
+/// 只停播、**不发 interrupt**：`ai.turn.end` 已经到了，服务端这一轮已结束，没有
+/// 可打断的流；剩下的是已到达客户端、排在播放器里的音频，那是本地的事。这与
+/// `.evaluation` 那条 arm 的政策一致（`:161-166` 同样只有 `.stopPlayback`）。
+///
+/// 这条测试原先不存在——`.waitingUser` 的 effects 从来没被断言过，这正是它
+/// 能一直不停播的原因。
+@Test func vadFromWaitingUserStopsLeftoverPlayback() {
+    var state = SpeechSessionState(phase: .waitingUser)
+    let effects = SpeechSessionMachine.reduce(&state, event: .vadSpeechStart)
+
+    #expect(state.phase == .recording)
+    #expect(effects.contains(.stopPlayback))
+    #expect(effects.contains(.sendInterrupt) == false)
+}
+
+/// `aiAnswer` 与 `waitingUser` **前提不同**，不能共用一条 arm。
+///
+/// `aiAnswer` 只有一条来路：`(.recording, .recordingTimedOut)`（`SpeechSessionMachine
+/// .swift:174-187`，`state.processingStage = .aiAnswer` 全仓唯一写入点）。而
+/// `.recording` 只从「可能有声在播」的相位进入，每个这样的入口都带 `.stopPlayback`
+/// （`.aiSpeaking` 的两条 arm、`.waitingUser` 的两条 arm、`.processing/.evaluation`
+/// 的两条 arm）。所以停在 `aiAnswer` 时，上一轮的声音已经清过了。
+///
+/// 本轮的声音也还没到：`aiAnswer` 里若收到 `aiFirstAudioChunk` 就会升到
+/// `.aiSpeaking`（`:234-236`），所以还停在 `aiAnswer` 意味着首块音频尚未到达。
+/// `SpeechSessionState.discardsTurnOnReconnect`（`SpeechSessionState.swift:257`）
+/// 用的是同一个判断——`processingStage != .aiAnswer` 才丢弃在途轮次。
+///
+/// 这条把「不该停」也钉住，免得将来有人为了修 `waitingUser` 把 `.stopPlayback`
+/// 顺手加到整条合并 arm 上，而多停一次没有测试会响。
+@Test func abortLandingPadHasNothingLeftToStop() {
+    var state = SpeechSessionState(phase: .processing, processingStage: .aiAnswer)
+    let effects = SpeechSessionMachine.reduce(&state, event: .vadSpeechStart)
+
+    #expect(state.phase == .recording)
+    // 相位变了，所以 `trackTransition` 一定在（`SpeechSessionMachine.swift:342-357`）。
+    // 断言的是「没有第二个效果」，不是「effects 为空」。
+    #expect(effects.contains(.stopPlayback) == false)
+    #expect(effects.contains(.sendInterrupt) == false)
+}
+
 @Test func vadSpeechEndMovesRecordingToProcessingASR() {
     var state = SpeechSessionState(phase: .recording)
     _ = SpeechSessionMachine.reduce(&state, event: .vadSpeechEnd(turnID: nil))
