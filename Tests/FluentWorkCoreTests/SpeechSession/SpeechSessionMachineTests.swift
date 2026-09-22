@@ -137,9 +137,31 @@ import Testing
     #expect(effects.contains(.stopPlayback) == false)
 }
 
-@Test func vadDuringAISpeakingTriggersInterruptSideEffects() {
+/// VAD barge-in 只停本地播放，**不发** interrupt。
+///
+/// `.vadSpeechStart` 只由 `audioEventPump` 派发，而 pump 在派发它**之前**就已经同步
+/// 发过 interrupt 了——必须早于 `user.speech.start`，否则网关会重置上一轮的 interrupt
+/// 记账（2026-09-12 事故）。本事件是 start **之后**才派发的，所以从这里再发一次必定
+/// 晚于 start，达不到目的。
+///
+/// 这条测试原先断言 `.sendInterrupt` **存在**，等于把那次重复钉成了契约。「一次
+/// barge-in 只发一次、且在 start 之前」现在由接线级的
+/// `bargeInFromTheVADPathSendsExactlyOneInterrupt` 钉住——它走的是真实 pump 路径，
+/// 比这里的手工 reduce 更接近生产。
+@Test func vadDuringAISpeakingStopsPlaybackWithoutASecondInterrupt() {
     var state = SpeechSessionState(phase: .aiSpeaking)
     let effects = SpeechSessionMachine.reduce(&state, event: .vadSpeechStart)
+
+    #expect(state.phase == .recording)
+    #expect(effects.contains(.stopPlayback))
+    #expect(effects.contains(.sendInterrupt) == false)
+}
+
+/// `holdStart` 走的是另一条路：不经 pump，也没有配对的 `user.speech.start`，
+/// 所以这条路上的 interrupt 是唯一的一次，必须留。
+@Test func holdDuringAISpeakingStillSendsTheInterrupt() {
+    var state = SpeechSessionState(phase: .aiSpeaking)
+    let effects = SpeechSessionMachine.reduce(&state, event: .holdStart)
 
     #expect(state.phase == .recording)
     #expect(effects.contains(.stopPlayback))

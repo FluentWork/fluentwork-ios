@@ -100,7 +100,25 @@ public enum SpeechSessionMachine {
             state.phase = .waitingUser
             state.processingStage = nil
 
-        case (.aiSpeaking, .vadSpeechStart), (.aiSpeaking, .holdStart):
+        // 生产路径的 barge-in。`.vadSpeechStart` **只由 `audioEventPump` 派发**
+        // （`SpeechSessionMiddleware.swift:482`，全仓唯一派发点），而 pump 在派发它
+        // **之前**就已经同步发过 interrupt 了——它必须那样做，因为
+        // `user.speech.start` 会重置上一轮的 interrupt 记账（2026-09-12）。
+        //
+        // 所以这里**不再发第二次**：pump 是在 `sendSpeechBoundary(started: true)`
+        // **之后**才 dispatch 本事件的，从这里发出的 interrupt 必定晚于 start，
+        // 永远达不到「打断上一轮」的目的，只会多一个被错记到新一轮上的帧。
+        // 顺序只能由 pump 保证（它 `await` 了那次发送），而 `.sendInterrupt` 是
+        // fire-and-forget，排不出顺序。
+        case (.aiSpeaking, .vadSpeechStart):
+            state.phase = .recording
+            state.processingStage = nil
+            effects.append(.stopPlayback)
+
+        // `holdStart` 是另一条路：它不经 pump，也没有配对的 `user.speech.start`
+        // （且它在生产代码里目前没有任何派发点，见 `10_` 的 D3 附注），所以这里的
+        // interrupt 是这条路上唯一的一次，必须留。
+        case (.aiSpeaking, .holdStart):
             state.phase = .recording
             state.processingStage = nil
             effects.append(contentsOf: [.stopPlayback, .sendInterrupt])

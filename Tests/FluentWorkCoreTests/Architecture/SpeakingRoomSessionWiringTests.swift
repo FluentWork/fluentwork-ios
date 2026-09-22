@@ -995,6 +995,55 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(await speechClient.snapshotTranscripts() == ["__interrupt__"])
 }
 
+/// 一次 barge-in 只发**一次** interrupt，而且必须落在 `user.speech.start` 之前。
+///
+/// 上一条走的是 `holdStart`（直接 dispatch，**不经 pump**），所以它钉住的其实只是
+/// **状态机**那一次——VAD 路径的计数一直是空白，这正是本缺陷能活下来的原因。
+///
+/// 这条走生产路径：`audioEngine.emit(.speechStarted)` → `audioEventPump`。
+/// 现状是两次：
+///   1. pump 先发一次，在 start **之前**，顺序正确；
+///   2. 状态机收到 `.vadSpeechStart` 再发一次。而 `.vadSpeechStart` 是 pump 在
+///      `sendSpeechBoundary(started: true)` **之后**才 dispatch 的
+///      （`SpeechSessionMiddleware.swift:476-482`），所以第二次**必定**落在
+///      `user.speech.start` 之后——把 2026-09-12 修掉的顺序原样退回去
+///      （注释原文：「start resets the previous turn's interrupt accounting」）。
+@MainActor
+@Test func bargeInFromTheVADPathSendsExactlyOneInterrupt() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await speechClient.snapshotStartCalls() == 1
+    }
+
+    makeSessionLive(store)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .aiSpeaking
+    }
+
+    audioEngine.emit(.speechStarted)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .recording
+    }
+    // `.sendInterrupt` 是 fire-and-forget，得给它落地的时间——否则这条测试会在
+    // 第二次到达之前就断言，正好把要抓的东西放过去。
+    try? await Task.sleep(for: .milliseconds(100))
+
+    #expect(await speechClient.snapshotBoundaries() == [true])
+    let transcripts = await speechClient.snapshotTranscripts()
+    #expect(
+        transcripts == ["__interrupt__"],
+        "一次 barge-in 发了 \(transcripts.count) 次 interrupt：\(transcripts)"
+    )
+}
+
 @MainActor
 @Test func speechSessionMiddlewareCleansUpResourcesOnFailure() async {
     let container = Container()
