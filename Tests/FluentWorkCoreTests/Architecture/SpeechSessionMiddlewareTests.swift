@@ -1188,9 +1188,29 @@ struct SpeechSessionMiddlewareB14Tests {
         let boundaries = await speechClient.getEndBoundaries()
         #expect(boundaries.last?.turnID == "turn-1")
 
-        // Trigger AI response to return to waiting
-        let frame = WSAudioFrame(sequence: 1, payload: Data([0x01]))
-        speechClient.emit(.audio(frame))
+        // Trigger AI response to return to waiting.
+        //
+        // 两处夹具修正，都因为这条测试原先同时依赖了被修掉的那个缺陷：
+        //
+        // 1. `ai.tts.start` 现在是**必需的前置**，不是可选装饰。`.aiSpeaking` 的
+        //    唯一入口是 `.aiFirstAudioChunk`，而它只在协调器认领了帧之后才发。
+        //    网关总是先发 `ai.tts.start`（见本目录 `README.md` 的一句话结论），
+        //    省略它测的是一个生产里不会出现的形状。
+        // 2. payload 必须是**偶数长度**：解码 seam 是 `RawPCM16FrameDecoder`，
+        //    奇数长度会抛 `oddSampleCount` 并按 `.decodeFailed` 丢弃。原来的
+        //    `Data([0x01])` 不是一帧合法的 PCM16，它此前只是被「先宣告、后判定」
+        //    掩盖了——帧从未真的播过。
+        speechClient.emit(
+            .control(
+                .aiTTSStart(
+                    turnID: "turn-1",
+                    voiceID: "mock_voice_01",
+                    sampleRate: 16_000,
+                    codec: "pcm"
+                )
+            )
+        )
+        speechClient.emit(.audio(WSAudioFrame(sequence: 1, payload: Data([0x01, 0x02]))))
         try await waitForPhase(store, phase: .aiSpeaking)
 
         speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: nil, logID: nil)))

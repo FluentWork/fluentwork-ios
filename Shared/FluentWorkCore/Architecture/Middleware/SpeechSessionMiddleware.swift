@@ -707,30 +707,36 @@ internal func makeTransportEventRouter(
     ttsTrace: TTSStreamTrace
 ) -> TransportEventRouter {
     let audioHandler = AnyAudioFrameHandler { frame in
-        await dispatchBox.dispatch(.speakingRoom(.session(.aiFirstAudioChunk)))
-        // 一轮的音频有几百帧，但「第一帧什么时候到」只有一个时刻：
-        // 逐帧打点会把那条真的埋在自己的重复里（250 帧 = 250 行）。
-        timings.markTurnOnce(
-            "ai_first_chunk",
-            turnID: nil,
-            properties: [
-                "sequence": String(frame.sequence),
-                "payload_bytes": String(frame.payload.count),
-            ]
-        )
-        // P1-5: audio is the other way a turn can answer first, and
-        // for "did the AI start speaking sooner" it is the one that
-        // matters — text streams earlier but is silent. The recorder
-        // keeps whichever channel arrives first, so a reply that
-        // leads with audio is not overwritten by the text delta
-        // chasing it. No turn id on the wire here: binary frames
-        // carry a sequence and nothing else, so this resolves to the
-        // turn most recently started.
-        timings.markFirstResponse(nil, source: "audio")
         // 唯一入口：播 / 丢由协调器按轮次归属判定，这里只负责埋点。
         // 归属来自「当前活跃的 ai.tts.start」——二进制帧上没有 turn_id。
+        //
+        // **判定必须排在埋点与相位翻转之前。** 被丢弃的帧不是「AI 开始说话了」——
+        // 它一声不响。先宣告再判定，一个被丢掉的帧就会把会话推进到 `.aiSpeaking`
+        // （`SpeechSessionMachine.swift:191`）并污染 `first_response_ms`；而
+        // `markTurnOnce` / `markFirstResponse` 每轮只报一次，真正的那一帧再也
+        // 纠正不了。钉住这一条的是 `ProductionRoutingWiringTests` 的两条测试。
         switch await ttsCoordinator.onAudioFrame(frame) {
         case let .played(turnID):
+            await dispatchBox.dispatch(.speakingRoom(.session(.aiFirstAudioChunk)))
+            // 一轮的音频有几百帧，但「第一帧什么时候到」只有一个时刻：
+            // 逐帧打点会把那条真的埋在自己的重复里（250 帧 = 250 行）。
+            timings.markTurnOnce(
+                "ai_first_chunk",
+                turnID: nil,
+                properties: [
+                    "sequence": String(frame.sequence),
+                    "payload_bytes": String(frame.payload.count),
+                ]
+            )
+            // P1-5: audio is the other way a turn can answer first, and
+            // for "did the AI start speaking sooner" it is the one that
+            // matters — text streams earlier but is silent. The recorder
+            // keeps whichever channel arrives first, so a reply that
+            // leads with audio is not overwritten by the text delta
+            // chasing it. No turn id on the wire here: binary frames
+            // carry a sequence and nothing else, so this resolves to the
+            // turn most recently started.
+            timings.markFirstResponse(nil, source: "audio")
             let count = ttsTrace.recordAudio()
             if count == 1 {
                 container.tracker().track(

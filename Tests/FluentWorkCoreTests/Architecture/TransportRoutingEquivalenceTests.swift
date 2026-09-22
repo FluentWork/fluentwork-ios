@@ -209,6 +209,54 @@ struct ProductionRoutingWiringTests {
             #expect(!evaluationArrival.consume(), "\(frame.wireType) 意外地 mark 了评测等待")
         }
     }
+
+    /// 被丢弃的音频帧不是「AI 开始说话了」——它一声不响。
+    ///
+    /// `.aiFirstAudioChunk` 是 `.aiSpeaking` 的唯一入口（`SpeechSessionMachine.swift:191`）。
+    /// 为一个协调器已经判死的帧发它，症状是「房间说 AI 在说话、实际没有声音」，
+    /// 而 `first_response_ms` 会被这条并不存在的音频污染；又因为
+    /// `markTurnOnce` / `markFirstResponse` **每轮只报一次**，真正的那一帧再也纠正不了。
+    ///
+    /// 这条对「先 dispatch、后判定」的实现是红的。
+    @Test("无归属的音频帧不得宣告 aiFirstAudioChunk")
+    func droppedAudioFrameDoesNotAnnounceFirstChunk() async {
+        let (router, recorder, _) = makeProductionRouter()
+
+        // 没有 `ai.tts.start`：协调器把这一帧判成 `.unknownTurn` 丢掉。
+        await router.route(event: .audio(WSAudioFrame(sequence: 0, payload: Data([0x01, 0x02]))))
+
+        #expect(
+            !recorder.actions.contains(where: isFirstAudioChunk),
+            "被丢弃的帧宣告了 aiFirstAudioChunk：\(recorder.actions)"
+        )
+    }
+
+    /// 上一条的反面：有归属的帧仍然要宣告。
+    ///
+    /// 少了这一条，「干脆不发 aiFirstAudioChunk」也能让上一条变绿——而那样房间
+    /// 永远不会离开 `.processing`，等于用另一种静音换掉这一种。
+    @Test("有归属的音频帧仍然宣告 aiFirstAudioChunk")
+    func playedAudioFrameStillAnnouncesFirstChunk() async {
+        let (router, recorder, _) = makeProductionRouter()
+
+        await router.route(
+            event: .control(
+                .aiTTSStart(turnID: "turn-1", voiceID: "v", sampleRate: 16_000, codec: "pcm")
+            )
+        )
+        await router.route(event: .audio(WSAudioFrame(sequence: 0, payload: Data([0x01, 0x02]))))
+
+        #expect(
+            recorder.actions.contains(where: isFirstAudioChunk),
+            "有归属的帧没有宣告 aiFirstAudioChunk，房间会卡在 .processing：\(recorder.actions)"
+        )
+    }
+}
+
+/// 这条动作是不是 `.aiFirstAudioChunk`。
+private func isFirstAudioChunk(_ action: AppAction) -> Bool {
+    if case .speakingRoom(.session(.aiFirstAudioChunk)) = action { return true }
+    return false
 }
 
 /// 用生产工厂搭一个路由器，dispatch 落进 `recorder`。
