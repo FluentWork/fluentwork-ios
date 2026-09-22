@@ -310,6 +310,75 @@ struct ProductionRoutingWiringTests {
             "有归属的帧没有宣告 aiFirstAudioChunk，房间会卡在 .processing：\(recorder.actions)"
         )
     }
+
+    /// 一轮音频有上百帧，而「这一轮在丢帧」是**一个事实，不是一个时刻**。
+    ///
+    /// `.dropped` 分支原来对每一帧 track 一次。在真正要紧的形状里（D2b：一整轮无归属）
+    /// 那是每轮上百条 `tts_frame_dropped`，把「这一轮在丢帧」这条真信号埋在自己的重复里。
+    ///
+    /// 同一形状在 `ai_first_chunk` 上已经修过一次：`08_` §5.2 记「每帧都打（250 帧 = 250 行），
+    /// 把真响应的第一条埋掉」，由 `cacfdd2` 用 `markTurnOnce` 改成每轮只报一次。
+    /// **同一条链路的丢弃路径留着同一个问题。**
+    ///
+    /// 这条对「逐帧上报」的实现是红的。
+    @Test("一整轮被丢弃只留一条痕迹，不是每帧一条")
+    func aWholeDroppedTurnReportsTheReasonOnce() async {
+        let tracker = CapturingTracker()
+        let (router, _, _) = makeProductionRouter(tracker: tracker)
+
+        // 没有 ai.tts.start：协调器把每一帧都判成 .unknownTurn。
+        for sequence in UInt32(0)..<UInt32(250) {
+            await router.route(
+                event: .audio(WSAudioFrame(sequence: sequence, payload: Data([0x01, 0x02])))
+            )
+        }
+
+        let drops = tracker.events.filter { $0.name == "tts_frame_dropped" }
+        #expect(
+            drops.count == 1,
+            "250 帧被丢弃留下了 \(drops.count) 条 tts_frame_dropped：这一轮在丢帧是一个事实，不是 250 个时刻"
+        )
+        #expect(drops.first?.properties["reason"] == "unknownTurn")
+        #expect(drops.first?.properties["turn_id"] == "nil")
+    }
+
+    /// 上一条的反面：去重**不能变成「一场会话只报一次」**。
+    ///
+    /// 少了这一条，「第一帧报完之后就再也不报」也能让上一条变绿——而那会让**第二次**
+    /// 丢帧事故完全看不见。去重的粒度是「一轮」，不是「一次会话」。
+    @Test("下一轮的丢弃仍然要报，去重不是一次性的")
+    func theNextTurnsDropsAreStillReported() async {
+        let tracker = CapturingTracker()
+        let (router, _, _) = makeProductionRouter(tracker: tracker)
+
+        // 第一段：无归属，全部丢弃。
+        for sequence in UInt32(0)..<UInt32(5) {
+            await router.route(
+                event: .audio(WSAudioFrame(sequence: sequence, payload: Data([0x01, 0x02])))
+            )
+        }
+        // 一轮正常起止：`ai.tts.start` 会重置这一轮的台账。
+        await router.route(
+            event: .control(
+                .aiTTSStart(turnID: "turn-1", voiceID: "v", sampleRate: 16_000, codec: "pcm")
+            )
+        )
+        await router.route(
+            event: .control(.aiTTSEnd(turnID: "turn-1", completionStatus: "ok", durationMs: nil))
+        )
+        // 第二段：又无归属了，全部丢弃。
+        for sequence in UInt32(0)..<UInt32(5) {
+            await router.route(
+                event: .audio(WSAudioFrame(sequence: sequence, payload: Data([0x01, 0x02])))
+            )
+        }
+
+        let drops = tracker.events.filter { $0.name == "tts_frame_dropped" }
+        #expect(
+            drops.count == 2,
+            "两段各自丢帧，却只留下 \(drops.count) 条痕迹：去重按「一轮」才对，不是按会话"
+        )
+    }
 }
 
 /// 这条动作是不是 `.aiFirstAudioChunk`。

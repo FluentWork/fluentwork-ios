@@ -749,7 +749,17 @@ internal func makeTransportEventRouter(
                 )
             }
         case let .dropped(turnID, reason, errorDescription):
-            // 丢弃必须留痕。无 ai.tts.start 时帧会被丢弃并记录。
+            // 丢弃必须留痕，但**一轮里每种原因只留一条**。
+            //
+            // 「这一轮在丢帧」是一个事实，不是一个时刻：一轮的音频有上百帧，逐帧上报
+            // 会把那条真信号埋在自己的重复里（`10_` D6；同形状见 `08_` §5.2 的
+            // `ai_first_chunk`）。去重按「一轮」——`tts.start` 处会 `ttsTrace.reset()`，
+            // 所以下一轮丢了帧仍然会报，见 `theNextTurnsDropsAreStillReported`。
+            //
+            // 事件名保持 `tts_frame_dropped` / `tts_decoder_failed` 不变：`08_` §4 的
+            // 真机核对表按这两个名字 grep（「无 `tts_decoder_failed` / `tts_frame_dropped`」
+            // = 一帧都没被丢），改名等于让那份核对表失效。
+            guard ttsTrace.shouldReportDrop(reason: reason) else { return }
             container.tracker().track(
                 event: reason == .decodeFailed ? "tts_decoder_failed" : "tts_frame_dropped",
                 properties: [
@@ -1528,8 +1538,20 @@ private func scheduleConnectWaitTask(timeouts: ProcessingTimeouts) -> Effect<App
 internal final class TTSStreamTrace: Sendable {
     private let frames = OSAllocatedUnfairLock(initialState: 0)
 
+    /// 这一轮已经上报过丢弃的原因。
+    ///
+    /// **「这一轮在丢帧」是一个事实，不是一个时刻。** 一轮的音频有上百帧，逐帧上报
+    /// 会把那条真信号埋在自己的重复里（`10_` D6）。同一形状在 `ai_first_chunk` 上
+    /// 已经修过一次：`08_` §5.2 记「每帧都打（250 帧 = 250 行），把真响应的第一条
+    /// 埋掉」，由 `cacfdd2` 用 `markTurnOnce` 改成每轮只报一次。
+    ///
+    /// 去重的粒度是**一轮**——与 `frames` 共用 `reset()` 的生命周期（`tts.start`
+    /// 处调用）。所以下一轮丢了帧仍然会报；只有「同一轮、同一原因」被折叠成一条。
+    private let reportedDropReasons = OSAllocatedUnfairLock(initialState: Set<TTSDropReason>())
+
     func reset() {
         frames.withLock { $0 = 0 }
+        reportedDropReasons.withLock { $0.removeAll() }
     }
 
     func recordAudio() -> Int {
@@ -1541,6 +1563,16 @@ internal final class TTSStreamTrace: Sendable {
 
     func audioFrameCount() -> Int {
         frames.withLock { $0 }
+    }
+
+    /// 这一轮的这次丢弃该不该上报。
+    ///
+    /// 同一个原因在一轮里只放行一次。返回的是「该不该 track」，不是「记下了没有」——
+    /// 调用方只需要前者。
+    func shouldReportDrop(reason: TTSDropReason) -> Bool {
+        reportedDropReasons.withLock { reported in
+            reported.insert(reason).inserted
+        }
     }
 }
 
