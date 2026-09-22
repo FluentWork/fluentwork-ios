@@ -42,11 +42,35 @@ import Testing
 
 @Test func controlFrameCodecRejectsErrorFrameMissingCode() throws {
     // `code` is the stable machine identifier; it must be required so iOS can
-    // branch on it without resorting to message-string sniffing. Swift's
-    // KeyedDecodingContainer surfaces a missing required field as
-    // `DecodingError.keyNotFound`, which the Codec propagates unchanged.
+    // branch on it without resorting to message-string sniffing.
+    //
+    // The error *type* is part of the assertion, and that is the point: a
+    // missing required field is this codec's own contract violation, so it
+    // says so with its own case. This used to assert `DecodingError.self` — the
+    // bare container error, which `URLSessionSocketTransport.describe(_:)`
+    // cannot read, so the operator got "The data couldn't be read because it is
+    // missing." with no field name in it. The requirement is unchanged (a frame
+    // without `code` is rejected); only the failure now has a usable name.
     let data = Data(#"{"type":"error","message":"no code here"}"#.utf8)
-    #expect(throws: DecodingError.self) {
+    #expect(throws: WSControlFrameCodingError.missingField("code")) {
+        _ = try WSControlFrameCodec.decode(data)
+    }
+}
+
+/// 缺必需字段是**本编解码器自己的契约违规**，就该由它自己的错误类型说出来。
+///
+/// `WSControlFrameCodingError.missingField` 是为此而声明的，却全仓没有一个
+/// `throw`——缺字段抛的是 `KeyedDecodingContainer` 的裸 `DecodingError`。
+/// 后果不只是「一个 case 没人用」：`URLSessionSocketTransport.describe(_:)`
+/// 只收 `WSControlFrameCodingError`，于是缺字段这条**致命**路径绕开了它，
+/// 而那段注释写明它存在的理由正是「让致命解码失败不退化成 NSError 桥接文案」，
+/// 并明说 `missingField` 是「必须保住可读信息」的那个 case。
+@Test func missingRequiredFieldIsClassifiedAsMissingField() throws {
+    // `codec` 是 schema 的 required 之一，这里故意不给。
+    let data = Data(
+        #"{"type":"ai.tts.start","turn_id":"turn-1","voice_id":"v","sample_rate":16000}"#.utf8
+    )
+    #expect(throws: WSControlFrameCodingError.missingField("codec")) {
         _ = try WSControlFrameCodec.decode(data)
     }
 }
@@ -257,6 +281,18 @@ private func receiveLatencySample(
     return nil
 }
 
+/// Pulls the message out of a loop run's decode failure.
+///
+/// The message is the whole point of a `decodingFailed`: the type alone says
+/// "the wire was wrong" without saying which byte. Kept here so a test can
+/// assert on the words an operator would actually read.
+private func decodingFailureMessage(in events: [SocketTransportEvent]) -> String? {
+    for event in events {
+        if case let .failure(.decodingFailed(message)) = event { return message }
+    }
+    return nil
+}
+
 /// Drives the receive loop with `source` and returns everything it emitted.
 ///
 /// The transport is scoped so it deinits — that finishes the event stream,
@@ -384,6 +420,27 @@ private func eventsFromScriptedReceiveLoop(
 
     #expect(events.contains(.stateChanged(.disconnected)))
     #expect(events.contains { if case .failure = $0 { return true } else { return false } })
+}
+
+/// 缺必需字段的致命失败，文案里必须点名字段。
+///
+/// 上一条测试只钉「循环会死」，**从不断言文案**——这正是本缺陷能活到现在的原因。
+/// 缺字段抛裸 `DecodingError.keyNotFound`，落到 `handle(message:)` 里 `describe(_:)`
+/// 之外的泛化 catch，走 `error.localizedDescription`，也就是 NSError 桥接的
+/// "The data couldn't be read because it is missing."——里面没有 `codec` 三个字。
+/// 排查一次后端漏填字段，得先猜是哪个字段。
+@Test func receiveLoopNamesTheMissingRequiredField() async {
+    let events = await eventsFromScriptedReceiveLoop(
+        ScriptedMessageSource([
+            .string(#"{"type":"ai.tts.start","turn_id":"turn-1","voice_id":"v","sample_rate":16000}"#),
+        ])
+    )
+
+    let message = decodingFailureMessage(in: events)
+    #expect(
+        message?.contains("codec") == true,
+        "失败文案没点名缺的字段，排查无从下手：\(message ?? "nil")"
+    )
 }
 
 /// An ignored frame is reported, not swallowed.

@@ -431,6 +431,11 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
     /// difference and is skipped rather than failed (see `handle`). It stays
     /// in the switch because the enum is closed and the remaining case must
     /// keep its readable message.
+    ///
+    /// `missingField` is the case this function is *for*, and it only reaches
+    /// here because `WSControlFrameCodec.decode` classifies the container's
+    /// `keyNotFound` into it. A bare `DecodingError` never gets this far — the
+    /// catch beside this one handles it, and produces the bridge message above.
     private func describe(_ error: WSControlFrameCodingError) -> String {
         switch error {
         case let .unknownType(type):

@@ -199,6 +199,23 @@ extension WSControlFrame {
 public enum WSControlFrameCodingError: Error, Equatable, Sendable {
     case unknownType(String)
     case missingField(String)
+
+    /// Classifies a `DecodingError` that this frame's own decoder could not
+    /// raise itself, or `nil` when the error is better left as it stands.
+    ///
+    /// Only `keyNotFound` is claimed. The frame decoder knows its own keys, so
+    /// it can name the one that is absent — and the name is the whole value:
+    /// it is the difference between "the wire is wrong somewhere" and "the
+    /// backend stopped sending `codec`". A `typeMismatch` or `dataCorrupted`
+    /// already describes itself well enough to act on, and a second name for it
+    /// here would only mean two spellings of one failure.
+    ///
+    /// `key.stringValue` is the **wire** name (`sample_rate`, not `sampleRate`)
+    /// — the name a reader has to match against the backend's schema.
+    static func classify(_ error: DecodingError) -> WSControlFrameCodingError? {
+        guard case let .keyNotFound(key, _) = error else { return nil }
+        return .missingField(key.stringValue)
+    }
 }
 
 extension WSControlFrame: Codable {
@@ -459,7 +476,25 @@ public enum WSControlFrameCodec: Sendable {
         try JSONEncoder().encode(frame)
     }
 
+    /// Decodes one control frame.
+    ///
+    /// A missing required field leaves here as
+    /// `WSControlFrameCodingError.missingField` rather than as the bare
+    /// `DecodingError.keyNotFound` the container raises. That is not cosmetic:
+    /// `URLSessionSocketTransport.describe(_:)` takes only
+    /// `WSControlFrameCodingError`, so an unclassified `DecodingError` falls to
+    /// the generic catch beside it and reaches the operator as the NSError
+    /// bridge's "The data couldn't be read because it is missing." — a *fatal*
+    /// decode failure whose message does not name the field, which is exactly
+    /// what `describe(_:)` says it exists to prevent.
     public static func decode(_ data: Data) throws -> WSControlFrame {
-        try JSONDecoder().decode(WSControlFrame.self, from: data)
+        do {
+            return try JSONDecoder().decode(WSControlFrame.self, from: data)
+        } catch let error as DecodingError {
+            if let classified = WSControlFrameCodingError.classify(error) {
+                throw classified
+            }
+            throw error
+        }
     }
 }
