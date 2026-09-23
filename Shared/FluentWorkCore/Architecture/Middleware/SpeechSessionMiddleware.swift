@@ -429,10 +429,14 @@ internal final class TurnTimeoutTracking: @unchecked Sendable {
 /// and it emitted `.speechStarted` — into a stream nobody was reading. The
 /// machine stayed on `waitingUser`, so the tap looked like it had failed.
 ///
-/// `pcmBuffer` / `isCapturingSpeech` are locals here and so now live as long
-/// as the store. Safe because `.speechStarted` clears the buffer *before*
-/// opening `speechCaptureGate`: nothing buffered in a previous session can
-/// reach the wire.
+/// The pump keeps no per-session mutable state of its own. The one decision
+/// it could plausibly cache — "are we inside an utterance" — belongs to
+/// `speechCaptureGate`, which is the single place `takeForwardDecision()`
+/// consults; a local copy would be a second answer to the same question.
+///
+/// It used to keep one anyway: a `pcmBuffer` accumulated for local ASR.
+/// B14 moved transcription server-side, so the buffer was still written and
+/// cleared on every turn but never read — see `docs/70_tts_wss_refactor/22_`.
 private func audioEventPump(
     container: Container,
     dispatch: @escaping @MainActor (AppAction) -> Void,
@@ -447,19 +451,12 @@ private func audioEventPump(
     let tracker = container.tracker()
 
     return .task {
-            // B13: Buffer PCM chunks during speech for client ASR transcription
-            var pcmBuffer: [Data] = []
-            var isCapturingSpeech = false
-            
             for await event in audioEngine.events() {
                 if Task.isCancelled { return nil }
     
                 switch event {
                 case .speechStarted:
                     do {
-                        // Reset PCM buffer at the start of each turn
-                        pcmBuffer.removeAll()
-                        isCapturingSpeech = true
                         speechCaptureGate.beginSpeech()
 
                         // Barge-in from AI speech: interrupt the in-flight
@@ -487,11 +484,9 @@ private func audioEventPump(
     
                 case .speechEnded:
                     do {
-                        isCapturingSpeech = false
                         // I20: abort already closed the utterance. Do not send
                         // user.speech.end — that would start collectTurn.
                         guard speechCaptureGate.isOpen else {
-                            pcmBuffer.removeAll()
                             continue
                         }
                         let uplink = speechCaptureGate.endSpeech()
@@ -539,9 +534,6 @@ private func audioEventPump(
                         )
                         await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechEnd(turnID: turnID))))
                         await dispatchBox.dispatch(.speakingRoom(.userTurnStarted(turnID: turnID)))
-                        
-                        // Clear buffer after use
-                        pcmBuffer.removeAll()
                     } catch {
                         await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
                         return nil
@@ -549,10 +541,6 @@ private func audioEventPump(
     
                 case let .pcmChunk(data):
                     do {
-                        // B13: Buffer PCM during speech capture for client ASR
-                        if isCapturingSpeech {
-                            pcmBuffer.append(data)
-                        }
                         // The gate counts this decision, so a chunk refused here
                         // is no longer invisible. It is the normal path for most
                         // of a session; the count is what makes "shut the whole
