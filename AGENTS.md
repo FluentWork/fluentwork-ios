@@ -28,6 +28,7 @@ Shared topics:
 7. Cross-repository iOS/backend work must be sequential: finish and verify the active task in one repository before starting work in the other repository.
 8. Develop on `main`. Pull and push with `--ff-only`. Do not open merge requests or pull requests unless the user explicitly asks.
 9. Landing gate is a passing host Debug build plus `swift test`, then an implementation-note doc committed with the code. Do not treat gstack `/review` or `GSTACK_REVIEWED=1` as required.
+10. **Do not add code comments unless explicitly asked.** No doc comments, no header blocks, no inline rationale — not on new code, not on code you are editing. Reasoning belongs in the numbered implementation note under `docs/`, which is already required. Existing comments are left alone; this rule is forward-looking.
 
 ## Required Behaviors
 
