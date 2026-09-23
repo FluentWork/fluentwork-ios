@@ -474,6 +474,105 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(await speechClient.snapshotBoundaries() == [true])
 }
 
+/// 上行采集诊断的**埋点名与属性键**：一张表，把 11 条 `timing_*` 钉死。
+///
+/// ## 为什么这张表必须存在
+///
+/// 这 11 条埋点是**设备验证唯一计划中的证据来源**。`70_/08_` §3 记的真机验证至今
+/// 未做，而它要查的那类问题（真机静音、真机 barge-in）本仓的测试层级**结构上测不到**
+/// （`80_/03_` §4.5）。真机出问题时，能读的只有这些行。
+///
+/// 而在 `70_/23_` 之前，**没有任何测试钉住它们的名字**：
+/// `grep -rn "audio_capture_armed" Tests/` 是空的。一次改名、一个拼写错误，就能静默
+/// 移掉整条诊断链，而全套测试仍然全绿——这与本仓反复撞到的形状同族
+/// （`70_/16_`/`17_` 的「判据从不取真值」、`70_/19_` §6.3 的「判据被复制进替身」、
+/// `70_/22_` 的「保护对象不存在」）：**有可观测性，但没有东西保证它还活着。**
+///
+/// ## 这些断言不描述行为，只描述**可读性**
+///
+/// 所以它们不会因为重构而合理地变红——只有当有人无意改掉一个名字时才会。属性键一并
+/// 断言，理由相同：`captureArmed` 的四个布尔是「启动被跳过了 / 启动了但没跑起来」的
+/// 唯一区分手段（`LiveAudioEngine` 那段注释：`running: false` 有两种成因，终态分不开），
+/// 改掉一个键就把它降级成一条无法判读的日志。
+///
+/// ## 两处顺序约束
+///
+/// - `.speechEnded` 要求闸门已开（`guard speechCaptureGate.isOpen`），所以排在
+///   `.speechStarted` 之后。
+/// - `.failed` 排在最后：它会把会话推进 `.failed`（`endSession` 随之触发）。
+///   它同时充当**屏障**——事件是逐条串行处理的，等到 `timing_audio_engine_failed`
+///   出现，前面 10 条必然都已经处理完了。
+@MainActor
+@Test func captureDiagnosticsKeepTheirMarkNamesAndPropertyKeys() async throws {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    let tracker = CapturingTracker()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+    container.tracker.register { tracker }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .connecting
+    }
+    makeSessionLive(store)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .aiSpeaking
+    }
+
+    // 采集图的自报（7 条，全部是纯埋点，不派发、不依赖相位）。
+    audioEngine.emit(.captureArmed(wasRunning: false, startAttempted: true, startThrew: false, running: true))
+    audioEngine.emit(.captureKick(started: true, detail: "kick-ok"))
+    audioEngine.emit(.captureFirstBuffer)
+    audioEngine.emit(.captureDropped(reason: "convert-failed"))
+    audioEngine.emit(.captureInterruptionLifted(droppedBuffers: 7))
+    audioEngine.emit(.voiceProcessing("aec-on"))
+    audioEngine.emit(.routeChanged("headsetUnplugged"))
+    audioEngine.emit(.speechEndpointed(reason: "hold", windowMs: 1200, trailingSilenceMs: 800))
+
+    // 上行本体：一轮的开启与结束（`.speechEnded` 要闸门已开）。
+    audioEngine.emit(.speechStarted)
+    audioEngine.emit(.speechEnded)
+
+    // 引擎报错。最后发，兼作屏障。
+    audioEngine.emit(.failed("playback engine is not running; dropped frame"))
+    try? await waitUntil(timeoutNanoseconds: 2_000_000_000) {
+        tracker.events.contains { $0.name == "timing_audio_engine_failed" }
+    }
+
+    // (埋点名, 必须存在的属性键)。属性键只断言「存在」不断言值——值由各条自己的
+    // 行为测试负责，这里管的是「这行还读得懂吗」。
+    let expected: [(name: String, keys: Set<String>)] = [
+        ("timing_vad_speech_start", []),
+        ("timing_audio_uplink_turn", ["forwarded", "dropped_outside"]),
+        ("timing_audio_capture_armed", ["was_running", "start_attempted", "start_threw", "running"]),
+        ("timing_audio_capture_kick", ["started", "detail"]),
+        ("timing_audio_capture_first_buffer", []),
+        ("timing_audio_capture_dropped", ["reason"]),
+        ("timing_audio_capture_interruption_lifted", ["dropped_buffers"]),
+        ("timing_audio_voice_processing", ["detail"]),
+        ("timing_audio_route_changed", ["reason"]),
+        ("timing_speech_endpointed", ["reason", "window_ms", "trailing_silence_ms"]),
+        ("timing_audio_engine_failed", ["message"]),
+    ]
+
+    for (name, keys) in expected {
+        let hit = try #require(
+            tracker.events.first { $0.name == name },
+            "埋点 \(name) 不见了——它是真机验证要读的行之一（`70_/08_` §3 尚未做）"
+        )
+        for key in keys {
+            #expect(
+                hit.properties[key] != nil,
+                "埋点 \(name) 少了属性键 \(key)——它降级成了一条无法判读的日志"
+            )
+        }
+    }
+}
+
 @MainActor
 @Test func speechSessionMiddlewareConsumesTransportBadgeEvents() async {
     let container = Container()
