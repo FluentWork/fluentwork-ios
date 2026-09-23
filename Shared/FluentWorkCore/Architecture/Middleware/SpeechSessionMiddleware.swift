@@ -659,8 +659,30 @@ private func audioEventPump(
     
                 case let .failed(message):
                     timings.mark(event: "audio_engine_failed", properties: ["message": message])
+                    // Close the gate first. The session is over, so nothing more
+                    // may be forwarded — and a closed gate is also what makes the
+                    // rest of this loop safe: `takeForwardDecision()` then refuses
+                    // every chunk instead of sending into a socket that
+                    // `endSession` is closing. `abort()` rather than `endSpeech()`
+                    // because the trailing `speechEnded` must be swallowed, which
+                    // is the same reason the recording-abort path uses it.
+                    speechCaptureGate.abort()
+                    // Then report it — and **keep reading**. This reader belongs
+                    // to the engine, not to this session: `endSession` says so in
+                    // as many words and deliberately does not cancel it. Returning
+                    // here broke that promise, and the engine's stream outlives the
+                    // session (it is finished only in the engine's `deinit`), so a
+                    // single failure left every later session with no uplink at
+                    // all: no `user.speech.start`, no PCM, and no `.captureLive` —
+                    // so the room sat on 「连接中」 until `connectWait` reported
+                    // 「连接超时，请重试」, blaming the network.
+                    //
+                    // The engine's own `playbackRetired` guard — added so leftover
+                    // frames "drop instead of ... `.failed`, which would kill the
+                    // process-lifetime audio pump" — only covers frames arriving
+                    // *after* `stopCapture()`. A route change, an odd-length PCM
+                    // buffer, and a system interruption all still land here.
                     await dispatchBox.dispatch(.speakingRoom(.session(.failed(message))))
-                    return nil
                 }
             }
             return nil

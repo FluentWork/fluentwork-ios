@@ -384,6 +384,96 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(store.state.speakingRoom.phase == .aiSpeaking)
 }
 
+/// 引擎报一次失败，不得把**进程级**的上行读取者一并带走。
+///
+/// 引擎的事件流活得比会话长：`LiveAudioEngine` 只在自己的 `deinit` 里
+/// `finish()` 那条 continuation（`LiveAudioEngine.swift:447`），`stopCapture()`
+/// 不动它。两个泵也由 `OnceFlag` 保证**每进程只起一次**
+/// （`SpeechSessionMiddleware.swift:109`，`take()` 只返回一次 true）。所以泵不是
+/// 会话资源——这条被两处注释写死：
+///
+/// - `endSession` 的 handler：`// No .cancel(id: audioEngineEvents): that reader
+///   belongs to the engine, not to this session. See audioEventPump.`
+///   （`SpeechSessionMiddleware.swift:1328-1329`）
+/// - `stopCapture()`：`playbackRetired` 存在的理由之一就是让在途帧
+///   `instead of .failed, which would kill the process-lifetime audio pump`
+///   （`LiveAudioEngine.swift:743-744`）
+///
+/// 而 `audioEventPump` 在 `.failed` 上 `return nil`，**正好违反这条**：会话级的
+/// 一次失败，终止进程级的读取者。
+///
+/// 触发它的是日常情形，不是引擎报废。`playbackRetired` 那道工作区只能盖住
+/// **`stopCapture()` 之后**到达的播放帧，盖不住这三处：
+///
+/// - `:723` 路由变化后重装采集 tap 失败（拔插耳机）；
+/// - `:834` PCM 长度不是 2 的倍数；
+/// - `:1044` 系统中断（`音频被系统中断，本轮练习已停止`）。
+///
+/// 后果是下一次会话**完全没有上行**：`beginSpeech()` 不跑、`user.speech.start`
+/// 不发、一帧 PCM 都不转发、`.captureFirstBuffer` 也没人接。而 `.connecting` 等的
+/// 正是后一半（`captureFirstBufferOpensTheSession` 钉的就是这条），于是房间卡在
+/// 「连接中」，最后死在 `connectWait` 看门狗上，报的是「连接超时，请重试」。
+/// **一次播放/路由故障，换来本次进程内所有后续会话失效，而错误信息指向网络。**
+///
+/// 三段断言，第一段是必须保持不变的那半：失败仍要被报出来。
+@MainActor
+@Test func anEngineFailureDoesNotRetireTheUplinkPump() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+
+    let store = AppStoreFactory.make(container: container)
+
+    // 会话一：起来、变活。
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .connecting
+    }
+    makeSessionLive(store)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .aiSpeaking
+    }
+    #expect(store.state.speakingRoom.phase == .aiSpeaking)
+
+    // 引擎报一次失败。取 `:895` 的原文：一条**每帧**守卫，不是终局宣告。
+    audioEngine.emit(.failed("playback engine is not running; dropped frame"))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .failed
+    }
+    // 这一半必须保持：失败要被报出来。
+    #expect(store.state.speakingRoom.phase == .failed)
+
+    // 离开房间（`.failed` 是 `.enterRoom` 允许重置的相位之一），再开一次会话。
+    store.dispatch(.speakingRoom(.enterRoom(continueFrom: nil)))
+    #expect(store.state.speakingRoom.phase == .idle)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .connecting
+    }
+
+    // 会话二的 socket 那一半到位；此时房间**应当**仍停在「连接中」。
+    store.dispatch(.speakingRoom(.session(.socketReady)))
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(store.state.speakingRoom.phase == .connecting)
+
+    // 另一半只能由泵交付——正是 `captureFirstBufferOpensTheSession` 钉住的那条。
+    audioEngine.emit(.captureFirstBuffer)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .aiSpeaking
+    }
+    #expect(store.state.speakingRoom.phase == .aiSpeaking)
+
+    // 上行本身：用户开口必须仍然上线。
+    audioEngine.emit(.speechStarted)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await speechClient.snapshotBoundaries() == [true]
+    }
+    #expect(await speechClient.snapshotBoundaries() == [true])
+}
+
 @MainActor
 @Test func speechSessionMiddlewareConsumesTransportBadgeEvents() async {
     let container = Container()
