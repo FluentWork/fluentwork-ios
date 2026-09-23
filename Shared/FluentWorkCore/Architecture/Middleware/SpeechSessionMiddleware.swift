@@ -478,8 +478,8 @@ private func audioEventPump(
                         timings.mark(event: "vad_speech_start")
                         await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechStart)))
                     } catch {
+                        speechCaptureGate.abort()
                         await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
-                        return nil
                     }
     
                 case .speechEnded:
@@ -535,8 +535,8 @@ private func audioEventPump(
                         await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechEnd(turnID: turnID))))
                         await dispatchBox.dispatch(.speakingRoom(.userTurnStarted(turnID: turnID)))
                     } catch {
+                        speechCaptureGate.abort()
                         await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
-                        return nil
                     }
     
                 case let .pcmChunk(data):
@@ -549,8 +549,8 @@ private func audioEventPump(
     
                         try await speechClient.sendAudioPCM(data)
                     } catch {
+                        speechCaptureGate.abort()
                         await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
-                        return nil
                     }
     
                 case .interruptedBySystem:

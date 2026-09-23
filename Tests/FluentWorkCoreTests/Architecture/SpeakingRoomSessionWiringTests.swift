@@ -474,6 +474,52 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(await speechClient.snapshotBoundaries() == [true])
 }
 
+@MainActor
+@Test func aFailedUplinkSendDoesNotRetireTheProcessLifetimePump() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient(
+        boundaryError: StubSpeechSessionClient.StubError.sendBoundaryFailed
+    )
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+
+    let store = AppStoreFactory.make(container: container)
+
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .connecting
+    }
+    makeSessionLive(store)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .aiSpeaking
+    }
+    #expect(store.state.speakingRoom.phase == .aiSpeaking)
+
+    audioEngine.emit(.speechStarted)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .failed
+    }
+    #expect(store.state.speakingRoom.phase == .failed)
+
+    store.dispatch(.speakingRoom(.enterRoom(continueFrom: nil)))
+    #expect(store.state.speakingRoom.phase == .idle)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .connecting
+    }
+    store.dispatch(.speakingRoom(.session(.socketReady)))
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(store.state.speakingRoom.phase == .connecting)
+
+    audioEngine.emit(.captureFirstBuffer)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .aiSpeaking
+    }
+    #expect(store.state.speakingRoom.phase == .aiSpeaking)
+}
+
 /// 上行采集诊断的**埋点名与属性键**：一张表，把 11 条 `timing_*` 钉死。
 ///
 /// ## 为什么这张表必须存在
