@@ -15,8 +15,6 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         channels: 1,
         interleaved: true
     )!
-    // Sendable immutable state exposed nonisolated so `events()` can stay a
-    // synchronous protocol requirement.
     private nonisolated let stream: AsyncStream<AudioEngineEvent>
     let continuation: AsyncStream<AudioEngineEvent>.Continuation
 
@@ -24,49 +22,31 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     var sourceFormat: AVAudioFormat?
     private var hasInstalledTap = false
     var captureFirstBufferSeen = false
-    /// Emitted at most once per capture session: the tap fires ~86 times a
-    /// second at 48 kHz, so a line per buffer would bury the fact it reveals.
+    /// 每个采集会话最多报一次：tap 每秒响约 86 次，一行一 buffer 会把要露的那件事埋掉。
     var captureDropReported = false
-    /// Buffers the `isSystemInterrupted` guard swallowed during the interruption
-    /// in progress. Reset when one begins, reported when it lifts.
+    /// 中断期间被 `isSystemInterrupted` 守卫吞掉的 buffer 数，中断抬起时上报。
     var interruptionDroppedBuffers = 0
     var speechTracker = AudioSpeechActivityTracker.forMode(.manual)
-    /// When the current utterance opened, so its length can be reported
-    /// alongside how it closed. The tracker cannot hold this itself: it has no
-    /// clock — every timestamp it uses is handed in by the caller.
+    /// 本句话从何时开始。tracker 自己没有时钟，时间戳一律由调用方递入。
     var speechStartedAt: ContinuousClock.Instant?
     var speechBoundaryMode: SpeechBoundaryMode = .manual
-    /// Whether the session asked for engine-level voice processing (AEC).
-    ///
-    /// An intent, not a state: it is applied when the capture graph is built,
-    /// because voice processing may only be toggled while the engine is
-    /// stopped — and `startCapture()` is what starts it.
+    /// 会话的**意图**，不是状态：只在建图时施加，因为开关只能在引擎停着时切。
     var voiceProcessingRequested = false
-    /// What voice processing is doing on the current graph. Read back from the
-    /// node, never inferred from the request, and stored only so
-    /// `reconfigureForRouteChange` can tell whether a route change moved it.
+    /// 当前图上的**实际**状态。从节点读回，不从请求推断。
     var voiceProcessingActive = false
     let clock = ContinuousClock()
 
-    // Playback graph, lazy-attached on the first frame. `AVAudioPlayerNode` is
-    // not `Sendable` but is actor-isolated here, so access from `play(pcm:)`
-    // and `interruptNow()` is serialized.
     let playerNode = AVAudioPlayerNode()
     var playerAttached = false
-    /// A player that loops silence for the session's whole life, so the render
-    /// cycle is running before anything is asked of the microphone: the
-    /// microphone does not deliver a buffer until something plays.
+    /// 整个会话期间循环播静音，让渲染循环在任何东西向麦克风要数据之前就已经转起来。
     ///
-    /// Deliberately **not** `playerNode`. That node is the TTS player, and
-    /// `interruptNow()` stops and resets it on every barge-in — sharing it
-    /// would put the microphone back to sleep exactly when the user is talking.
+    /// 刻意**不是** `playerNode`：那个节点是 TTS 播放器，`interruptNow()` 每次打断都会
+    /// 停它并 reset，共用会把麦克风正好在用户说话时重新睡回去。
     let keepAliveNode = AVAudioPlayerNode()
     var keepAliveAttached = false
-    /// Whether the looping buffer is already queued. Scheduling it twice would
-    /// queue a second loop over the first.
+    /// 循环 buffer 是否已排入。排两次会在第一层循环上再叠一层。
     var keepAliveBufferScheduled = false
-    /// Silence at 16 kHz mono, looping. One second is long enough that the loop
-    /// point is irrelevant and short enough to stay trivial to render.
+    /// 16 kHz 单声道静音，一秒长，循环播放。
     let keepAliveBuffer: AVAudioPCMBuffer? = {
         guard
             let buffer = AVAudioPCMBuffer(
@@ -74,10 +54,8 @@ public actor LiveAudioEngine: AudioEngineProtocol {
                 frameCapacity: 16_000
             )
         else { return nil }
-        // `frameLength` before the memset, or `mDataByteSize` still describes an
-        // empty buffer and nothing gets zeroed. Zeroed through the buffer list
-        // rather than `int16ChannelData`, which is not the channel accessor for
-        // an interleaved format.
+        // 先设 `frameLength` 再 memset，否则 `mDataByteSize` 描述的还是空 buffer，什么都没清零。
+        // 走 buffer list 而不是 `int16ChannelData` —— 后者不是 interleaved 格式的通道访问器。
         buffer.frameLength = 16_000
         for entry in UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList) {
             if let data = entry.mData {
@@ -87,23 +65,17 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         return buffer
     }()
 
-    /// Set when `stopCapture()` tears the audio graph down. Capture and playback
-    /// share one `AVAudioEngine`, so ending a session retires **both**
-    /// directions. `AVAudioPlayerNode.play()` on a node whose engine has been
-    /// torn down raises an uncaught `NSException` ("player started when in a
-    /// disconnected state") — it does not throw, so refusing the frame is the
-    /// only safe answer.
+    /// `stopCapture()` 拆图时置位。采集与播放共用一张 `AVAudioEngine`，结束会话会同时
+    /// 退役两个方向；而 `AVAudioPlayerNode.play()` 在已拆的图上会 raise 而不是 throw。
     var playbackRetired = false
 
-    /// 结束练习 confirmation is on screen. The player is paused and incoming
-    /// TTS still schedules, but `play()` is not called until `resumePlayback()`.
-    /// Dumping the queue here would make cancel unable to continue the reply.
+    /// 结束练习确认框开着：播放器暂停、进来的 TTS 仍排队，但不调 `play()`。
+    /// 这里清队列会让取消之后接不上。
     var playbackPaused = false
     /// 排进播放器的 buffer 计数。只为 `_testScheduledBufferCount()` 存在。
     var scheduledBufferCount = 0
 
-    /// Captured at the moment `interruptNow()` is requested, so tests can assert
-    /// the local-silence budget without depending on hardware audio output.
+    /// `interruptNow()` 被请求的时刻，供测试断言本地静音预算，不依赖硬件输出。
     var lastInterruptRequestedAt: ContinuousClock.Instant?
     var isSystemInterrupted = false
 
@@ -111,24 +83,18 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     let decoder: any WSAudioFrameDecoder
     let interruptionObserver: any AudioInterruptionObserving
     private let requestMicrophonePermission: @Sendable () async -> Bool
-    /// How the playback direction brings the shared engine up. Injectable
-    /// because the branch that matters — the engine refusing to start — is the
-    /// one a healthy device will not take.
-    let startEngineForPlayback: @Sendable (AVAudioEngine) throws -> Void
-    /// Turns on engine-level voice processing and returns the read-back rather
-    /// than `Void`, because "we asked and nothing threw" is not the same fact as
-    /// "the unit is engaged". Injectable because the branch that matters — the
-    /// device refusing the unit — is one a healthy device will not take, and
-    /// because it keeps `swift test` off the real API.
+    /// 打开引擎级 voice processing 并**返回读回值**而不是 `Void`：因为「问过了、没抛」
+    /// 和「单元真的开了」不是同一个事实。可注入是因为真正要紧的那条分支 —— 设备拒绝
+    /// 这个单元 —— 健康设备上不会走，也因为这样能让 `swift test` 不碰真实 API。
     let applyVoiceProcessing: @Sendable (AVAudioInputNode) throws -> Bool
-    /// 装上采集 tap。可注入**只为**让 `swift test` 不碰本机输入设备 —— 用真实实现时，
-    /// 在有输入设备的开发机上这一步会打开麦克风（系统亮指示、CI 机器开始录音）。
+    /// 可注入**只为**让 `swift test` 不碰本机输入设备 —— 用真实实现时，在有输入设备的
+    /// 开发机上这一步会打开麦克风（系统亮指示、CI 机器开始录音）。
     private let installCaptureTap: @Sendable (AVAudioInputNode, AVAudioFormat, @escaping AVAudioNodeTapBlock) -> NSError?
-    /// 启动采集引擎。与 `installCaptureTap` 分成两个口子而不是一个：只堵住 tap，
-    /// `engine.start()` 仍会因为输入节点被访问而打开设备 —— 半堵的替身比不堵更糟，
-    /// 因为它看起来已经安全了。
-    private let startCaptureEngine: @Sendable (AVAudioEngine) throws -> Void
-
+    /// 把引擎拉起来。**采集与播放共用这一个口子**：两个方向调的是同一个操作。
+    /// 可注入是因为真正要紧的那条分支 —— 引擎拒绝启动 —— 健康设备上不会走。
+    /// 与 `installCaptureTap` 分开：只堵住 tap，`engine.start()` 仍会因为输入节点被访问而
+    /// 打开设备 —— 半堵的替身比不堵更糟，因为它看起来已经安全了。
+    let startEngine: @Sendable (AVAudioEngine) throws -> Void
     private let removeCaptureTap: @Sendable (AVAudioEngine) -> Void
 
     public init(
@@ -138,13 +104,11 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         requestMicrophonePermission: @escaping @Sendable () async -> Bool = {
             await MicrophonePermission.request()
         },
-        startEngineForPlayback: @escaping @Sendable (AVAudioEngine) throws -> Void = { try $0.start() },
         applyVoiceProcessing: @escaping @Sendable (AVAudioInputNode) throws -> Bool = { node in
-            // Two failure shapes, two mechanisms, both needed here.
-            // `setVoiceProcessingEnabled` is a throwing Swift call, so a refusal
-            // arrives as a Swift error; asking while the engine is running fails
-            // the other way — an `AVAEInternal` "required condition is false"
-            // raise — and an `NSException` is invisible to `do/catch`.
+            // 两种失败形状、两种机制，这里都需要。`setVoiceProcessingEnabled` 是会抛的
+            // Swift 调用，拒绝以 Swift error 到达；而在引擎运行时问它则以另一种方式失败 ——
+            // 一个 `AVAEInternal` 的 "required condition is false" raise，而 `NSException`
+            // 对 `do/catch` 是不可见的。
             var raised: NSError?
             var thrown: Error?
             _ = FWTryCatch({
@@ -166,13 +130,12 @@ public actor LiveAudioEngine: AudioEngineProtocol {
                 userInfo: [NSLocalizedDescriptionKey: "unknown"]
             )
         },
-        startCaptureEngine: @escaping @Sendable (AVAudioEngine) throws -> Void = { try $0.start() },
+        startEngine: @escaping @Sendable (AVAudioEngine) throws -> Void = { try $0.start() },
         removeCaptureTap: @escaping @Sendable (AVAudioEngine) -> Void = { $0.inputNode.removeTap(onBus: 0) },
     ) {
-        self.startEngineForPlayback = startEngineForPlayback
+        self.startEngine = startEngine
         self.applyVoiceProcessing = applyVoiceProcessing
         self.installCaptureTap = installCaptureTap
-        self.startCaptureEngine = startCaptureEngine
         self.removeCaptureTap = removeCaptureTap
         let pair = AsyncStream.makeStream(
             of: AudioEngineEvent.self,
@@ -199,8 +162,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     }
 
     public func startCapture() async throws {
-        // Permission before activating the session, or activation fails with
-        // error 1 when it has not been granted yet.
+        // 先要权限再激活会话，否则未授权时激活会以 error 1 失败。
         let granted = await requestMicrophonePermission()
         guard granted else {
             throw AudioEnginePermissionError.microphoneDenied
@@ -208,38 +170,30 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
         try sessionManager.configure(for: .fullDuplex)
 
-        // Access `inputNode` FIRST so the graph has at least one node attached
-        // before `engine.start()`. Starting without one asserts
-        // `inputNode != nullptr || outputNode != nullptr` and crashes the app.
+        // **先**摸一下 `inputNode`，让图在 `engine.start()` 之前至少挂上一个节点。
+        // 没有节点就启动会断言 `inputNode != nullptr || outputNode != nullptr` 并让 App 崩。
         let inputNode = engine.inputNode
 
-        // Voice processing is enabled *before* any format is read, because
-        // enabling is what changes the input node's shape. `prepareCaptureNode`
-        // owns both halves as one operation; read-before-enable does not throw,
-        // it silently builds a converter and a tap against a stream that no
-        // longer exists.
+        // voice processing 必须在读任何格式**之前**开，因为开启这件事本身会改变输入节点的
+        // 形状。`prepareCaptureNode` 把这两半当成一个操作；先读后开不会抛，它会安静地
+        // 对着一个已经不存在的流建 converter 和 tap。
         //
-        // Gated on the engine being stopped even here: a playback frame that
-        // outlived its session brings the engine up through
-        // `startPlaybackIfNeeded()`, and toggling voice processing on a running
-        // engine raises rather than returning an error.
+        // 即使在这里也要用引擎是否在跑来把关：一个活过自己会话的播放帧会经
+        // `startPlaybackIfNeeded()` 把引擎拉起来，而在运行中的引擎上切 voice processing
+        // 会 raise 而不是返回错误。
         let preparation = try prepareCaptureNode(
             inputNode,
             skipEnableReason: engine.isRunning ? "engine already running" : nil
         )
         let inputFormat = preparation.format
-        // Reported before the engine starts, so a session that dies during
-        // `engine.start()` still leaves behind whether AEC was even on.
+        // 在引擎启动**之前**上报，这样一个死在 `engine.start()` 里的会话仍然留下 AEC 到底开没开。
         continuation.yield(.voiceProcessing(preparation.report))
 
-        // Guarded rather than assigned blind: a converter that failed to build
-        // would become `nil`, `convertToPCM16` would return `nil` for every
-        // buffer, and `processInput` would drop them all in silence.
+        // 用 guard 而不是盲赋值：converter 建不出来会变成 `nil`，`convertToPCM16` 于是对
+        // 每个 buffer 都返回 `nil`，`processInput` 安静地把它们全丢掉。
         //
-        // Built *before* the old tap is torn down. Removing the tap is
-        // irreversible in this window and `hasInstalledTap` is what two other
-        // paths act on, so throwing between the two would leave the flag
-        // claiming a tap that no longer exists.
+        // 建在拆旧 tap **之前**：拆 tap 在这个窗口里不可逆，而 `hasInstalledTap` 是另外两条
+        // 路径据以行动的依据，所以中间抛出去会让标志位声称有一个已经不存在的 tap。
         guard let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat) else {
             throw AudioEngineError.invalidFormat(
                 "Could not convert \(Self.describe(inputFormat)) to \(Self.describe(Self.targetFormat)). Check microphone permission or device audio input."
@@ -247,18 +201,13 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         }
         Self.applyCaptureChannelMap(converter, from: inputFormat)
 
-        // Install the tap BEFORE `engine.start()`, or the first audio buffers
-        // are lost and the speaking-room UI never sees `.speechStarted`.
-        if hasInstalledTap {
-            inputNode.removeTap(onBus: 0)
-            hasInstalledTap = false
-        }
+        // 在 `engine.start()` **之前**装 tap，否则最早的音频 buffer 会丢，说话房间的 UI
+        // 永远等不到 `.speechStarted`。
+        removeTapIfInstalled(engine)
 
-        // Wrapped, and this one is not speculative: `installTap` is the
-        // documented abort site for engine-level voice processing, raising
-        // `AVAEGraphNode.mm … CreateRecordingTap:
-        // (IsFormatSampleRateAndChannelCountValid(format))` when the format
-        // handed to it does not match what the node produces.
+        // 包起来，而且这一次不是防御性的：`installTap` 是引擎级 voice processing 有文档的
+        // 中止点，当交给它的格式与节点实际产出的不匹配时会 raise
+        // `AVAEGraphNode.mm … CreateRecordingTap: (IsFormatSampleRateAndChannelCountValid(format))`。
         if let installRaised = installCaptureTap(inputNode, inputFormat, { [weak self] buffer, _ in
             guard let self else { return }
             // # weak-required: actor value after guard; Task retains this engine for one buffer hop.
@@ -271,76 +220,67 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             )
         }
 
-        // Committed together, and only once there is a tap to use them.
         hasInstalledTap = true
         captureDropReported = false
         captureFirstBufferSeen = false
         sourceFormat = inputFormat
         self.converter = converter
-        // Rebuild from the configured mode, not from the initializer defaults,
-        // or every session silently runs with the auto-VAD configuration.
+        // 按配置的模式重建，而不是按初始化器的默认值，否则每个会话都会安静地跑在 auto-VAD 配置上。
         speechTracker = .forMode(speechBoundaryMode)
 
-        // Build the WHOLE graph before the engine starts — including the
-        // playback nodes. Attaching and connecting into a *live* render graph
-        // and then calling `play()` in the same synchronous block leaves the
-        // node looking disconnected to AVFoundation, and `play()` raises
-        // "player started when in a disconnected state" rather than returning.
+        // 在引擎启动之前建好**整张**图 —— 包括播放节点。在一个**活着的**渲染图上挂接并连线、
+        // 然后在同一个同步块里调 `play()`，会让节点对 AVFoundation 看起来是断开的，而
+        // `play()` 会 raise "player started when in a disconnected state" 而不是返回。
         attachPlayerIfNeeded()
         attachKeepAliveIfNeeded()
 
-        // `start()` returning is not the same as the engine running. It can come
-        // back without throwing and leave the engine stopped, and nothing used
-        // to check: the session went on to advertise a microphone it did not
-        // have, `startCapture()` returned success, and the only symptom was a
-        // turn the gateway never heard. Silence is this project's one
-        // unacceptable failure, so it fails here instead.
+        // `start()` 返回不等于引擎在跑。它可能不抛就回来，然后把引擎留在停止状态，而这件事
+        // 过去没有任何人检查：会话接着宣称有一个它并不拥有的麦克风，`startCapture()` 返回成功，
+        // 唯一的症状是网关从没听到的那一轮。静音是本项目唯一不可接受的失败，所以在这里就失败。
         let start = armEngine()
         if let failure = start.failure {
-            // Tear down the tap just installed so a retry from a clean state
-            // does not trip the "tap already installed" precondition. Do not
-            // start interruption observation — the engine never came up.
-            if hasInstalledTap {
-                inputNode.removeTap(onBus: 0)
-                hasInstalledTap = false
-            }
-            // Voice processing gets a mention because it adds a failure this
-            // message would otherwise mis-describe: with it on, the input
-            // node's output format and the output node's input format have to
-            // agree, so a start failure can be a format mismatch rather than
-            // another app holding the session — "close your music app" would be
-            // the wrong advice.
+            // 拆掉刚装的 tap，好让从干净状态重试不会撞上「tap 已装」的前置条件。
+            // 不启动中断观察 —— 引擎根本没起来。
+            removeTapIfInstalled(engine)
+            // voice processing 要被提一句，因为它引入了一个这条文案否则会误述的失败：开着它
+            // 时输入节点的输出格式和输出节点的输入格式必须一致，所以启动失败可能是格式不匹配
+            // 而不是另一个 App 占着会话 —— 这时「关掉你的音乐 App」就是错的建议。
             let voiceProcessingNote = preparation.voiceProcessingActive
                 ? ". Voice processing is on (\(Self.describe(inputFormat))); its input and output formats must match."
                 : ""
             throw AudioEngineError.audioSessionConflict(failure.detail + voiceProcessingNote)
         }
 
-        // The engine is up, so the playback direction is usable again. Only
-        // cleared once the start succeeded — a session that failed to come up
-        // must not advertise a graph it does not have.
+        // 引擎起来了，播放方向于是又能用了。只在启动成功之后清 —— 一个没起来的会话不得
+        // 宣称它拥有一张并不存在的图。
         playbackRetired = false
         playbackPaused = false
         startInterruptionObservation()
 
-        // Kick the render cycle before returning. `.connecting` waits for the
-        // microphone to prove itself, and the microphone does not deliver a
-        // single buffer until something plays, so a session that armed and
-        // played nothing could never become ready.
+        // 在返回前踢一下渲染循环。`.connecting` 等麦克风自证，而麦克风在有什么东西播放之前
+        // 一个 buffer 都不交付，所以一个只武装、什么都不播的会话永远进不了 ready。
         let kick = startKeepAlive()
         continuation.yield(.captureKick(started: kick.started, detail: kick.detail))
 
-        // The last line of `startCapture`, so its presence proves the graph was
-        // armed — not merely that it reached the format read.
+        // `startCapture` 的最后一行，所以它的出现证明图真的武装好了 —— 而不只是走到了读格式。
         continuation.yield(.captureArmed(
             wasRunning: start.wasRunning,
             running: engine.isRunning,
-            // Read here, at the moment the answer is `false`, because the two
-            // ways the engine can already be stopped — the system interrupted
-            // us, or another component reconfigured the shared session — leave
-            // no other trace. See `describeSession()`.
+            // 在这里读，读在答案恰好是 `false` 的那一刻，因为引擎可能已经停下的两种途径 ——
+            // 系统中断了我们，或 App 内别的组件重配了共享会话 —— 不留下别的痕迹。
+            // 见 `describeSession()`。
             session: Self.describeSession()
         ))
+    }
+
+    /// 拆掉已装的采集 tap，并把标志位清掉。
+    ///
+    /// `hasInstalledTap` 这个不变量的唯一清理点。`deinit` 例外：actor 的 `deinit` 是
+    /// nonisolated，调不到这个隔离方法，所以它在原地自己写了一遍守卫。
+    private func removeTapIfInstalled(_ engine: AVAudioEngine) {
+        guard hasInstalledTap else { return }
+        removeCaptureTap(engine)
+        hasInstalledTap = false
     }
 
     func armEngine() -> EngineStart.Outcome {
@@ -348,7 +288,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         var startError: String?
         if !wasRunning {
             do {
-                try startCaptureEngine(engine)
+                try startEngine(engine)
             } catch {
                 startError = error.localizedDescription
             }
@@ -370,8 +310,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         do {
             try sessionManager.configure(for: .fullDuplex)
         } catch {
-            // Keep the existing graph. Killing the session on a headset unplug
-            // is worse than a brief format mismatch.
+            // 保留现有的图。因为拔了个耳机就把会话杀掉，比短暂的格式不匹配更糟。
             return
         }
 
@@ -379,54 +318,45 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
         let inputNode = engine.inputNode
 
-        // This path **never toggles** voice processing. Toggling requires
-        // stopping the engine, which throws away the assistant's in-flight
-        // playback mid-reply, and it would land while the previous tap is still
-        // installed on bus 0, changing the node's produced format underneath a
-        // tap that describes the old one.
+        // 这条路径**永不**切 voice processing。切换需要停引擎，而停引擎会丢掉助手正在进行的
+        // 播放；它还会落在上一个 tap 仍装在 bus 0 上的时候，在一个 tap 所描述的旧格式下面
+        // 改变节点产出的格式。
         //
-        // Nothing is lost: the state is *read back* either way, so a unit the
-        // route change dropped yields the raw format and a unit that survived
-        // yields the processed one. Both are consistent.
+        // 不会丢东西：状态两种情况下都是**读回**的，所以路由变化丢掉的单元给出原始格式，
+        // 活下来的单元给出处理后的格式。两者都自洽。
         guard let preparation = try? prepareCaptureNode(inputNode, skipEnableReason: "route change") else {
-            // No usable format after the route change. Keep the existing graph
-            // and let the interruption observer surface the failure.
+            // 路由变化之后没有可用格式。保留现有的图，让中断观察者去暴露这个失败。
             return
         }
         let inputFormat = preparation.format
 
-        // Rebuild only when the node's stream actually moved. A route change
-        // that leaves the format and the unit state alone used to tear the tap
-        // down and reinstall it regardless, dropping whatever audio was
-        // buffered mid-turn.
+        // 只在节点的流真的动了时才重建。一个既没改格式也没改单元状态的路由变化，过去会
+        // 照样把 tap 拆了重装，丢掉正处在轮次中途的任何音频。
         guard sourceFormat?.isEqual(inputFormat) != true
             || voiceProcessingActive != preparation.voiceProcessingActive
         else {
             return
         }
 
-        // Built before anything is torn down, so a converter that will not build
-        // leaves the working chain in place instead of swapping in a dead one.
-        // This path cannot throw — it is a reaction to a route change, not a
-        // session start — so the alternative to refusing here is installing a
-        // tap whose converter is `nil`, which is silent.
+        // 建在任何东西被拆掉**之前**，这样一个建不出来的 converter 会让能用的那条链留在原地，
+        // 而不是换上去一条死的。这条路径不能抛 —— 它是对路由变化的反应，不是会话启动 ——
+        // 所以在这里拒绝之外的选项是装上一个 converter 为 `nil` 的 tap，那是静音。
         guard let replacement = AVAudioConverter(from: inputFormat, to: Self.targetFormat) else {
             return
         }
         Self.applyCaptureChannelMap(replacement, from: inputFormat)
 
-        // Wrapped for the same reason `startCapture`'s install is: this is the
-        // documented abort site, and this path runs while a session is live.
-        inputNode.removeTap(onBus: 0)
-        hasInstalledTap = false
+        // 包起来，理由与 `startCapture` 的装 tap 相同：这是有文档的中止点，而这条路径
+        // 是在会话活着的时候跑的。
+        removeTapIfInstalled(engine)
         if let installRaised = installCaptureTap(inputNode, inputFormat, { [weak self] buffer, _ in
             guard let self else { return }
             Task {
                 await self.processInput(buffer)
             }
         }) {
-            // No tap, and `hasInstalledTap` already says so — the session keeps
-            // running silent rather than taking the process down with it.
+            // 没有 tap，而 `hasInstalledTap` 已经这么说了 —— 会话继续安静地跑，而不是把进程
+            // 一起带走。
             continuation.yield(.failed("could not reinstall the capture tap after a route change: \(installRaised.localizedDescription)"))
             return
         }
@@ -446,24 +376,18 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
     public func stopCapture() async {
         stopInterruptionObservation()
-        // Retire before anything that yields or mutates the graph. Leftover TTS
-        // frames from a socket that has not closed yet still call `play(pcm:)`;
-        // once this flag is set they drop instead of restarting the player (and
-        // instead of `.failed`, which would kill the process-lifetime audio
-        // pump).
+        // 在一切会 yield 或改图的东西**之前**退休。来自尚未关闭的 socket 的迟到 TTS 帧仍会调
+        // `play(pcm:)`；这个标志一置，它们就丢弃，而不是把播放器重新拉起来（也不是 `.failed`，
+        // 那会杀掉进程级的音频泵）。
         playbackRetired = true
         playbackPaused = false
-        let shouldRemoveTap = hasInstalledTap
-        hasInstalledTap = false
-        // Also stop any in-flight AI playback, and detach the nodes so the next
-        // session re-attaches them against a graph that actually exists.
-        // Leaving them attached is what makes the *next* `play()` dangerous:
-        // the graph is about to be torn down, and `playerAttached` would go on
-        // claiming the node is fine.
+        // 也停掉在途的 AI 播放，并把节点 detach 掉，好让下一个会话重新挂到一张真的存在的图上。
+        // 留着它们挂着正是让**下一次** `play()` 危险的原因：图马上要被拆掉，而 `playerAttached`
+        // 会继续声称那个节点没问题。
         for step in PlaybackTeardown.steps(
             playerAttached: playerAttached,
             engineRunning: engine.isRunning,
-            tapInstalled: shouldRemoveTap,
+            tapInstalled: hasInstalledTap,
             keepAliveAttached: keepAliveAttached
         ) {
             switch step {
@@ -475,13 +399,12 @@ public actor LiveAudioEngine: AudioEngineProtocol {
                 keepAliveNode.stop()
             case .resetKeepAlive:
                 keepAliveNode.reset()
-                // The queued loop went with the reset, so the next session has
-                // to schedule it again rather than assume it is still there.
+                // 排好的循环跟着 reset 一起没了，所以下一个会话必须重新排，不能假定它还在。
                 keepAliveBufferScheduled = false
             case .stopEngine:
                 engine.stop()
             case .removeTap:
-                removeCaptureTap(engine)
+                removeTapIfInstalled(engine)
             case .detachPlayer:
                 engine.detach(playerNode)
                 playerAttached = false
@@ -497,12 +420,10 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         lastInterruptRequestedAt = nil
         isSystemInterrupted = false
 
-        // NOTE: Do NOT deactivate the audio session here. Deactivating while AI
-        // audio is still playing (during aiSpeaking→waitingUser transitions)
-        // uninitializes the AVAudioEngine internal graph, causing
-        // `required condition is false: inputNode != nullptr || outputNode != nullptr`
-        // on the next `engine.start()` or any node access. The session stays
-        // active across the full speaking-room session; it is only deactivated
-        // when the app explicitly ends the session or moves to background.
+        // **不要在这里 deactivate 音频会话。** 在 AI 音频仍在播放时（aiSpeaking→waitingUser
+        // 过渡期间）deactivate 会让 AVAudioEngine 的内部图 uninitialize，导致下一次
+        // `engine.start()` 或任何节点访问撞上
+        // `required condition is false: inputNode != nullptr || outputNode != nullptr`。
+        // 会话在整个说话房间会话期间保持 active，只在 App 显式结束会话或进入后台时才 deactivate。
     }
 }

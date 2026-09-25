@@ -3,18 +3,14 @@ import FluentWorkObjCSupport
 import Foundation
 
 extension LiveAudioEngine {
-    /// Plays PCM that a decoder has already produced (`AudioSink.play(pcm:)`).
+    /// 播放已经解码好的 PCM（`AudioSink.play(pcm:)`）。**引擎唯一的播放入口。**
     ///
-    /// **这是引擎唯一的播放入口。** 带轮次归属的帧走这条：`TTSPlaybackCoordinator`
-    /// 判定这一帧属于一个活跃的轮次，并解码好交给这里。
-    ///
-    /// 两道守卫：`playbackRetired` —— 会话已经结束、而 socket 还在投递时，不能让一个
-    /// 在途帧把它重新拉起来；`makePCMBuffer` 的长度校验 —— 它是畸形 payload 与
-    /// 「永远播不出来的一个 scheduledBuffer」之间唯一的东西。
+    /// 两道守卫：`playbackRetired` —— 会话已结束而 socket 还在投递时，不能让一个在途帧把它
+    /// 重新拉起来；`makePCMBuffer` 的长度校验 —— 它是畸形 payload 与「一个永远播不出来的
+    /// scheduledBuffer」之间唯一的东西。
     ///
     /// **这里没有按序列号的水印，这是有意的。** 曾经有两道（`AudioPlaybackGate` 与
     /// `BargeInAudioGate`），都删了，理由相同：序列号说不出一个帧属于哪一轮。
-    /// 轮次归属由协调器在正确的轴上回答 —— 被作废那一轮的帧根本到不了这里。
     public func play(pcm: Data) async {
         guard !playbackRetired else { return }
 
@@ -27,39 +23,30 @@ extension LiveAudioEngine {
         enqueueWithoutWaiting(buffer)
     }
 
-    /// Queues a buffer and returns immediately.
+    /// 排队一个 buffer 并立即返回。
     ///
-    /// Deliberately **not** `await playerNode.scheduleBuffer(...)`, which is the
-    /// alternative the editor suggests here. That overload returns only once the
-    /// buffer has been *rendered*, so awaiting it would pace the gateway's
-    /// turn-end burst to real time: a 32-second reply arrives as one burst, and
-    /// the middleware's transport loop would spend those 32 seconds inside this
-    /// call — text frames, control frames and the next turn's audio all queued
-    /// behind it.
+    /// 刻意**不用** `await playerNode.scheduleBuffer(...)`，那是编辑器会建议的替代写法。
+    /// 那个重载只在 buffer 被**渲染**完之后才返回，await 它会把网关的轮次末突发按真实时间
+    /// 拉平：一个 32 秒的回复以一次突发到达，而中间件的传输循环会在这一个调用里耗掉那 32 秒
+    /// —— 文本帧、控制帧和下一轮的音频全排在它后面。
     private func enqueueWithoutWaiting(_ buffer: AVAudioPCMBuffer) {
         scheduledBufferCount += 1
         playerNode.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
     }
 
-    /// Queues audio onto the player node and makes sure something is actually
-    /// playing it.
+    /// 把一个 buffer 排到播放节点上，并确保真的有东西在播它。
     ///
-    /// `scheduleBuffer` only enqueues — a node that was never started plays
-    /// nothing. `interruptNow()` stops the node for barge-in, so this also has
-    /// to bring it back on the next frame.
+    /// `scheduleBuffer` 只入队 —— 一个从未启动的节点什么都播不出来。`interruptNow()` 为打断
+    /// 而停了节点，所以这里也得在下一帧把它带回来。
     ///
-    /// Returns whether the node is queued onto a running engine; every caller
-    /// must treat `false` as "nothing will play". The reason this returns a
-    /// value instead of being best-effort is the line it guards:
-    ///
-    /// `AVAudioPlayerNode.play()` does not throw. On a stopped engine it raises
-    /// an **uncaught `NSException`** ("player started when in a disconnected
-    /// state") and terminates the app.
+    /// 返回节点是否排在一张正在跑的引擎上；每个调用方都必须把 `false` 当成「什么都不会播」。
+    /// 之所以返回一个值而不是尽力而为，是因为它守的那一行：`AVAudioPlayerNode.play()` 不抛，
+    /// 在已停的引擎上它会 raise 一个**未捕获的 `NSException`** 并终止 App。
     private func startPlaybackIfNeeded() -> Bool {
         attachPlayerIfNeeded()
         if !engine.isRunning {
             do {
-                try startEngineForPlayback(engine)
+                try startEngine(engine)
             } catch {
                 continuation.yield(.failed("playback engine did not start: \(error.localizedDescription)"))
                 return false
@@ -69,25 +56,18 @@ extension LiveAudioEngine {
             continuation.yield(.failed("playback engine is not running; dropped frame"))
             return false
         }
-        // `playerAttached` is this actor's cached belief; `playerNode.engine` is
-        // what AVFoundation will actually consult. They disagree exactly when
-        // the graph was torn down underneath us — deactivating the audio session
-        // does that — and "disconnected state" in the raised exception is this
-        // condition, not the engine's run state.
-        guard playerNode.engine === engine else {
+        guard playerIsConnected() else {
             continuation.yield(.failed("playback node is detached from the engine; dropped frame"))
             playerAttached = false
             return false
         }
         if playbackPaused {
-            // Schedule-only: cancel of 结束练习 must continue from here.
+            // 只排队：结束练习的取消必须能从这里接着播。
             return true
         }
         if !playerNode.isPlaying {
-            // `play()` raises rather than returning when the node has nothing to
-            // play into, and "has nothing to play into" is not a state this
-            // layer can read. Every precondition above narrows the window; this
-            // is what makes the window not matter.
+            // 节点没东西可播入时 `play()` 会 raise 而不是返回，而「没东西可播入」不是这一层
+            // 读得到的状态。上面每一条前置条件都在收窄这个窗口；这一句是让窗口变得不重要。
             var raised: NSError?
             guard FWTryCatch({ self.playerNode.play() }, &raised) else {
                 continuation.yield(.failed("player start raised: \(raised?.localizedDescription ?? "unknown")"))
@@ -95,6 +75,16 @@ extension LiveAudioEngine {
             }
         }
         return true
+    }
+
+    /// 播放节点是否挂**在这一张**引擎上。
+    ///
+    /// `playerAttached` 是这个 actor 缓存的信念，`playerNode.engine` 是 AVFoundation 实际会查
+    /// 的东西。两者恰在图被从底下拆掉时不一致 —— deactivate 音频会话就会那样 —— 而 raise
+    /// 出来的 "disconnected state" 说的正是这个条件，不是引擎的运行状态。
+    private func playerIsConnected() -> Bool {
+        guard playerAttached else { return false }
+        return playerNode.engine === engine
     }
 
     public func interruptNow() async {
@@ -116,59 +106,53 @@ extension LiveAudioEngine {
     public func resumePlayback() async {
         guard !playbackRetired else { return }
         playbackPaused = false
-        guard playerAttached, engine.isRunning, playerNode.engine === engine else { return }
+        guard engine.isRunning, playerIsConnected() else { return }
         if !playerNode.isPlaying {
             var raised: NSError?
             _ = FWTryCatch({ self.playerNode.play() }, &raised)
         }
     }
 
-    /// Snapshot for tests: confirmation-dialog pause must hold without retiring playback.
+    /// 供测试取快照：确认框的暂停必须在不退休播放的前提下保持住。
     public func isPlaybackPaused() -> Bool {
         playbackPaused
     }
 
-    /// Snapshot of the last `interruptNow()` instant for barge-in latency tests.
-    /// Public on the actor so tests can read it without exposing the raw clock.
+    /// 供测试取快照：上一次 `interruptNow()` 的时刻。
     public func lastInterruptInstant() -> ContinuousClock.Instant? {
         lastInterruptRequestedAt
     }
 
-    /// Deliberately *not* wrapped in `FWTryCatch`, unlike `play()`.
-    ///
-    /// The format here is the source node's own output format, which
-    /// `AVAudioEngine` always accepts — the mixer resamples. So the raise this
-    /// would guard is speculative, while the guard itself is not free: `.failed`
-    /// ends the middleware's audio pump for the rest of the process, which would
-    /// turn a one-session playback problem into every later session going
-    /// silent.
     func attachPlayerIfNeeded() {
-        guard !playerAttached else { return }
-        engine.attach(playerNode)
-        engine.connect(playerNode, to: engine.mainMixerNode, format: Self.targetFormat)
-        playerAttached = true
+        attachPlayer(playerNode, isAttached: &playerAttached)
     }
 
-    /// Attaches the keep-alive player. Same window as the TTS player — **before
-    /// `engine.start()`, never after** — because graph mutation on a running
-    /// engine raises rather than returning an error.
     func attachKeepAliveIfNeeded() {
-        guard !keepAliveAttached else { return }
-        engine.attach(keepAliveNode)
-        engine.connect(keepAliveNode, to: engine.mainMixerNode, format: Self.targetFormat)
-        keepAliveAttached = true
+        attachPlayer(keepAliveNode, isAttached: &keepAliveAttached)
     }
 
-    /// Starts the render cycle before anything is asked of the microphone: the
-    /// input follows the output, and `.connecting` waits for the microphone to
-    /// prove itself, so a session that never plays anything could not start at
-    /// all. This is what breaks that circle.
+    /// 把一个播放节点挂到主混音器上。
     ///
-    /// Six outcomes, and the event carries which one happened: the cycle may
-    /// never have been attached at all, and without a `detail` there is no way
-    /// to tell that from "attached and useless".
+    /// 刻意**不**包在 `FWTryCatch` 里，与 `play()` 不同：这里的格式是源节点自己的输出格式，
+    /// `AVAudioEngine` 总是接受它（混音器会重采样）。所以这里要防的 raise 是推测性的，
+    /// 而守卫本身不是免费的 —— `.failed` 会结束中间件的音频泵，把一个单会话的播放问题
+    /// 变成之后每一个会话都静音。
     ///
-    /// - Returns: whether the cycle was asked to start, for the caller's log.
+    /// 必须在 `engine.start()` **之前**调：在跑着的引擎上改图会 raise 而不是返回错误。
+    private func attachPlayer(_ node: AVAudioPlayerNode, isAttached attached: inout Bool) {
+        guard !attached else { return }
+        engine.attach(node)
+        engine.connect(node, to: engine.mainMixerNode, format: Self.targetFormat)
+        attached = true
+    }
+
+    /// 在任何东西向麦克风要数据**之前**把渲染循环转起来：输入跟着输出走，而 `.connecting`
+    /// 等麦克风自证，所以一个什么都不播的会话根本起不来。这一句就是打破那个死结的。
+    ///
+    /// 六种结局，事件带着是哪一种：循环可能压根没挂上过，而没有 `detail` 就分不出那和
+    /// 「挂上了但没用」。
+    ///
+    /// - Returns: 循环是否被要求启动，供调用方记录。
     func startKeepAlive() -> (started: Bool, detail: String) {
         attachKeepAliveIfNeeded()
         guard keepAliveAttached else {
@@ -178,11 +162,9 @@ extension LiveAudioEngine {
             return (false, "keep-alive buffer could not be built")
         }
         guard engine.isRunning else {
-            // Two ways an engine can be stopped again this soon after `start()`
-            // returned, and they need different fixes: the system interrupted
-            // us, or something in this app reconfigured the shared session out
-            // from under us. Both leave `isRunning` false with no error
-            // anywhere, so the detail has to say which.
+            // `start()` 返回后这么快引擎又停了，有两条途径，需要不同的修法：系统中断了我们，
+            // 或这个 App 里的什么东西从底下重配了共享会话。两者都让 `isRunning` 变 false 而
+            // 不在任何地方留下错误，所以 detail 必须说出是哪一种。
             return (
                 false,
                 "engine not running (interrupted=\(isSystemInterrupted), \(Self.describeSession()))"
@@ -196,15 +178,13 @@ extension LiveAudioEngine {
             return (true, "already playing")
         }
         if !keepAliveBufferScheduled {
-            // `.loops` rather than a one-shot: if the input really follows the
-            // output, a single kick would go quiet again the moment it drained
-            // — the same silence, forty milliseconds later.
+            // 用 `.loops` 而不是一次性：如果输入真的跟着输出走，一次性的那一脚会在它排空的
+            // 那一刻重新安静下来 —— 同一个静音，四十毫秒之后。
             keepAliveNode.scheduleBuffer(buffer, at: nil, options: [.loops], completionHandler: nil)
             keepAliveBufferScheduled = true
         }
-        // Raises rather than returns when the node has nothing to play into,
-        // i.e. the engine reports `isRunning` while its render cycle has never
-        // ticked.
+        // 节点没东西可播入时会 raise 而不是返回，即引擎报告 `isRunning` 而它的渲染循环
+        // 从未 tick 过。
         var raised: NSError?
         guard FWTryCatch({ keepAliveNode.play() }, &raised) else {
             return (false, "play() raised: \(raised?.localizedDescription ?? "unknown")")
@@ -212,12 +192,11 @@ extension LiveAudioEngine {
         return (true, "playing")
     }
 
-    /// Wraps raw 16 kHz mono interleaved PCM16 bytes in an `AVAudioPCMBuffer`
-    /// suitable for `AVAudioPlayerNode.scheduleBuffer`.
+    /// 把裸的 16 kHz mono interleaved PCM16 字节包成适合 `AVAudioPlayerNode.scheduleBuffer`
+    /// 的 `AVAudioPCMBuffer`。
     ///
-    /// The returned buffer's `frameLength` is `payload.count / 2`. If the
-    /// payload length is not a multiple of 2, returns `nil` so the caller can
-    /// surface a `.failed` event instead of corrupting the player queue.
+    /// 返回的 buffer 的 `frameLength` 是 `payload.count / 2`。payload 长度不是 2 的倍数时返回
+    /// `nil`，好让调用方发一个 `.failed` 事件，而不是把播放队列搞坏。
     private func makePCMBuffer(from payload: Data) -> AVAudioPCMBuffer? {
         guard !payload.isEmpty, payload.count.isMultiple(of: 2) else { return nil }
         let frameCount = AVAudioFrameCount(payload.count / 2)

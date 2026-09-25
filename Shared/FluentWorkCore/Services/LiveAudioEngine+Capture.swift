@@ -2,38 +2,28 @@
 import Foundation
 
 extension LiveAudioEngine {
-    /// What the capture chain resolved to for one graph build.
+    /// 一次建图之后采集链定型成的东西。
     struct CapturePreparation {
-        /// The format the tap is installed with *and* the format the converter
-        /// is built from. One value on purpose: the two have to agree, and when
-        /// they do not nothing throws.
+        /// tap 装上用的格式，**同时**是 converter 建出来的源格式。刻意是一个值：
+        /// 两者必须一致，而不一致时什么都不会抛。
         let format: AVAudioFormat
-        /// Whether the engine-level voice-processing unit is driving the input.
+        /// 引擎级 voice processing 单元是否在驱动输入。
         let voiceProcessingActive: Bool
-        /// One line for the telemetry event — device logs are read on a phone,
-        /// and this is what says whether the switch was on before anyone tries
-        /// to judge how well it worked.
+        /// 遥测事件那一行 —— 设备日志是在手机上读的，而这一行说的就是那个开关有没有开过。
         let report: String
     }
 
     public func setSpeechBoundaryMode(_ mode: SpeechBoundaryMode) async {
         speechBoundaryMode = mode
-        // The endpointing hold belongs to the mode: tap-to-start has to tolerate
-        // a speaker pausing to think, auto-VAD does not. `forMode` also hands
-        // back a tracker with no speech in flight, which is the `discard()` a
-        // mode switch needs.
+        // 收尾 hold 属于模式：tap-to-start 必须容忍说话人停下来想一想，auto-VAD 不用。
+        // `forMode` 同时交回一个没有话在飞的 tracker，那正是切模式需要的 `discard()`。
         speechTracker = .forMode(mode)
     }
 
-    /// Declares whether the next capture graph should run engine-level voice
-    /// processing — the echo canceller, noise suppression and AGC that keep the
-    /// assistant from hearing its own voice through the speaker.
+    /// 声明下一个采集图是否该跑引擎级 voice processing（回声消除、降噪、AGC）。
     ///
-    /// Recorded, not applied: voice processing may only be toggled while the
-    /// engine is stopped, so the value takes effect when `startCapture()` builds
-    /// the graph. Setting it mid-session is therefore not an error and not a
-    /// no-op either — it changes the *next* session, which is what makes the
-    /// feature flag usable as a comparison harness on a device.
+    /// **只记录，不施加**：voice processing 只能在引擎停着时切，所以值在 `startCapture()`
+    /// 建图时才生效。会话中途设置因此既不是错误也不是空操作 —— 它改变的是**下一个**会话。
     public func setVoiceProcessingEnabled(_ enabled: Bool) async {
         voiceProcessingRequested = enabled
     }
@@ -55,41 +45,36 @@ extension LiveAudioEngine {
     }
 
     func processInput(_ buffer: AVAudioPCMBuffer) async {
-        // First, before ANY guard: the event says the tap fired, which is a fact
-        // about the graph, not about this buffer's fate. Behind the interruption
-        // guard, "the tap never delivered" and "the tap delivered and this guard
-        // ate it" become indistinguishable — different bugs, same symptom.
+        // 最先，在任何守卫之前：这个事件说的是 tap 响过，那是关于**图**的事实，不是关于这个
+        // buffer 的去向。挪到中断守卫后面，「tap 从没交付」和「交付了但被这道守卫吃了」就变得
+        // 无法区分 —— 不同的 bug，同一个症状。
         if !captureFirstBufferSeen {
             captureFirstBufferSeen = true
             continuation.yield(.captureFirstBuffer)
         }
-        // Correct to drop during an interruption, and counted so that "the
-        // system interrupted us" and "the microphone produced nothing" stop
-        // being the same observation from the outside.
+        // 中断期间丢弃是对的，并且计数，好让「系统中断了我们」和「麦克风什么都没产出」
+        // 从外面看不再是同一个观察。
         guard !isSystemInterrupted else {
             interruptionDroppedBuffers += 1
             return
         }
-        // The `return nil`s inside `convertToPCM16` were the last silent gate on
-        // the uplink. At 48 kHz the tap fires ~86 times a second, and a graph
-        // whose every buffer fails conversion is indistinguishable from one that
-        // works: the tap still reports a healthy format, the engine still runs,
-        // and the only symptom is a turn the gateway never heard. Reported once
-        // per capture session — the fact is worth one line, not eighty-six a
-        // second.
-        guard converter != nil, sourceFormat != nil else {
+        // `convertToPCM16` 里的 `return nil` 曾是上行最后一道静默闸门。48 kHz 下 tap 每秒响
+        // 约 86 次，而一张每个 buffer 都转换失败的图与一张能用的图**无法区分**：tap 仍报告
+        // 健康的格式，引擎仍在跑，唯一的症状是网关从没听到的那一轮。每个采集会话报一次 ——
+        // 这件事值一行，不值每秒八十六行。
+        guard let converter, let sourceFormat else {
             reportCaptureDropOnce("no_converter")
             return
         }
         do {
-            guard let pcm = try convertToPCM16(buffer) else {
-                // The formats ride along because the likeliest cause is a
-                // mismatch between what the tap was told it would receive and
-                // what the buffers actually carry — enabling voice processing
-                // reshapes the input node, and a converter built from the
-                // pre-reshape format fails silently for the whole session. The
-                // buffer's own format is the third number, and the one that
-                // settles it.
+            guard let pcm = try Self.convertToPCM16(
+                buffer,
+                converter: converter,
+                sourceFormat: sourceFormat
+            ) else {
+                // 三个格式一起报，因为最可能的原因是 tap 被告知要收到的与实际 buffer 携带的
+                // 不一致 —— 开 voice processing 会重塑输入节点，而一个按重塑前格式建出来的
+                // converter 会整场会话静默失败。buffer 自己的格式是第三个数字，也是定案的那个。
                 reportCaptureDropOnce(
                     "conversion_produced_no_pcm src=\(Self.describe(sourceFormat)) "
                         + "target=\(Self.describe(Self.targetFormat)) "
@@ -105,20 +90,18 @@ extension LiveAudioEngine {
         }
     }
 
-    /// Emits `.captureDropped` at most once per capture session.
+    /// 每个采集会话最多发一次 `.captureDropped`。
     private func reportCaptureDropOnce(_ reason: String) {
         guard !captureDropReported else { return }
         captureDropReported = true
         continuation.yield(.captureDropped(reason: reason))
     }
 
-    /// Yields a speech-boundary event, attaching the endpointing facts when it
-    /// closes an utterance.
+    /// 发一个语音边界事件，关闭一句话时把收尾事实一起带上。
     ///
-    /// Kept in one place so every path that opens or closes a turn — energy,
-    /// the tap, and `stopCapture`'s reset — is measured the same way. A path
-    /// that emitted its boundary directly would silently contribute nothing to
-    /// the distribution, and the missing data would look like a quiet week.
+    /// 集中在一处，好让每一条开合轮次的路径 —— 能量、tap、`stopCapture` 的 reset ——
+    /// 都被同样地度量。一条直接发边界的路径会安静地什么都不贡献给分布，
+    /// 而缺失的数据看起来会像一个平静的星期，不像一个 bug。
     func yieldSpeechBoundary(_ event: AudioEngineEvent) {
         switch event {
         case .speechStarted:
@@ -146,9 +129,8 @@ extension LiveAudioEngine {
     }
 
     private func updateSpeechState(using pcm: Data) {
-        // `.manual` decides both ends with taps, so energy is not consulted at
-        // all. The other modes let energy close the utterance; only `.autoVAD`
-        // also lets it open one.
+        // `.manual` 两端都由 tap 决定，所以完全不看能量。其余模式让能量关闭这句话；
+        // 只有 `.autoVAD` 也让它开一句话。
         guard speechBoundaryMode != .manual else { return }
         let energy = normalizedEnergy(for: pcm)
         let now = clock.now
@@ -158,33 +140,24 @@ extension LiveAudioEngine {
         }
     }
 
-    /// Turns on engine-level voice processing when the session asked for it,
-    /// then reads back the format the tap will actually receive.
+    /// 会话要求时打开引擎级 voice processing，然后读回 tap 实际会收到的格式。
     ///
-    /// The two are one operation, not two steps, because enabling is what
-    /// changes the input node's shape. A caller that reads the format first and
-    /// enables second gets the *pre-processing* format while the tap goes on to
-    /// receive the processed stream — and that mistake does not throw. The
-    /// format is still perfectly valid, so the converter builds, the tap
-    /// installs, and every buffer is then dropped at `processInput`'s guard.
+    /// 这两件事是**一个操作**，不是两步，因为开启这件事本身会改变输入节点的形状。先读格式
+    /// 后开启的调用方拿到的是**处理前**的格式，而 tap 接下来收到的是处理后的流 —— 而且这个
+    /// 错误不会抛。格式完全合法，于是 converter 建得出来、tap 装得上，然后每个 buffer 都在
+    /// `processInput` 的守卫处被丢掉。
     ///
-    /// Enabling is best-effort: a device that refuses voice processing must
-    /// still capture. Losing echo cancellation is bad, losing the microphone is
-    /// worse — and the outcome is reported either way, so the two can be told
-    /// apart afterwards.
+    /// 开启是尽力而为：拒绝 voice processing 的设备仍必须能采集。丢掉回声消除很糟，
+    /// 丢掉麦克风更糟 —— 而两种结果都会被上报，所以事后能分开。
     ///
-    /// - Parameter skipEnableReason: non-`nil` when the engine may be running.
-    ///   Voice processing can only be toggled while it is stopped, and asking
-    ///   anyway does not fail politely — it raises, which is why this is a
-    ///   parameter rather than something the caller is trusted to remember.
+    /// - Parameter skipEnableReason: 引擎可能在跑时非 `nil`。voice processing 只能在它停着时
+    ///   切，而硬问不会礼貌地失败 —— 它会 raise，所以这是个参数，而不是交给调用方去记的事。
     func prepareCaptureNode(
         _ inputNode: AVAudioInputNode,
         skipEnableReason: String?
     ) throws -> CapturePreparation {
-        // The node is asked what it is doing, not what was asked of it. The unit
-        // engages on both I/O nodes at once and can already be on from an
-        // earlier session, so the request alone does not determine the state —
-        // and the state is what decides which format the tap has to use.
+        // 问节点它在做什么，而不是问它被要求做什么。单元会同时在两个 I/O 节点上生效，
+        // 也可能从上一个会话就开着，所以请求本身决定不了状态 —— 而状态才决定 tap 必须用哪个格式。
         let wasAlreadyOn = inputNode.isVoiceProcessingEnabled
         var isOn = wasAlreadyOn
         var enableFailure: String?
@@ -193,19 +166,16 @@ extension LiveAudioEngine {
             do {
                 isOn = try applyVoiceProcessing(inputNode)
             } catch {
-                // Surfaced in the report rather than thrown. A device without
-                // voice processing gets a working capture chain and a log line
-                // that says AEC is off; it does not get a dead microphone.
+                // 放进 report 而不是抛出去。没有 voice processing 的设备得到一条能用的采集链
+                // 和一行说 AEC 关着的日志；它不会得到一个死掉的麦克风。
                 enableFailure = error.localizedDescription
                 isOn = wasAlreadyOn
             }
         }
 
-        // Read *after* the enable attempt, and gated on the read-back rather
-        // than the request. On success these are the processed formats; when the
-        // unit is off they are the raw ones, which is what the fallback wants —
-        // so a refused or skipped enable leaves the old chain untouched rather
-        // than half-converted.
+        // 在开启尝试**之后**读，并且以读回值为准而不是以请求为准。成功时它们是处理后的格式；
+        // 单元关着时它们是原始格式，那正是回退想要的 —— 所以被拒绝或被跳过的开启让旧链保持
+        // 原样，而不是半转换状态。
         let rawInput = inputNode.inputFormat(forBus: 0)
         let processedOutput = isOn ? inputNode.outputFormat(forBus: 0) : nil
 
@@ -233,12 +203,18 @@ extension LiveAudioEngine {
         )
     }
 
-    private func convertToPCM16(_ buffer: AVAudioPCMBuffer) throws -> Data? {
-        guard let converter, let sourceFormat else { return nil }
-
-        let ratio = Self.targetFormat.sampleRate / max(sourceFormat.sampleRate, 1)
+    /// 把一个输入 buffer 转成 16 kHz mono interleaved PCM16 字节。
+    ///
+    /// 源格式是参数而不是读 actor 状态，因为生产与测试钩子走的是同一段转换：转换这件事
+    /// 只写一份，测试就不再是它的一个可能走样的复本。
+    nonisolated static func convertToPCM16(
+        _ buffer: AVAudioPCMBuffer,
+        converter: AVAudioConverter,
+        sourceFormat: AVAudioFormat
+    ) throws -> Data? {
+        let ratio = targetFormat.sampleRate / max(sourceFormat.sampleRate, 1)
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 16
-        guard let output = AVAudioPCMBuffer(pcmFormat: Self.targetFormat, frameCapacity: capacity) else {
+        guard let output = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else {
             return nil
         }
 

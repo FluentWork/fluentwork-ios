@@ -96,7 +96,7 @@ import Testing
     let decoder = RawPCM16FrameDecoder()
     let engine = LiveAudioEngine(
         decoder: decoder,
-        startEngineForPlayback: { _ in throw EngineRefusedToStart() }
+        startEngine: { _ in throw EngineRefusedToStart() }
     )
     let stream = engine.events()
 
@@ -160,7 +160,7 @@ import Testing
         decoder: RawPCM16FrameDecoder(),
         requestMicrophonePermission: { true },
         installCaptureTap: { _, _, _ in nil },
-        startCaptureEngine: { _ in },
+        startEngine: { _ in },
         removeCaptureTap: { _ in }
     )
 
@@ -207,7 +207,7 @@ import Testing
 @Test func aStartThatReturnsWithoutStartingTheEngineNamesThatCauseAndTheSession() async {
     let engine = LiveAudioEngine(
         decoder: RawPCM16FrameDecoder(),
-        startCaptureEngine: { _ in }
+        startEngine: { _ in }
     )
 
     let start = await engine._testArmEngine()
@@ -233,7 +233,7 @@ import Testing
 @Test func aStartFailureDuringAnInterruptionSaysSo() async {
     let engine = LiveAudioEngine(
         decoder: RawPCM16FrameDecoder(),
-        startCaptureEngine: { _ in }
+        startEngine: { _ in }
     )
     await engine.handleInterruption(.began)
 
@@ -250,7 +250,7 @@ import Testing
     struct EngineRefusedToStart: Error {}
     let engine = LiveAudioEngine(
         decoder: RawPCM16FrameDecoder(),
-        startCaptureEngine: { _ in throw EngineRefusedToStart() }
+        startEngine: { _ in throw EngineRefusedToStart() }
     )
 
     let start = await engine._testArmEngine()
@@ -751,7 +751,7 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
         requestMicrophonePermission: { true },
         applyVoiceProcessing: { try recorder.record($0) },
         installCaptureTap: { _, _, _ in nil },
-        startCaptureEngine: { _ in },
+        startEngine: { _ in },
         removeCaptureTap: { _ in }
     )
 
@@ -852,7 +852,7 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
         requestMicrophonePermission: { true },
         applyVoiceProcessing: { try recorder.record($0) },
         installCaptureTap: { _, _, _ in nil },
-        startCaptureEngine: { _ in },
+        startEngine: { _ in },
         removeCaptureTap: { _ in }
     )
 
@@ -879,7 +879,7 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
         requestMicrophonePermission: { true },
         applyVoiceProcessing: { try recorder.record($0) },
         installCaptureTap: { _, _, _ in nil },
-        startCaptureEngine: { _ in },
+        startEngine: { _ in },
         removeCaptureTap: { _ in }
     )
 

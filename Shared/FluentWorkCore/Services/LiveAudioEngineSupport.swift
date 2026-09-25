@@ -11,44 +11,38 @@ public enum AudioEngineError: Error {
 }
 
 struct AudioSpeechActivityTracker: Sendable {
-    /// Endpointing hold for auto-VAD. Nobody taps in that mode, so silence is
-    /// the only signal and the hold is what decides how long a turn waits.
+    /// auto-VAD 的收尾 hold。那个模式没人点按钮，静音是唯一的信号，hold 决定一轮等多久。
     static let autoVADSilenceHold: Duration = .milliseconds(1500)
-    /// Endpointing hold for tap-to-start. Deliberately much longer than the
-    /// auto-VAD hold: the user opened the turn on purpose and is usually
-    /// mid-thought, so a pause to find a word must not submit the turn.
+    /// tap-to-start 的收尾 hold。刻意比 auto-VAD 长得多：用户是特意开的这一轮，而且通常话说到
+    /// 一半，所以找个词时的停顿绝不能提交这一轮。
     static let tapToStartSilenceHold: Duration = .milliseconds(8000)
 
     private(set) var isSpeechActive = false
     private(set) var lastSpeechAt: ContinuousClock.Instant?
 
-    /// The shape of the utterance that just closed.
+    /// 刚刚关闭的那句话的形状。
     private(set) var lastEndpoint: Endpoint?
 
     struct Endpoint: Equatable, Sendable {
-        /// `manual` — the user pressed 说完了. `silenceHold` — the room decided.
-        /// Only the second can cut someone off mid-sentence.
+        /// `manual` —— 用户按了说完了。`silenceHold` —— 房间自己决定的。
+        /// 只有第二种会把人在句子中间切断。
         enum Reason: String, Equatable, Sendable {
             case manual
             case silenceHold
         }
 
         let reason: Reason
-        /// Last detected speech → close, i.e. how long the room waited after
-        /// the last sound before submitting. The number the hold is measured
-        /// against.
+        /// 最后一次检测到语音 → 关闭，即房间在提交之前等了多久。hold 就是拿它来衡量的。
         ///
-        /// `nil` on a tap, which has no trailing silence to measure — `nil`
-        /// rather than zero, because a zero here reads as "the user stopped and
-        /// immediately finished", which is a real and different case.
+        /// tap 上是 `nil`，它没有尾随静音可测 —— 用 `nil` 而不是零，因为零读起来是
+        /// 「用户停了并立刻说完」，那是一个真实且不同的情形。
         let trailingSilence: Duration?
     }
 
     let speechThreshold: Float
     var silenceHold: Duration
-    /// When false an utterance can only begin via `forceStart()`; energy is
-    /// still what closes it. This is tap-to-start: the tap opens the turn, a
-    /// stable silence submits it, so a turn costs one gesture instead of two.
+    /// 为 false 时一句话只能经 `forceStart()` 开始；能量仍然负责关闭它。这就是 tap-to-start：
+    /// tap 开这一轮，一段稳定的静音提交它，所以一轮只要一个手势而不是两个。
     var autoStart: Bool
 
     init(
@@ -70,9 +64,8 @@ struct AudioSpeechActivityTracker: Sendable {
             return .speechStarted
         }
 
-        // `lastSpeechAt` stays nil until the user actually speaks, so a tap
-        // followed by silence never submits an empty turn — it falls through to
-        // the recording abort instead.
+        // `lastSpeechAt` 在用户真的说话之前保持 nil，所以一次 tap 之后的静音永远不会提交一个
+        // 空轮次 —— 它会落到录制中止那条路径上。
         guard isSpeechActive, let lastSpeechAt else { return nil }
         let trailing = now - lastSpeechAt
         guard trailing >= silenceHold else { return nil }
@@ -103,14 +96,13 @@ struct AudioSpeechActivityTracker: Sendable {
         return wasActive ? .speechEnded : nil
     }
 
-    /// Clear in-progress speech without emitting `.speechEnded`.
+    /// 清掉进行中的话，但**不**发 `.speechEnded`。
     mutating func discard() {
         isSpeechActive = false
         lastSpeechAt = nil
     }
 
-    /// The tracker a boundary mode implies — the one source of truth for the
-    /// mode → (`autoStart`, `silenceHold`) mapping.
+    /// 一个边界模式所蕴含的 tracker —— 模式 → (`autoStart`, `silenceHold`) 映射的唯一真源。
     static func forMode(_ mode: SpeechBoundaryMode) -> AudioSpeechActivityTracker {
         AudioSpeechActivityTracker(
             silenceHold: mode == .tapToStart ? tapToStartSilenceHold : autoVADSilenceHold,
@@ -119,14 +111,12 @@ struct AudioSpeechActivityTracker: Sendable {
     }
 }
 
-/// The order in which one session's audio graph is torn down.
+/// 一个会话的音频图被拆掉的顺序。
 ///
-/// The rule the order has to obey: **graph mutations may not run while the
-/// engine is running.** `engine.detach(_:)` and `inputNode.removeTap` are the
-/// same mutation with two failure modes — the first raises an `NSException`
-/// rather than throwing, the second is a burst of static in the speaker — so
-/// the sequence is the part that can be wrong, and it is pure so it can be
-/// asserted without an audio device.
+/// 顺序必须遵守的规则：**引擎在跑时不得执行图变更。** `engine.detach(_:)` 与
+/// `inputNode.removeTap` 是同一种变更的两种失败形态 —— 前者 raise 一个 `NSException` 而不是
+/// 抛，后者是扬声器里的一阵爆音 —— 所以序列才是可能出错的那部分，而它是纯的，因此可以不接
+/// 音频设备就被断言。
 enum PlaybackTeardown {
     enum Step: Equatable, Sendable {
         case stopPlayer
@@ -139,16 +129,13 @@ enum PlaybackTeardown {
         case detachKeepAlive
     }
 
-    /// The steps to run, in order, for the state capture is being stopped from.
+    /// 从当前状态停止采集时，按序要跑的步骤。
     ///
-    /// `stopEngine` is emitted whenever the engine is running, whether or not a
-    /// player is attached: a session that never played anything still has a
-    /// running engine, and leaving it running is what makes the *next*
-    /// session's graph work against a stale one.
+    /// 引擎在跑就发 `stopEngine`，不管有没有播放器挂着：一个从没播过东西的会话仍然有一张在跑的
+    /// 引擎，而留着它跑正是让**下一个**会话的图对着一个陈旧的图工作的原因。
     ///
-    /// Graph mutations (`removeTap`, `detach`) come *after* `stopEngine`.
-    /// `resetPlayer` sits between `stopPlayer` and `stopEngine` so scheduled
-    /// TTS buffers are dumped instead of draining as static through the stop.
+    /// 图变更（`removeTap`、`detach`）排在 `stopEngine` **之后**。`resetPlayer` 坐在 `stopPlayer`
+    /// 与 `stopEngine` 之间，好让排好的 TTS buffer 被丢掉，而不是在停止的过程中以爆音的形式排空。
     static func steps(
         playerAttached: Bool,
         engineRunning: Bool,
@@ -160,10 +147,9 @@ enum PlaybackTeardown {
             steps.append(.stopPlayer)
             steps.append(.resetPlayer)
         }
-        // The keep-alive node gets the TTS player's treatment in full, detach
-        // included: a node left attached across a teardown is the state the
-        // next session's `play()` raises on, and "it was only the silent one"
-        // is not a property `AVAudioPlayerNode` cares about.
+        // keep-alive 节点得到 TTS 播放器的完整待遇，detach 也包含在内：一个跨拆图仍挂着的节点
+        // 正是下一个会话 `play()` 会 raise 的状态，而「它只是那个静音的」不是
+        // `AVAudioPlayerNode` 会在意的属性。
         if keepAliveAttached {
             steps.append(.stopKeepAlive)
             steps.append(.resetKeepAlive)

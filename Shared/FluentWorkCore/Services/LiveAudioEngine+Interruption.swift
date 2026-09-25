@@ -9,15 +9,13 @@ extension LiveAudioEngine {
         interruptionObserver.stop()
     }
 
-    /// Maps AVAudioSession interruption / route changes onto `AudioEngineEvent`.
-    /// Does not deactivate the audio session — capture stays configured across a
-    /// phone-call-style interrupt so resume does not rebuild the graph.
+    /// 把 AVAudioSession 的中断/路由变化映射成 `AudioEngineEvent`。
+    /// **不** deactivate 音频会话 —— 采集在一次电话式中断前后保持配置，所以恢复时不必重建图。
     func handleInterruption(_ kind: AudioInterruptionKind) {
         switch kind {
         case .began:
             isSystemInterrupted = true
-            // Counted from here so the number that comes out at `.ended` is
-            // about *this* interruption, not every one this engine has seen.
+            // 从这里开始计数，好让 `.ended` 时出来的那个数是关于**这一次**中断的。
             interruptionDroppedBuffers = 0
             _ = speechTracker.reset()
             if playerAttached {
@@ -25,24 +23,19 @@ extension LiveAudioEngine {
             }
             continuation.yield(.interruptedBySystem)
         case .ended(let shouldResume):
-            // Only resume the speech session when iOS says we may. Do not
-            // `playerNode.play()` — `interruptedBySystem` already asked the
-            // machine to stop playback, and resume lands in `waitingUser`.
+            // 只在 iOS 说可以的时候恢复说话会话。**不要** `playerNode.play()` ——
+            // `interruptedBySystem` 已经让机器停了播放，恢复落在 `waitingUser`。
             //
-            // Saying nothing when iOS withholds resume was a trap, not caution.
-            // `.began` parked the machine in its suspended phase, and a
-            // suspended machine discards every event but five — so with no
-            // `.systemInterruptEnded` and no failure, nothing on any path could
-            // lift the suspension. Ending it is the honest outcome: `.failed` is
-            // one of the five events that still land, and it reaches the user as
-            // a retryable error instead of a freeze.
+            // iOS 不给恢复时说点什么，这是陷阱不是谨慎：`.began` 把机器停在了它的 suspended
+            // 相位，而一个 suspended 的机器只放行五个事件 —— 所以既没有 `.systemInterruptEnded`
+            // 也没有失败时，任何路径都抬不起那个悬挂。结束它是诚实的结果：`.failed` 是仍然能
+            // 落地的五个事件之一，它以可重试的错误到达用户，而不是一次冻结。
             guard shouldResume else {
                 continuation.yield(.failed("音频被系统中断，本轮练习已停止"))
                 return
             }
             isSystemInterrupted = false
-            // Before the lift, so the count is attributed to the interruption
-            // that just ended rather than to whatever comes next.
+            // 在抬起之前，好让这个计数归属刚刚结束的那次中断，而不是下一次。
             continuation.yield(.captureInterruptionLifted(droppedBuffers: interruptionDroppedBuffers))
             continuation.yield(.systemInterruptEnded)
         case .routeChanged(let reason):
