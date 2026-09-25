@@ -638,7 +638,10 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     // 引擎报错。最后发，兼作屏障。
     audioEngine.emit(.failed("playback engine is not running; dropped frame"))
-    try? await waitUntil(timeoutNanoseconds: 2_000_000_000) {
+    try await waitUntil(
+        timeoutNanoseconds: 15_000_000_000,
+        label: "屏障：等泵处理完前面 11 个事件（`timing_audio_engine_failed` 是最后一条）"
+    ) {
         tracker.events.contains { $0.name == "timing_audio_engine_failed" }
     }
 
@@ -1429,15 +1432,24 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 private func waitUntil(
     timeoutNanoseconds: UInt64,
     pollIntervalNanoseconds: UInt64 = 10_000_000,
+    label: String = "未命名等待",
     condition: @escaping @MainActor () async -> Bool
 ) async throws {
     let start = DispatchTime.now().uptimeNanoseconds
     while !(await condition()) {
         if DispatchTime.now().uptimeNanoseconds - start >= timeoutNanoseconds {
-            throw TimeoutError()
+            throw TimeoutError(
+                label: label,
+                milliseconds: Int(timeoutNanoseconds / 1_000_000)
+            )
         }
         try await Task.sleep(nanoseconds: pollIntervalNanoseconds)
     }
 }
 
-private struct TimeoutError: Error {}
+private struct TimeoutError: Error, CustomStringConvertible {
+    let label: String
+    let milliseconds: Int
+
+    var description: String { "\(label) —— 超时（预算 \(milliseconds)ms）" }
+}
