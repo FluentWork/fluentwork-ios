@@ -19,12 +19,12 @@ struct ScenePhaseSessionHandlerTests {
         #expect(event == nil)
     }
 
-    @Test func activeFailedEmitsReconnectTimedOut() {
+    @Test func activeFailedEmitsNothingBecauseFailedIsTerminal() {
         let event = ScenePhaseSessionHandler.event(
             scenePhase: .active,
             sessionPhase: .failed
         )
-        #expect(event == .reconnectTimedOut)
+        #expect(event == nil)
     }
 
     @Test func activeRecordingEmitsNothing() {

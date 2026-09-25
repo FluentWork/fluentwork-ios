@@ -15,9 +15,7 @@ public enum ScenePhaseSessionHandler: Sendable {
         switch scenePhase {
         case .background:
             return sessionPhase.isActive ? .forceClose : nil
-        case .active:
-            return sessionPhase == .failed ? .reconnectTimedOut : nil
-        case .inactive, .unknown:
+        case .active, .inactive, .unknown:
             return nil
         }
     }
