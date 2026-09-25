@@ -103,8 +103,9 @@ Change the schema in `fluentwork-infra` first, then sync outward.
 
 ## Landing gate
 
-The commit gate is described in `AGENTS.md`. In short: `swift test` green +
-`FluentWorkHost` Debug build + a numbered implementation note, committed together.
+The commit gate is described in `AGENTS.md`. In short: `swift test` green and the
+`FluentWorkHost` Debug build succeeds, committed together. No document is part of the
+gate — record the evidence in the commit body.
 `.githooks/pre-commit` is intentionally a no-op (`exit 0`) — it does not run
 `swift-format`, `swiftlint`, or gstack. Enable the hook path with
 `./Scripts/setup-git-hooks.sh`; note that `core.hooksPath` is **not** set in a fresh
