@@ -310,6 +310,123 @@ struct TTSPlaybackCoordinatorBareFrameTests {
     }
 }
 
+// MARK: - Stage 3：h8 归属表（turn_ref → turn_id）
+
+@Suite("h8 归属表（turn_ref → turn_id）")
+struct TTSPlaybackCoordinatorTurnRefTests {
+
+    @Test("带 turn_ref 的帧按归属表解析，不依赖归属指针")
+    func turnRefFrameIsResolvedFromTheMap() async {
+        let sink = RecordingSink()
+        let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
+
+        await coordinator.onStart(turnID: "T1", turnRef: 7)
+        let outcome = await coordinator.onAudioFrame(
+            WSAudioFrame(sequence: 0, turnRef: 7, payload: Data([0x01, 0x02]))
+        )
+
+        #expect(outcome == .played(turnID: "T1"))
+        #expect(await sink.playCalls.count == 1)
+    }
+
+    @Test("未登记的 turn_ref 被丢弃")
+    func unknownTurnRefIsDropped() async {
+        let sink = RecordingSink()
+        let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
+
+        let outcome = await coordinator.onAudioFrame(
+            WSAudioFrame(sequence: 0, turnRef: 99, payload: Data([0x01, 0x02]))
+        )
+
+        #expect(
+            outcome == .dropped(
+                turnID: nil,
+                reason: .unknownTurn,
+                errorDescription: "turn_ref 99 has no registered turn (missing or closed ai.tts.start)"
+            )
+        )
+        #expect(await sink.playCalls.isEmpty)
+    }
+
+    @Test("ai.tts.end 关闭归属表项")
+    func endClosesTheMapEntry() async {
+        let sink = RecordingSink()
+        let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
+
+        await coordinator.onStart(turnID: "T1", turnRef: 7)
+        await coordinator.onEnd(turnID: "T1", turnRef: 7)
+        let outcome = await coordinator.onAudioFrame(
+            WSAudioFrame(sequence: 0, turnRef: 7, payload: Data([0x01, 0x02]))
+        )
+
+        #expect(
+            outcome == .dropped(
+                turnID: nil,
+                reason: .unknownTurn,
+                errorDescription: "turn_ref 7 has no registered turn (missing or closed ai.tts.start)"
+            )
+        )
+    }
+
+    @Test("下一轮 start 强制关闭上一项（收不到 end 的兜底）")
+    func nextStartForceClosesThePreviousEntry() async {
+        let sink = RecordingSink()
+        let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
+
+        await coordinator.onStart(turnID: "T1", turnRef: 7)
+        await coordinator.onStart(turnID: "T2", turnRef: 8)
+
+        let stale = await coordinator.onAudioFrame(
+            WSAudioFrame(sequence: 0, turnRef: 7, payload: Data([0x01, 0x02]))
+        )
+        #expect(
+            stale == .dropped(
+                turnID: nil,
+                reason: .unknownTurn,
+                errorDescription: "turn_ref 7 has no registered turn (missing or closed ai.tts.start)"
+            )
+        )
+
+        let current = await coordinator.onAudioFrame(
+            WSAudioFrame(sequence: 0, turnRef: 8, payload: Data([0x03, 0x04]))
+        )
+        #expect(current == .played(turnID: "T2"))
+    }
+
+    @Test("h4 帧（无 turn_ref）仍走归属指针")
+    func h4FrameStillUsesThePointer() async {
+        let sink = RecordingSink()
+        let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
+
+        await coordinator.onStart(turnID: "T1", turnRef: 7)
+        let outcome = await coordinator.onAudioFrame(
+            WSAudioFrame(sequence: 0, payload: Data([0x01, 0x02]))
+        )
+
+        #expect(outcome == .played(turnID: "T1"))
+    }
+
+    @Test("reset 清空归属表")
+    func resetClearsTheMap() async {
+        let sink = RecordingSink()
+        let coordinator = TTSPlaybackCoordinator(decoder: PassthroughAudioFrameDecoder(), sink: sink)
+
+        await coordinator.onStart(turnID: "T1", turnRef: 7)
+        await coordinator.reset()
+        let outcome = await coordinator.onAudioFrame(
+            WSAudioFrame(sequence: 0, turnRef: 7, payload: Data([0x01, 0x02]))
+        )
+
+        #expect(
+            outcome == .dropped(
+                turnID: nil,
+                reason: .unknownTurn,
+                errorDescription: "turn_ref 7 has no registered turn (missing or closed ai.tts.start)"
+            )
+        )
+    }
+}
+
 // MARK: - 测试辅助类型
 
 /// 透传解码器：payload 直接作为 PCM16 返回。

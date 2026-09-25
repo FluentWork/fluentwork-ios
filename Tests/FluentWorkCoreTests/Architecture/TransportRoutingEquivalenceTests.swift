@@ -44,8 +44,8 @@ struct TransportRoutingEquivalenceTests {
         .clientASRTranscription(text: "hello", turnID: "turn-1"),
         .aiTextDelta(text: "hi", turnID: "turn-1", serverTsMs: 1),
         .aiAudioChunk(sequence: 1),
-        .aiTTSStart(turnID: "turn-1", voiceID: "v", sampleRate: 16000, codec: "pcm"),
-        .aiTTSEnd(turnID: "turn-1", completionStatus: "ok", durationMs: 100),
+        .aiTTSStart(turnID: "turn-1", voiceID: "v", sampleRate: 16000, codec: "pcm", turnRef: nil),
+        .aiTTSEnd(turnID: "turn-1", completionStatus: "ok", durationMs: 100, turnRef: nil),
         .aiTurnEnd(turnID: "turn-1", outcome: .ok, logID: nil),
         .interrupt,
         .feedbackBadge(badge: "green_check", phraseBlockID: "b-1", tier: .highlight, turnID: "turn-1"),
@@ -300,7 +300,7 @@ struct ProductionRoutingWiringTests {
 
         await router.route(
             event: .control(
-                .aiTTSStart(turnID: "turn-1", voiceID: "v", sampleRate: 16_000, codec: "pcm")
+                .aiTTSStart(turnID: "turn-1", voiceID: "v", sampleRate: 16_000, codec: "pcm", turnRef: nil)
             )
         )
         await router.route(event: .audio(WSAudioFrame(sequence: 0, payload: Data([0x01, 0x02]))))
@@ -360,11 +360,11 @@ struct ProductionRoutingWiringTests {
         // 一轮正常起止：`ai.tts.start` 会重置这一轮的台账。
         await router.route(
             event: .control(
-                .aiTTSStart(turnID: "turn-1", voiceID: "v", sampleRate: 16_000, codec: "pcm")
+                .aiTTSStart(turnID: "turn-1", voiceID: "v", sampleRate: 16_000, codec: "pcm", turnRef: nil)
             )
         )
         await router.route(
-            event: .control(.aiTTSEnd(turnID: "turn-1", completionStatus: "ok", durationMs: nil))
+            event: .control(.aiTTSEnd(turnID: "turn-1", completionStatus: "ok", durationMs: nil, turnRef: nil))
         )
         // 第二段：又无归属了，全部丢弃。
         for sequence in UInt32(0)..<UInt32(5) {

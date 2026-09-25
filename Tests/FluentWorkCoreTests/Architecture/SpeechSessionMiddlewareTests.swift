@@ -1206,7 +1206,8 @@ struct SpeechSessionMiddlewareB14Tests {
                     turnID: "turn-1",
                     voiceID: "mock_voice_01",
                     sampleRate: 16_000,
-                    codec: "pcm"
+                    codec: "pcm",
+                    turnRef: nil
                 )
             )
         )
@@ -1645,14 +1646,15 @@ struct I20TurnTelemetryTests {
                     turnID: "turn-9",
                     voiceID: "mock_voice_01",
                     sampleRate: 24_000,
-                    codec: "pcm"
+                    codec: "pcm",
+                    turnRef: nil
                 )
             )
         )
         speechClient.emit(.audio(WSAudioFrame(sequence: 0, payload: Data([0x0A, 0x0B]))))
         speechClient.emit(.audio(WSAudioFrame(sequence: 1, payload: Data([0x0C, 0x0D]))))
         speechClient.emit(
-            .control(.aiTTSEnd(turnID: "turn-9", completionStatus: "ok", durationMs: 40))
+            .control(.aiTTSEnd(turnID: "turn-9", completionStatus: "ok", durationMs: 40, turnRef: nil))
         )
         try await waitUntil() {
             tracker.events.contains { $0.name == "tts_end" }

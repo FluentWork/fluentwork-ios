@@ -36,7 +36,8 @@ import Testing
             turnID: "turn-1",
             voiceID: "mock_voice_01",
             sampleRate: 24_000,
-            codec: "opus"
+            codec: "opus",
+            turnRef: nil
         )
     )
 }
@@ -48,9 +49,9 @@ import Testing
     #expect(decoded == frame)
 }
 
-/// 二进制布局是 4 字节大端 seq + payload，**帧上不带 turn_id**（契约 `83_` §1：
-/// 格式一个字节都不改，归属由 start/end 括起来决定）。这条把那个「不带」钉住：
-/// 后端如果哪天想塞 turn_id 进帧里，会先在这里红。
+/// h4 布局是 4 字节大端 seq + payload，**帧上不带 turn_id**，归属由 start/end
+/// 括起来决定。Stage 3 加了可选的 h8（见下），但 **h4 一个字节没改** ——
+/// 网关不置 `turn_ref` 时，线上仍然长这样。
 @Test func testAITTSAudio_BinaryLayoutIsSequenceThenPayload() throws {
     let encoded = WSAudioFrameCodec.encode(
         WSAudioFrame(sequence: 0x0102_0304, payload: Data([0xAA, 0xBB]))
@@ -64,7 +65,7 @@ import Testing
     )
     #expect(
         try WSControlFrameCodec.decode(withDuration)
-            == .aiTTSEnd(turnID: "turn-1", completionStatus: "ok", durationMs: 200)
+            == .aiTTSEnd(turnID: "turn-1", completionStatus: "ok", durationMs: 200, turnRef: nil)
     )
 
     let withoutDuration = Data(
@@ -72,16 +73,16 @@ import Testing
     )
     #expect(
         try WSControlFrameCodec.decode(withoutDuration)
-            == .aiTTSEnd(turnID: "turn-1", completionStatus: "interrupted", durationMs: nil)
+            == .aiTTSEnd(turnID: "turn-1", completionStatus: "interrupted", durationMs: nil, turnRef: nil)
     )
 }
 
 @Test func testAITTSFrames_TypeConstant() throws {
     let start = try WSControlFrameCodec.encode(
-        .aiTTSStart(turnID: "t", voiceID: "v", sampleRate: 24_000, codec: "pcm")
+        .aiTTSStart(turnID: "t", voiceID: "v", sampleRate: 24_000, codec: "pcm", turnRef: nil)
     )
     let end = try WSControlFrameCodec.encode(
-        .aiTTSEnd(turnID: "t", completionStatus: "error", durationMs: nil)
+        .aiTTSEnd(turnID: "t", completionStatus: "error", durationMs: nil, turnRef: nil)
     )
     let startJSON = try JSONSerialization.jsonObject(with: start) as? [String: Any]
     let endJSON = try JSONSerialization.jsonObject(with: end) as? [String: Any]
@@ -95,5 +96,76 @@ import Testing
     )
     #expect(throws: WSControlFrameCodingError.unknownType("ai.tts.audio")) {
         _ = try WSControlFrameCodec.decode(data)
+    }
+}
+
+@Suite("Stage 3：h8 布局与 turn_ref")
+struct AITTSAudioH8LayoutTests {
+
+    @Test func h8LayoutIsSequenceThenTurnRefThenPayload() throws {
+        let frame = WSAudioFrame(sequence: 0x0102_0304, turnRef: 0x0506_0708, payload: Data([0xAA, 0xBB]))
+        let encoded = WSAudioFrameCodec.encode(frame, layout: .h8)
+
+        #expect(
+            encoded == Data([
+                0x01, 0x02, 0x03, 0x04,
+                0x05, 0x06, 0x07, 0x08,
+                0xAA, 0xBB,
+            ])
+        )
+        #expect(try WSAudioFrameCodec.decode(encoded, layout: .h8) == frame)
+    }
+
+    @Test func h8RejectsAnythingShorterThanEightBytes() {
+        let sevenBytes = Data([0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00])
+        #expect(throws: WSAudioFrameCodecError.truncatedHeader(byteCount: 7, requiredBytes: 8)) {
+            _ = try WSAudioFrameCodec.decode(sevenBytes, layout: .h8)
+        }
+    }
+
+    /// 读错布局的代价：h8 被当成 h4 读不会抛错，只会把 `turn_ref` 的四个字节
+    /// 当成载荷的前两个样本 —— 每帧一次咔哒声，不是静音。这条把那个偏移量钉住，
+    /// 它是「布局只能来自信号、不能从长度猜」的理由。
+    @Test func h4DecodingOfAnH8FrameShiftsThePayloadByFourBytes() throws {
+        let h8 = WSAudioFrameCodec.encode(
+            WSAudioFrame(sequence: 9, turnRef: 7, payload: Data([0xAA])),
+            layout: .h8
+        )
+        let misread = try WSAudioFrameCodec.decode(h8, layout: .h4)
+
+        #expect(misread.turnRef == nil)
+        #expect(misread.payload == Data([0x00, 0x00, 0x00, 0x07, 0xAA]))
+    }
+
+    @Test func aiTTSStartCarriesTurnRefWhenTheGatewaySetsIt() throws {
+        let json = #"{"type":"ai.tts.start","turn_id":"t","voice_id":"v","sample_rate":16000,"codec":"pcm","turn_ref":7}"#
+        #expect(
+            try WSControlFrameCodec.decode(Data(json.utf8))
+                == .aiTTSStart(turnID: "t", voiceID: "v", sampleRate: 16_000, codec: "pcm", turnRef: 7)
+        )
+    }
+
+    @Test func aiTTSStartWithoutTurnRefDecodesAsNil() throws {
+        let json = #"{"type":"ai.tts.start","turn_id":"t","voice_id":"v","sample_rate":16000,"codec":"pcm"}"#
+        #expect(
+            try WSControlFrameCodec.decode(Data(json.utf8))
+                == .aiTTSStart(turnID: "t", voiceID: "v", sampleRate: 16_000, codec: "pcm", turnRef: nil)
+        )
+    }
+
+    @Test func aiTTSEndCarriesTurnRef() throws {
+        let json = #"{"type":"ai.tts.end","turn_id":"t","completion_status":"ok","turn_ref":7}"#
+        #expect(
+            try WSControlFrameCodec.decode(Data(json.utf8))
+                == .aiTTSEnd(turnID: "t", completionStatus: "ok", durationMs: nil, turnRef: 7)
+        )
+    }
+
+    @Test func encodingWithoutTurnRefOmitsTheKey() throws {
+        let encoded = try WSControlFrameCodec.encode(
+            .aiTTSEnd(turnID: "t", completionStatus: "ok", durationMs: nil, turnRef: nil)
+        )
+        let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        #expect(object?["turn_ref"] == nil)
     }
 }

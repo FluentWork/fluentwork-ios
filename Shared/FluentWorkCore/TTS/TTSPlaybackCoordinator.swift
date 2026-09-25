@@ -58,6 +58,10 @@ public actor TTSPlaybackCoordinator {
     /// 注册表等于给串音开一条后门，而它只在非默认策略下出现。
     private var turnRegistry: [String: TurnState] = [:]
 
+    private var turnRefToTurnID: [UInt32: String] = [:]
+
+    private var openTurnRef: UInt32?
+
     /// 归属指针：线上帧属于哪一轮。`ai.tts.start` 设置，`ai.tts.end` / `reset` 清空。
     private var attributionTurnID: String?
 
@@ -85,12 +89,19 @@ public actor TTSPlaybackCoordinator {
     /// 自动 supersede 也是那个「卡住的窗口」的第二个出口：一轮被打断后如果
     /// **永远收不到** `ai.tts.end`（连接断了、回合被放弃），旧的 draining 状态会
     /// 把下一轮的音频一起吞掉，而唯一的症状是静音。
-    public func onStart(turnID: String) async {
+    public func onStart(turnID: String, turnRef: UInt32? = nil) async {
         if let previousTurn = attributionTurnID {
             turnRegistry[previousTurn] = .superseded
         }
+        if let openTurnRef {
+            turnRefToTurnID[openTurnRef] = nil
+        }
         turnRegistry[turnID] = .active
         attributionTurnID = turnID
+        openTurnRef = turnRef
+        if let turnRef {
+            turnRefToTurnID[turnRef] = turnID
+        }
     }
 
     /// 打断（barge-in）。
@@ -108,10 +119,19 @@ public actor TTSPlaybackCoordinator {
     }
 
     /// 结束轮次（`ai.tts.end`）：注销 turn_id，并在它是当前轮时清空归属指针。
-    public func onEnd(turnID: String) async {
+    public func onEnd(turnID: String, turnRef: UInt32? = nil) async {
         turnRegistry[turnID] = nil
         if attributionTurnID == turnID {
             attributionTurnID = nil
+        }
+        if let turnRef {
+            turnRefToTurnID[turnRef] = nil
+            if openTurnRef == turnRef {
+                openTurnRef = nil
+            }
+        } else if let openTurnRef, turnRefToTurnID[openTurnRef] == turnID {
+            turnRefToTurnID[openTurnRef] = nil
+            self.openTurnRef = nil
         }
     }
 
@@ -119,6 +139,8 @@ public actor TTSPlaybackCoordinator {
     /// 下一场的 legacy PCM。
     public func reset() async {
         turnRegistry.removeAll()
+        turnRefToTurnID.removeAll()
+        openTurnRef = nil
         attributionTurnID = nil
     }
 
@@ -129,11 +151,24 @@ public actor TTSPlaybackCoordinator {
 
     // MARK: - Audio Frame Routing
 
-    /// 裸帧入口：线上二进制帧（只有 seq + payload）从这里进来。
+    /// 裸帧入口：线上二进制帧从这里进来。
     ///
-    /// 归属由归属指针解析 —— 必须有活跃轮次，否则丢弃。
+    /// h8 的帧自带 `turn_ref`，按归属表解析；h4 的帧没有它，按归属指针解析。
+    /// 两条路都必须先有 `ai.tts.start`，否则丢弃。
     /// 移除了 legacy 路径：所有帧必须经过 ai.tts.start 认领。
     public func onAudioFrame(_ frame: WSAudioFrame) async -> TTSFrameOutcome {
+        if let turnRef = frame.turnRef {
+            guard let turnID = turnRefToTurnID[turnRef] else {
+                return .dropped(
+                    turnID: nil,
+                    reason: .unknownTurn,
+                    errorDescription: "turn_ref \(turnRef) has no registered turn (missing or closed ai.tts.start)"
+                )
+            }
+            return await onAudio(
+                TurnKeyedAudioFrame(turnID: turnID, sequence: frame.sequence, payload: frame.payload)
+            )
+        }
         guard let turnID = attributionTurnID else {
             return .dropped(turnID: nil, reason: .unknownTurn, errorDescription: "no active turn (missing ai.tts.start)")
         }

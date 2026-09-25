@@ -838,7 +838,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
         await audioEngine.snapshotStartCalls() == 1
     }
 
-    speechClient.emit(.control(.aiTTSStart(turnID: "turn-1", voiceID: "mock_voice_01", sampleRate: 16_000, codec: "pcm")))
+    speechClient.emit(.control(.aiTTSStart(turnID: "turn-1", voiceID: "mock_voice_01", sampleRate: 16_000, codec: "pcm", turnRef: nil)))
     let frame = WSAudioFrame(sequence: 7, payload: Data([0x01, 0x02]))
     speechClient.emit(.audio(frame))
 
@@ -878,7 +878,8 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
                 turnID: "turn-9",
                 voiceID: "mock_voice_01",
                 sampleRate: 16_000,
-                codec: "pcm"
+                codec: "pcm",
+                turnRef: nil
             )
         )
     )
@@ -887,7 +888,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     speechClient.emit(.audio(first))
     speechClient.emit(.audio(second))
     speechClient.emit(
-        .control(.aiTTSEnd(turnID: "turn-9", completionStatus: "ok", durationMs: 40))
+        .control(.aiTTSEnd(turnID: "turn-9", completionStatus: "ok", durationMs: 40, turnRef: nil))
     )
 
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
@@ -971,7 +972,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(store.state.speakingRoom.session.userTurnCount == 1)
 
     // Drive the machine to `waitingForEvaluation` so a second turn can start.
-    speechClient.emit(.control(.aiTTSStart(turnID: "turn-1", voiceID: "mock_voice_01", sampleRate: 16_000, codec: "pcm")))
+    speechClient.emit(.control(.aiTTSStart(turnID: "turn-1", voiceID: "mock_voice_01", sampleRate: 16_000, codec: "pcm", turnRef: nil)))
     let frame = WSAudioFrame(sequence: 1, payload: Data([0x01]))
     speechClient.emit(.audio(frame))
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
@@ -1181,7 +1182,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(store.state.speakingRoom.phase == .processing)
     #expect(await speechClient.snapshotBoundaries() == [true, false])
 
-    speechClient.emit(.control(.aiTTSStart(turnID: "turn-7", voiceID: "mock_voice_01", sampleRate: 16_000, codec: "pcm")))
+    speechClient.emit(.control(.aiTTSStart(turnID: "turn-7", voiceID: "mock_voice_01", sampleRate: 16_000, codec: "pcm", turnRef: nil)))
     let frame = WSAudioFrame(sequence: 7, payload: Data([0x01, 0x02]))
     speechClient.emit(.audio(frame))
     try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
@@ -1374,7 +1375,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     // 这一轮的音频已经排进播放器。
     speechClient.emit(
         .control(
-            .aiTTSStart(turnID: "turn-1", voiceID: "mock_voice_01", sampleRate: 16_000, codec: "pcm")
+            .aiTTSStart(turnID: "turn-1", voiceID: "mock_voice_01", sampleRate: 16_000, codec: "pcm", turnRef: nil)
         )
     )
     speechClient.emit(.audio(WSAudioFrame(sequence: 1, payload: Data([0x01, 0x02]))))

@@ -807,10 +807,10 @@ internal func makeTransportEventRouter(
     // `ai.tts.start` 是轮次归属的开始。从这里到 `ai.tts.end` 之间
     // 到达的二进制帧都属于这一轮（契约 `meta 83_`）。
     controlHandlers[.aiTTSStart] = AnyControlFrameHandler { frame in
-        guard case let .aiTTSStart(turnID, voiceID, sampleRate, codec) = frame else {
+        guard case let .aiTTSStart(turnID, voiceID, sampleRate, codec, turnRef) = frame else {
             return
         }
-        await ttsCoordinator.onStart(turnID: turnID)
+        await ttsCoordinator.onStart(turnID: turnID, turnRef: turnRef)
         ttsTrace.reset()
         container.tracker().track(
             event: "tts_start",
@@ -819,15 +819,16 @@ internal func makeTransportEventRouter(
                 "voice_id": voiceID,
                 "sample_rate": String(sampleRate),
                 "codec": codec,
+                "turn_ref": turnRef.map(String.init) ?? "nil",
             ]
         )
     }
 
     controlHandlers[.aiTTSEnd] = AnyControlFrameHandler { frame in
-        guard case let .aiTTSEnd(turnID, completionStatus, durationMs) = frame else {
+        guard case let .aiTTSEnd(turnID, completionStatus, durationMs, turnRef) = frame else {
             return
         }
-        await ttsCoordinator.onEnd(turnID: turnID)
+        await ttsCoordinator.onEnd(turnID: turnID, turnRef: turnRef)
         container.tracker().track(
             event: "tts_end",
             properties: [
@@ -835,6 +836,7 @@ internal func makeTransportEventRouter(
                 "completion_status": completionStatus,
                 "duration_ms": durationMs.map(String.init) ?? "nil",
                 "audio_frames": String(ttsTrace.audioFrameCount()),
+                "turn_ref": turnRef.map(String.init) ?? "nil",
             ]
         )
     }

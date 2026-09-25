@@ -13,8 +13,8 @@ import Testing
         .clientTurnAbort(turnID: "turn-1", outcome: .timeout),
         .aiTextDelta(text: "你好", turnID: "turn-1", serverTsMs: 1_728_000_000_000),
         .aiAudioChunk(sequence: 42),
-        .aiTTSStart(turnID: "turn-9", voiceID: "mock_voice_01", sampleRate: 24_000, codec: "opus"),
-        .aiTTSEnd(turnID: "turn-9", completionStatus: "ok", durationMs: 200),
+        .aiTTSStart(turnID: "turn-9", voiceID: "mock_voice_01", sampleRate: 24_000, codec: "opus", turnRef: nil),
+        .aiTTSEnd(turnID: "turn-9", completionStatus: "ok", durationMs: 200, turnRef: nil),
         .aiTurnEnd(turnID: "turn-42", outcome: nil, logID: nil),
         .interrupt,
         .ping(ts: 1_728_000_000_000),
@@ -99,13 +99,13 @@ import Testing
 
 @Test func audioFrameCodecRejectsTruncatedHeader() {
     let bytes = Data([0x00, 0x01])
-    #expect(throws: WSAudioFrameCodecError.truncatedHeader(byteCount: bytes.count)) {
+    #expect(throws: WSAudioFrameCodecError.truncatedHeader(byteCount: bytes.count, requiredBytes: 4)) {
         _ = try WSAudioFrameCodec.decode(bytes)
     }
 }
 
 @Test func audioFrameCodecTruncatedHeaderExposesLocalizedDescription() {
-    let error = WSAudioFrameCodecError.truncatedHeader(byteCount: 2)
+    let error = WSAudioFrameCodecError.truncatedHeader(byteCount: 2, requiredBytes: 4)
     let description = (error as LocalizedError).errorDescription
     #expect(description?.contains("2") == true)
     #expect(description?.contains("4") == true)
@@ -564,6 +564,45 @@ private actor TransportHolder {
         delivered == [1, 2, 0, 1, 2],
         "the transport dropped audio a barge-in did not make stale: \(delivered)"
     )
+}
+
+/// Stage 3：布局由「最近一条 `ai.tts.start` 有没有 `turn_ref`」决定。
+///
+/// 这条钉住整条链：控制帧被解码 → 布局被记下 → 后续二进制帧按新布局解。
+/// 若把布局判断去掉，h8 帧会被当 h4 读，`turnRef` 变 nil 且载荷整体偏移 4 字节。
+@Test func transportDecodesH8AfterATurnRefCarryingStart() async {
+    let events = await eventsFromScriptedReceiveLoop(
+        ScriptedMessageSource([
+            .string(#"{"type":"ai.tts.start","turn_id":"t","voice_id":"v","sample_rate":16000,"codec":"pcm","turn_ref":7}"#),
+            .data(
+                WSAudioFrameCodec.encode(
+                    WSAudioFrame(sequence: 3, turnRef: 7, payload: Data([0xAA])),
+                    layout: .h8
+                )
+            ),
+        ])
+    )
+
+    #expect(audioFrames(in: events) == [WSAudioFrame(sequence: 3, turnRef: 7, payload: Data([0xAA]))])
+}
+
+/// 网关不置 `turn_ref` 时布局必须留在 h4 —— 老网关一个字节都不用改。
+@Test func transportKeepsH4WhenTheStartCarriesNoTurnRef() async {
+    let events = await eventsFromScriptedReceiveLoop(
+        ScriptedMessageSource([
+            .string(#"{"type":"ai.tts.start","turn_id":"t","voice_id":"v","sample_rate":16000,"codec":"pcm"}"#),
+            .data(WSAudioFrameCodec.encode(WSAudioFrame(sequence: 3, payload: Data([0xAA])))),
+        ])
+    )
+
+    #expect(audioFrames(in: events) == [WSAudioFrame(sequence: 3, payload: Data([0xAA]))])
+}
+
+private func audioFrames(in events: [SocketTransportEvent]) -> [WSAudioFrame] {
+    events.compactMap { event in
+        if case let .audio(frame) = event { return frame }
+        return nil
+    }
 }
 
 // The drop **report** that used to be pinned here — `77_` P1-22, "is the drop

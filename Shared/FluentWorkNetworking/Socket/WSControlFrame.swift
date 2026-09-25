@@ -51,9 +51,9 @@ public enum WSControlFrame: Equatable, Sendable {
     case aiTextDelta(text: String, turnID: String?, serverTsMs: Int64?)
     case aiAudioChunk(sequence: UInt32)
     /// Gateway → client: warm the TTS decoder before binary audio messages.
-    case aiTTSStart(turnID: String, voiceID: String, sampleRate: Int, codec: String)
+    case aiTTSStart(turnID: String, voiceID: String, sampleRate: Int, codec: String, turnRef: UInt32?)
     /// Gateway → client: terminate the TTS stream after the last binary audio message.
-    case aiTTSEnd(turnID: String, completionStatus: String, durationMs: Int?)
+    case aiTTSEnd(turnID: String, completionStatus: String, durationMs: Int?, turnRef: UInt32?)
     /// B15: explicit terminal status of a turn, mirroring backend voicepoc.TurnOutcome.
     /// B15-I3: log_id carries the vendor (Volcengine) trace identifier from the
     /// backend handshake, enabling iOS tracker events to be correlated with vendor logs.
@@ -249,6 +249,7 @@ extension WSControlFrame: Codable {
         case codec
         case completionStatus = "completion_status"
         case durationMs = "duration_ms"
+        case turnRef = "turn_ref"
     }
 
     public init(from decoder: Decoder) throws {
@@ -314,14 +315,16 @@ extension WSControlFrame: Codable {
                 turnID: try container.decode(String.self, forKey: .turnID),
                 voiceID: try container.decode(String.self, forKey: .voiceID),
                 sampleRate: try container.decode(Int.self, forKey: .sampleRate),
-                codec: try container.decode(String.self, forKey: .codec)
+                codec: try container.decode(String.self, forKey: .codec),
+                turnRef: try container.decodeIfPresent(UInt32.self, forKey: .turnRef)
             )
 
         case "ai.tts.end":
             self = .aiTTSEnd(
                 turnID: try container.decode(String.self, forKey: .turnID),
                 completionStatus: try container.decode(String.self, forKey: .completionStatus),
-                durationMs: try container.decodeIfPresent(Int.self, forKey: .durationMs)
+                durationMs: try container.decodeIfPresent(Int.self, forKey: .durationMs),
+                turnRef: try container.decodeIfPresent(UInt32.self, forKey: .turnRef)
             )
 
         case "ai.audio.chunk":
@@ -418,18 +421,20 @@ extension WSControlFrame: Codable {
             try container.encodeIfPresent(turnID, forKey: .turnID)
             try container.encodeIfPresent(serverTsMs, forKey: .serverTsMs)
 
-        case let .aiTTSStart(turnID, voiceID, sampleRate, codec):
+        case let .aiTTSStart(turnID, voiceID, sampleRate, codec, turnRef):
             try container.encode("ai.tts.start", forKey: .type)
             try container.encode(turnID, forKey: .turnID)
             try container.encode(voiceID, forKey: .voiceID)
             try container.encode(sampleRate, forKey: .sampleRate)
             try container.encode(codec, forKey: .codec)
+            try container.encodeIfPresent(turnRef, forKey: .turnRef)
 
-        case let .aiTTSEnd(turnID, completionStatus, durationMs):
+        case let .aiTTSEnd(turnID, completionStatus, durationMs, turnRef):
             try container.encode("ai.tts.end", forKey: .type)
             try container.encode(turnID, forKey: .turnID)
             try container.encode(completionStatus, forKey: .completionStatus)
             try container.encodeIfPresent(durationMs, forKey: .durationMs)
+            try container.encodeIfPresent(turnRef, forKey: .turnRef)
 
         case let .aiAudioChunk(sequence):
             try container.encode("ai.audio.chunk", forKey: .type)

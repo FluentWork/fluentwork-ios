@@ -8,10 +8,12 @@ import Foundation
 /// codec the decoder is the one to decide.
 public struct WSAudioFrame: Equatable, Sendable {
     public var sequence: UInt32
+    public var turnRef: UInt32?
     public var payload: Data
 
-    public init(sequence: UInt32, payload: Data) {
+    public init(sequence: UInt32, turnRef: UInt32? = nil, payload: Data) {
         self.sequence = sequence
+        self.turnRef = turnRef
         self.payload = payload
     }
     
@@ -22,33 +24,66 @@ public struct WSAudioFrame: Equatable, Sendable {
     }
 }
 
-public enum WSAudioFrameCodecError: Error, Equatable, Sendable {
-    case truncatedHeader(byteCount: Int)
+public enum WSAudioFrameLayout: Sendable, Equatable {
+    case h4
+    case h8
+
+    public var headerByteCount: Int {
+        switch self {
+        case .h4: return 4
+        case .h8: return 8
+        }
+    }
 }
 
-/// Binary layout: `UInt32` big-endian sequence + Opus payload bytes.
-public enum WSAudioFrameCodec: Sendable {
-    public static let headerByteCount = 4
+public enum WSAudioFrameCodecError: Error, Equatable, Sendable {
+    case truncatedHeader(byteCount: Int, requiredBytes: Int)
+}
 
-    public static func encode(_ frame: WSAudioFrame) -> Data {
+/// Binary layout: `UInt32` big-endian sequence + payload bytes, with a `UInt32`
+/// big-endian `turn_ref` between them under `WSAudioFrameLayout.h8`.
+public enum WSAudioFrameCodec: Sendable {
+    public static let headerByteCount = WSAudioFrameLayout.h4.headerByteCount
+
+    public static func encode(
+        _ frame: WSAudioFrame,
+        layout: WSAudioFrameLayout = .h4
+    ) -> Data {
         var data = Data()
-        data.reserveCapacity(headerByteCount + frame.payload.count)
+        data.reserveCapacity(layout.headerByteCount + frame.payload.count)
         var sequence = frame.sequence.bigEndian
         withUnsafeBytes(of: &sequence) { data.append(contentsOf: $0) }
+        if layout == .h8 {
+            var turnRef = (frame.turnRef ?? 0).bigEndian
+            withUnsafeBytes(of: &turnRef) { data.append(contentsOf: $0) }
+        }
         data.append(frame.payload)
         return data
     }
 
-    public static func decode(_ data: Data) throws -> WSAudioFrame {
-        guard data.count >= headerByteCount else {
-            throw WSAudioFrameCodecError.truncatedHeader(byteCount: data.count)
+    public static func decode(
+        _ data: Data,
+        layout: WSAudioFrameLayout = .h4
+    ) throws -> WSAudioFrame {
+        let header = layout.headerByteCount
+        guard data.count >= header else {
+            throw WSAudioFrameCodecError.truncatedHeader(
+                byteCount: data.count,
+                requiredBytes: header
+            )
         }
 
-        let sequence = data.prefix(headerByteCount).withUnsafeBytes { buffer -> UInt32 in
+        let sequence = data.prefix(4).withUnsafeBytes { buffer -> UInt32 in
             UInt32(bigEndian: buffer.load(as: UInt32.self))
         }
-        let payload = data.dropFirst(headerByteCount)
-        return WSAudioFrame(sequence: sequence, payload: Data(payload))
+        var turnRef: UInt32?
+        if layout == .h8 {
+            turnRef = data.dropFirst(4).prefix(4).withUnsafeBytes { buffer -> UInt32 in
+                UInt32(bigEndian: buffer.load(as: UInt32.self))
+            }
+        }
+        let payload = data.dropFirst(header)
+        return WSAudioFrame(sequence: sequence, turnRef: turnRef, payload: Data(payload))
     }
 }
 
@@ -62,8 +97,8 @@ extension WSAudioFrameCodecError: LocalizedError {
     /// the error case so the source is identifiable in logs.
     public var errorDescription: String? {
         switch self {
-        case let .truncatedHeader(byteCount):
-            return "audio frame header is missing or truncated (received \(byteCount) bytes, header requires \(WSAudioFrameCodec.headerByteCount))"
+        case let .truncatedHeader(byteCount, requiredBytes):
+            return "audio frame header is missing or truncated (received \(byteCount) bytes, header requires \(requiredBytes))"
         }
     }
 }

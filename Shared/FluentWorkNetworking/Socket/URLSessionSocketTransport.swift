@@ -48,6 +48,7 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
     private var pendingPingSentMs: Int64?
     private var connectionState: SocketConnectionState = .idle
     private var consecutivePingFailures = 0
+    private var audioLayout: WSAudioFrameLayout = .h4
     private var activeSessionID: String?
     private var activeTicket: String?
     private var activeURL: URL?
@@ -184,6 +185,7 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
         // fresh round trip lands, which is the honest answer.
         clockOffsetEstimator.reset()
         pendingPingSentMs = nil
+        audioLayout = .h4
 
         task?.cancel(with: .goingAway, reason: nil)
         if emitDisconnected {
@@ -312,6 +314,9 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
             do {
                 let frame = try WSControlFrameCodec.decode(data)
                 recordClockOffsetIfPong(frame)
+                if case let .aiTTSStart(_, _, _, _, turnRef) = frame {
+                    audioLayout = turnRef == nil ? .h4 : .h8
+                }
                 emit(.control(frame))
             } catch let error as WSControlFrameCodingError {
                 // An unknown `type` is a version difference, not a broken
@@ -341,7 +346,7 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
 
         case let .data(data):
             do {
-                let frame = try WSAudioFrameCodec.decode(data)
+                let frame = try WSAudioFrameCodec.decode(data, layout: audioLayout)
                 // Delivered unconditionally: **the transport has no drop policy.**
                 //
                 // Every inbound binary frame used to be run past a sequence
