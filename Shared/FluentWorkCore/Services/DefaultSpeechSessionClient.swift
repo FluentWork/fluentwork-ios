@@ -27,6 +27,29 @@ private actor HeartbeatTaskBox {
     }
 }
 
+private actor SessionTransitionGate {
+    private var isHeld = false
+    private var parked: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        guard isHeld else {
+            isHeld = true
+            return
+        }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            parked.append(continuation)
+        }
+    }
+
+    func release() {
+        guard !parked.isEmpty else {
+            isHeld = false
+            return
+        }
+        parked.removeFirst().resume()
+    }
+}
+
 /// Speaks-room session facade: guest token → POST /sessions → WSS connect.
 public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unchecked Sendable {
     private let api: SessionAPIClientProtocol
@@ -35,6 +58,7 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
     private let activeSession = ActiveSessionBox()
     private let heartbeatTask = HeartbeatTaskBox()
     private let heartbeatInterval: Duration
+    private let transitions = SessionTransitionGate()
 
     public init(
         api: SessionAPIClientProtocol,
@@ -49,6 +73,17 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
     }
 
     public func startSession(continueFromSessionID: String?) async throws {
+        await transitions.acquire()
+        do {
+            try await performStartSession(continueFromSessionID: continueFromSessionID)
+            await transitions.release()
+        } catch {
+            await transitions.release()
+            throw error
+        }
+    }
+
+    private func performStartSession(continueFromSessionID: String?) async throws {
         let deviceID = try await tokens.deviceID()
         let created: CreateSessionResponse
         do {
@@ -231,6 +266,12 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
     }
 
     public func endSession() async {
+        await transitions.acquire()
+        await performEndSession()
+        await transitions.release()
+    }
+
+    private func performEndSession() async {
         await heartbeatTask.cancel()
         // The gateway persists the session (and enqueues the review job) only
         // when it receives an explicit `session.end` control frame. Closing the
@@ -241,7 +282,9 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
     }
 
     public func closeTransport() async {
+        await transitions.acquire()
         await transport.disconnect()
+        await transitions.release()
     }
 
     private func ensureAccessToken(deviceID: String) async throws -> String {

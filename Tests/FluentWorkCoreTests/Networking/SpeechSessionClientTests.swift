@@ -638,3 +638,145 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
 
     #expect(await transport.disconnectCount == 1)
 }
+
+private actor SessionEndGateTransport: SocketTransportProtocol {
+    nonisolated let events: AsyncStream<SocketTransportEvent>
+    private let continuation: AsyncStream<SocketTransportEvent>.Continuation
+
+    private var arrivalWaiters: [CheckedContinuation<Void, Never>] = []
+    private var endSendWaiters: [CheckedContinuation<Void, Never>] = []
+    private var endSendArrived = false
+    private var endSendReleased = false
+
+    private(set) var connectCalls: [String] = []
+    private(set) var disconnectCount = 0
+    private(set) var connected = false
+
+    init() {
+        let pair = AsyncStream.makeStream(of: SocketTransportEvent.self)
+        self.events = pair.stream
+        self.continuation = pair.continuation
+    }
+
+    func connect(url: URL, sessionID: String, ticket: String) async throws {
+        connectCalls.append(sessionID)
+        connected = true
+    }
+
+    func disconnect() async {
+        disconnectCount += 1
+        connected = false
+    }
+
+    func send(control frame: WSControlFrame) async throws {
+        guard case .sessionEnd = frame else { return }
+        endSendArrived = true
+        let arrived = arrivalWaiters
+        arrivalWaiters.removeAll()
+        for waiter in arrived { waiter.resume() }
+        while !endSendReleased {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                endSendWaiters.append(continuation)
+            }
+        }
+    }
+
+    func send(audio data: Data) async throws {}
+
+    func awaitSessionEndSend() async {
+        guard !endSendArrived else { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            arrivalWaiters.append(continuation)
+        }
+    }
+
+    func releaseSessionEndSend() {
+        endSendReleased = true
+        let parked = endSendWaiters
+        endSendWaiters.removeAll()
+        for waiter in parked { waiter.resume() }
+    }
+
+    func connectCount() -> Int { connectCalls.count }
+    func isConnected() -> Bool { connected }
+}
+
+private actor SessionIDSequence {
+    private var next = 0
+
+    func take() -> String {
+        next += 1
+        return "s-\(next)"
+    }
+}
+
+@MainActor
+@Test func endingASessionMustNotTearDownASessionThatStartedAfterIt() async throws {
+    let transport = SessionEndGateTransport()
+    let ids = SessionIDSequence()
+    let tokenStore = RecordingSpeechSessionTokenStore(
+        deviceID: "transition-race-device",
+        seededAccessToken: AuthToken(
+            value: "access-race",
+            expiresAt: Date().addingTimeInterval(3600)
+        )
+    )
+    let api = SessionAPIClient(
+        network: StubNetworkClient { target in
+            switch target.path {
+            case "/auth/guest":
+                return Data(
+                    """
+                    {"user_id":"u-race","is_guest":true,"status":"active","access_token":"access-race","refresh_token":"r","token_type":"Bearer","expires_in":3600}
+                    """.utf8
+                )
+            case "/sessions":
+                let sessionID = await ids.take()
+                return Data(
+                    """
+                    {"session_id":"\(sessionID)","wss_url":"ws://127.0.0.1:9/ws","ticket":"tik","ticket_expires_in":60,"ticket_expires_at":"2026-08-26T00:00:00Z","scene_type":"standup","status":"created"}
+                    """.utf8
+                )
+            default:
+                Issue.record("unexpected \(target.path)")
+                return Data()
+            }
+        },
+        baseURL: URL(string: "http://127.0.0.1:8080/api/v1")!
+    )
+    let client = DefaultSpeechSessionClient(
+        api: api,
+        tokens: tokenStore,
+        transport: transport
+    )
+
+    try await client.startSession(continueFromSessionID: nil)
+    #expect(await client.activeSessionID() == "s-1")
+
+    let ending = Task { await client.endSession() }
+    await transport.awaitSessionEndSend()
+
+    let starting = Task { try await client.startSession(continueFromSessionID: nil) }
+    let deadline = ContinuousClock.now + .milliseconds(500)
+    while ContinuousClock.now < deadline {
+        if await transport.connectCount() >= 2 { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+
+    await transport.releaseSessionEndSend()
+    await ending.value
+    _ = try? await starting.value
+
+    let activeAfterRestart = await client.activeSessionID()
+    let stillConnected = await transport.isConnected()
+    let connects = await transport.connectCalls
+    let disconnects = await transport.disconnectCount
+
+    #expect(
+        activeAfterRestart == "s-2",
+        "旧会话的拆解打死了它之后才建立的新会话：activeSessionID 是 \(String(describing: activeAfterRestart))"
+    )
+    #expect(stillConnected, "旧会话的 disconnect 关掉了新会话的 socket")
+    #expect(connects == ["s-1", "s-2"])
+    #expect(disconnects == 1)
+}
