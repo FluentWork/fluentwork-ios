@@ -46,8 +46,8 @@ specific to this repository.
    the rules that disagree with it (notably `trailing_comma` and `line_length`); do
    not "fix" formatting to satisfy a disabled rule.
 7. **Draw the load-bearing flows; do not narrate them in comments.** A flow through a
-   path listed under High-Risk Paths is explained with a diagram, not with prose and not
-   with a multi-paragraph comment. A comment may state a rule someone would otherwise
+   path listed under High-Risk Paths is explained with a diagram in the commit body, not
+   with prose and not with a comment. A comment may state a rule someone would otherwise
    break; it may not carry the shape of a flow. When the flow changes, redraw it.
 
 ## Required Behaviors
