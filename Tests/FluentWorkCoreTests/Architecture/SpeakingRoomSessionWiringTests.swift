@@ -568,7 +568,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 ///
 /// ## 为什么这张表必须存在
 ///
-/// 这 11 条埋点是**设备验证唯一计划中的证据来源**。`70_/08_` §3 记的真机验证至今
+/// 这 14 条埋点是**设备验证唯一计划中的证据来源**。`70_/08_` §3 记的真机验证至今
 /// 未做，而它要查的那类问题（真机静音、真机 barge-in）本仓的测试层级**结构上测不到**
 /// （`80_/03_` §4.5）。真机出问题时，能读的只有这些行。
 ///
@@ -648,6 +648,11 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     // (埋点名, 必须存在的属性键)。属性键只断言「存在」不断言值——值由各条自己的
     // 行为测试负责，这里管的是「这行还读得懂吗」。
     let expected: [(name: String, keys: Set<String>)] = [
+        // 建立连接的六跳，按真实顺序。前三条把「签票 + 拨号 + 引擎装配」那一段切开 ——
+        // 挤在一起时慢在哪一跳读不出来，而 `.connecting` 的时延就藏在那一段里。
+        ("timing_session_start_invoked", []),
+        ("timing_session_start_returned", []),
+        ("timing_capture_start_invoked", []),
         ("timing_vad_speech_start", []),
         ("timing_audio_uplink_turn", ["forwarded", "dropped_outside"]),
         ("timing_audio_capture_armed", ["was_running", "running", "session"]),

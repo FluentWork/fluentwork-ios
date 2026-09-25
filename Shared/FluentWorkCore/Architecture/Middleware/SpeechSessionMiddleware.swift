@@ -1241,13 +1241,16 @@ private func interpretSpeechSessionSideEffect(
         return .merge(
             .task {
                 do {
+                    timings.mark(event: "session_start_invoked")
                     try await speechClient.startSession(continueFromSessionID: continueFromSessionID)
+                    timings.mark(event: "session_start_returned")
                     await audioEngine.setSpeechBoundaryMode(usesAutoVAD ? .autoVAD : .tapToStart)
                     // Declared before `startCapture()`, not after: voice
                     // processing may only be toggled while the engine is
                     // stopped, and `startCapture()` is what starts it. The
                     // engine applies it while building the graph.
                     await audioEngine.setVoiceProcessingEnabled(voiceProcessingEnabled)
+                    timings.mark(event: "capture_start_invoked")
                     try await audioEngine.startCapture()
                 } catch let error as AudioEnginePermissionError {
                     let message: String
