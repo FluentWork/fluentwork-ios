@@ -125,6 +125,18 @@ import Testing
     )
 }
 
+@Test func speakingRoomDegradedTextOffersAWayOut() {
+    let model = SpeakingRoomViewModel(phase: .degradedText)
+
+    #expect(model.controlState.title == "网络不稳定")
+    #expect(
+        model.controlState.primaryAction
+            == .stop(title: "结束这次练习", systemImage: "xmark.circle.fill")
+    )
+    #expect(model.stopTapIntent == .endSession)
+    #expect(model.startTapIntent == .none)
+}
+
 @Test func speakingRoomPermissionGateReturnsGrantedState() async {
     let grantedGate = SpeakingRoomPermissionGate {
         true

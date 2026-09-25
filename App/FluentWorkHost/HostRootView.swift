@@ -95,6 +95,8 @@ struct HostRootView: View {
                         switch makeSpeakingRoomViewModel(from: store.state.speakingRoom).stopTapIntent {
                         case .endTurn:
                             store.dispatch(.speakingRoom(.manualSpeechEnd))
+                        case .endSession:
+                            store.dispatch(.speakingRoom(.session(.endTap)))
                         case .none:
                             break
                         }

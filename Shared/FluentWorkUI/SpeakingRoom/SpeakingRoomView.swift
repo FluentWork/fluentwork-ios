@@ -96,6 +96,7 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
 
     public enum StopTapIntent: Equatable, Sendable {
         case endTurn
+        case endSession
         case none
     }
 
@@ -118,9 +119,18 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
         }
     }
 
-    /// Recording stop submits the turn. Session end stays on the close button.
+    /// Recording stop submits the turn. Degraded text ends the session — ending
+    /// is the only action that is always correct there. Session end elsewhere
+    /// stays on the close button.
     public var stopTapIntent: StopTapIntent {
-        phase == .recording ? .endTurn : .none
+        switch phase {
+        case .recording:
+            return .endTurn
+        case .degradedText:
+            return .endSession
+        default:
+            return .none
+        }
     }
 
     var controlState: SpeakingRoomControlState {
@@ -263,10 +273,10 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
         case .degradedText:
             return .init(
                 title: "网络不稳定",
-                detail: "语音链路已降级，当前会话需要恢复后再继续。",
+                detail: "语音链路已降级，当前会话无法恢复。结束这次练习后重新开始，会接上这一段。",
                 accent: .warning,
                 showsProgress: false,
-                primaryAction: nil
+                primaryAction: .stop(title: "结束这次练习", systemImage: "xmark.circle.fill")
             )
         case .ended:
             return .init(
