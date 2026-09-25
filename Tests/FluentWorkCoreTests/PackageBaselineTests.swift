@@ -11,31 +11,25 @@ import Foundation
 }
 
 @Test func sharedSchemaMirrorsAreBundled() throws {
-    let transport = try SharedSchemaMirror.wssControlFramesV1.data()
-    let transportV2 = try SharedSchemaMirror.wssControlFramesV2.data()
+    let transport = try SharedSchemaMirror.wssControlFramesV2.data()
     let events = try SharedSchemaMirror.speechObservabilityEventsV1.data()
 
     let transportDoc = try #require(
         JSONSerialization.jsonObject(with: transport) as? [String: Any]
     )
-    let transportV2Doc = try #require(
-        JSONSerialization.jsonObject(with: transportV2) as? [String: Any]
-    )
     let eventDoc = try #require(
         JSONSerialization.jsonObject(with: events) as? [String: Any]
     )
 
-    #expect(transportDoc["title"] as? String == "FluentWork WSS control frames v1")
-    #expect(transportV2Doc["title"] as? String == "FluentWork WSS control frames v2")
+    #expect(transportDoc["title"] as? String == "FluentWork WSS control frames v2")
     #expect(eventDoc["title"] as? String == "FluentWork speech observability events v1")
 
     let transportDefs = try #require(transportDoc["$defs"] as? [String: Any])
-    let transportV2Defs = try #require(transportV2Doc["$defs"] as? [String: Any])
     let eventDefs = try #require(eventDoc["$defs"] as? [String: Any])
 
     #expect(transportDefs["aiTurnEnd"] != nil)
-    #expect(transportV2Defs["aiTTSStart"] != nil)
-    #expect(transportV2Defs["aiTTSEnd"] != nil)
+    #expect(transportDefs["aiTTSStart"] != nil)
+    #expect(transportDefs["aiTTSEnd"] != nil)
     #expect(eventDefs["speechTurnEnded"] != nil)
 }
 
@@ -99,7 +93,7 @@ import Foundation
     // `turn_id` or `text` from `user.speech.end` the cross-team 联调 breaks:
     // backend's BadgeEmitter key is `session|turn|phrase_block` and iOS must
     // send the same turn_id for the LRU to dedupe correctly.
-    let transport = try SharedSchemaMirror.wssControlFramesV1.data()
+    let transport = try SharedSchemaMirror.wssControlFramesV2.data()
     let transportDoc = try #require(
         JSONSerialization.jsonObject(with: transport) as? [String: Any]
     )
@@ -114,7 +108,7 @@ import Foundation
 @Test func wssControlFramesSchemaHasFeedbackBadgePhraseBlockAndTier() throws {
     // Pins the wire contract used to enrich badge display. iOS reads both
     // fields; backend's `NewFeedbackBadge` always populates them.
-    let transport = try SharedSchemaMirror.wssControlFramesV1.data()
+    let transport = try SharedSchemaMirror.wssControlFramesV2.data()
     let transportDoc = try #require(
         JSONSerialization.jsonObject(with: transport) as? [String: Any]
     )

@@ -1,7 +1,6 @@
 import Foundation
 
 public enum SharedSchemaMirror: String, CaseIterable, Sendable {
-    case wssControlFramesV1 = "wss-control-frames-v1"
     case wssControlFramesV2 = "wss-control-frames-v2"
     case speechObservabilityEventsV1 = "speech-observability-events-v1"
 
