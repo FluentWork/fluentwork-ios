@@ -26,8 +26,8 @@ before changing code.
 
 1. **Build and test:** `swift build` / `swift test`. Add `--disable-sandbox` only if the
    toolchain sandbox blocks the macro plugin server.
-2. **Landing gate:** `swift test` green + `FluentWorkHost` Debug build + a numbered
-   implementation note, committed together. The pre-commit hook is a no-op and
+2. **Landing gate:** `swift test` green + `FluentWorkHost` Debug build, committed
+   together. No document is part of the gate. The pre-commit hook is a no-op and
    `core.hooksPath` is unset — the gate is manual.
 3. **`project.yml` owns the Xcode project.** Regenerate with `xcodegen generate`; never
    hand-edit `FluentWorkHost.xcodeproj`. Signing and Info.plist keys belong in
@@ -35,7 +35,7 @@ before changing code.
 4. **Schemas:** change them in `fluentwork-infra`, then run
    `./Scripts/sync-shared-schemas.sh`. The copies under
    `Shared/FluentWorkCore/Resources/Schemas/` are mirrors.
-5. **No code comments by default.** Reasoning belongs in the implementation note.
+5. **No code comments.** Reasoning goes in the commit body, not next to the code.
 6. **`.swift-format.json` is the layout source of truth**; `.swiftlint.yml` disables
    rules that conflict with it.
 
@@ -54,7 +54,7 @@ before changing code.
 1. Read the code first; `Package.swift` is authoritative for the target graph.
 2. Prefer minimal diffs over broad rewrites.
 3. Update tests when behavior changes; a defect fix must leave a test that failed first.
-4. Update the implementation note when behavior, interface, or architecture changes.
+4. Record what changed and why in the commit body. Do not create documents.
 5. Respect review gates and owner approval for high-risk paths.
 6. One ticket per commit; do not push without asking.
 

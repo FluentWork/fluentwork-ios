@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Landing gate lives in AGENTS.md: swift test + FluentWorkHost Debug build +
-# an implementation-note doc committed with the ticket. gstack review is not
-# part of this repository's commit gate.
+# Landing gate lives in AGENTS.md: swift test + FluentWorkHost Debug build,
+# committed together with the ticket. No document is part of the gate. gstack
+# review is not part of this repository's commit gate.
 
 # NOTE: swift-format and swiftlint checks are disabled for pre-commit.
 # They can be run manually or via CI when needed.

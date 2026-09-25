@@ -24,8 +24,8 @@ specific to this repository.
 
 ## Local Rules
 
-1. **Landing gate.** `swift test` green, `FluentWorkHost` Debug build succeeds, and a
-   numbered implementation note is committed with the ticket — all three together.
+1. **Landing gate.** `swift test` green and the `FluentWorkHost` Debug build succeeds,
+   committed together with the ticket. No document is part of the gate.
    `Scripts/setup-git-hooks.sh` and `.githooks/pre-commit` both state this.
 2. **The gate does not run itself.** `.githooks/pre-commit` is `exit 0` (deliberately —
    it runs neither `swift-format`, `swiftlint`, nor gstack), and `core.hooksPath` is
@@ -39,9 +39,9 @@ specific to this repository.
 4. **Schemas are owned by `fluentwork-infra`.** Never hand-edit
    `Shared/FluentWorkCore/Resources/Schemas/*.json`. Change the schema in
    `fluentwork-infra/schemas/`, then run `./Scripts/sync-shared-schemas.sh`.
-5. **No code comments by default.** Do not add header blocks, doc comments, or
-   inline rationale to new or changed code unless explicitly asked. Reasoning goes
-   into the implementation note, not next to the code. Leave existing comments alone.
+5. **No code comments.** Do not add header blocks, doc comments, or inline rationale to
+   new or changed code unless explicitly asked. If the reasoning needs recording, it goes
+   in the commit body. Leave existing comments alone.
 6. **`.swift-format.json` is the layout source of truth.** `.swiftlint.yml` disables
    the rules that disagree with it (notably `trailing_comma` and `line_length`); do
    not "fix" formatting to satisfy a disabled rule.
@@ -86,11 +86,7 @@ These are measured, not suspected. Fix or work around them deliberately.
    from the `POST /sessions` response (`wss_url`), not from `AppEnvironment`.
    `AppEnvironment` only governs the HTTP base URL, so a wrong host there produces
    working HTTP and an instantly-failing WebSocket.
-3. **There is no `docs/` directory.** The landing gate requires a numbered
-   implementation note, but this repository currently has no `docs/`. Decide where
-   notes live before the next ticket needs one — otherwise the third leg of the gate
-   is unimplementable and the gate quietly degrades to two legs.
-4. **CI `repo-structure-check` asserts directories that do not exist.** `ios-ci.yml`
+3. **CI `repo-structure-check` asserts directories that do not exist.** `ios-ci.yml`
    requires `Modules`, `Services`, `Resources`; the repository has `App`, `Shared`,
    `Tests`, `Scripts`. That job fails on every push regardless of the diff.
 

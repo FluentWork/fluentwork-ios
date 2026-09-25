@@ -4,24 +4,26 @@
 
 ## 硬性纪律（`AGENTS.md`）
 
-1. **代码默认不写注释**（Local Rule #10，2026-09-23 加）。只有 Tango 明确指出「这里需要注释」
-   才写；否则新代码与改动的代码一律不加注释（含文档注释、头部块、行内理由）。**推理写进
-   `docs/` 的编号实现说明**，不写在代码旁。已存在的注释不动，规则只向前生效。
-2. **一次一张票**（Local Rule #6）。不并发实施多个计划中的任务。
-3. **跨仓必须串行**（Local Rule #7）：在 `fluentwork-backend` 与 `fluentwork-ios` 之间，
-   先在一侧完成并验证，再动另一侧。
-4. **开发在 `main` 上，`--ff-only`，不开 PR**（Local Rule #8）。注意远端 `main` 的分支保护
-   要求 PR + 3 项状态检查，与这条冲突——每次推送都报 `Bypassed rule violations`，
-   **待仓库管理员处理**（见 `docs/70_tts_wss_refactor/25_` §5）。
-5. **落地门禁三项**：host Debug build + `swift test` + 一份编号实现说明，**三者一起提交**。
-6. **缺陷修复纪律**：每个修复从一条会失败的测试开始；实现说明的测试节**必须逐字引用
-   改动前的失败输出**，不能转述。三条例外（新能力 / 只能真机 / 确实不可自动化）
-   必须在说明里写明用了哪一条。
+1. **代码不写注释**（`AGENTS.md` Local Rule 5，2026-09-25 收紧）。不加注释（含文档注释、
+   头部块、行内理由）。**也没有别的地方放推理** —— 要留痕就写**提交正文**。
+   已存在的注释不动，规则只向前生效。
+2. **一次一张票**。不并发实施多个计划中的任务。
+3. **跨仓必须串行**：在 `fluentwork-backend` 与 `fluentwork-ios` 之间，先在一侧完成并验证，
+   再动另一侧。
+4. **开发在 `main` 上，`--ff-only`，不开 PR**。注意远端 `main` 的分支保护要求 PR + 3 项
+   状态检查，与这条冲突——每次推送都报 `Bypassed rule violations`，**待仓库管理员处理**。
+5. **落地门禁两项**：host Debug build + `swift test`，一起提交。
+   **不再要求实现说明文档**（2026-09-25 取消；`docs/` 也已不存在）。
+6. **缺陷修复纪律**：每个修复从一条会失败的测试开始，并**破坏实现证明守卫咬得住**。
+   证据（逐字的修复前输出）写进**提交正文**，不写文档。
 7. **禁用 `NSLock` / `NSRecursiveLock`**。用 actor 隔离或 `OSAllocatedUnfairLock`。
 
 ## 本机环境（会反复踩）
 
-1. **`swift build` / `swift test` 必须加 `--disable-sandbox`**，否则 `sandbox_apply: Operation not permitted`。
+1. **`swift build` / `swift test` 一般直接可用**（2026-09-25 实测：`swift build` 80 tasks 4.72s、
+   `swift test` 591 tests / 28 suites 6.5s，均未加参数）。**只有当宏插件服务器被沙箱拦住时**
+   才加 `--disable-sandbox`，否则会报 `sandbox_apply: Operation not permitted`。
+   **不要无条件加这个参数** —— 早先的记录把它写成了「必须」，那是错的。
 2. **Bash 工具环境里 `USER` 未设置**（`LOGNAME=root`，但 `whoami` 返回 `tango`）。
    读 `USER` 的 CLI 会挂（已知 XcodeGen 报 `Couldn't find current username` 且静默不生成工程）。
    解法：`USER=$(id -un)` 前缀。
