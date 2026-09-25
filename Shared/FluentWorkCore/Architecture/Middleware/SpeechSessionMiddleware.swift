@@ -637,11 +637,11 @@ private func audioEventPump(
                     // capture session by the engine.
                     timings.mark(event: "audio_capture_dropped", properties: ["reason": reason])
 
-                case let .captureArmed(wasRunning, startAttempted, startThrew, running, session):
+                case let .captureArmed(wasRunning, running, session):
                     // Proves the graph was armed, not merely that it reached the
-                    // format read. The four flags describe the start transition:
+                    // format read. The two flags describe the start transition:
                     // "not running" is either "skipped, believed up" or
-                    // "started, did not throw, still not running" — different
+                    // "started and stopped again before this line" — different
                     // bugs with one symptom.
                     //
                     // `session` narrows those further. Measured on device
@@ -655,8 +655,6 @@ private func audioEventPump(
                         event: "audio_capture_armed",
                         properties: [
                             "was_running": wasRunning ? "true" : "false",
-                            "start_attempted": startAttempted ? "true" : "false",
-                            "start_threw": startThrew ? "true" : "false",
                             "running": running ? "true" : "false",
                             "session": session,
                         ]

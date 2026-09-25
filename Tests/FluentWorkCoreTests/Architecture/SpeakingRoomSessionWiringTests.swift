@@ -581,13 +581,13 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 /// ## 这些断言不描述行为，只描述**可读性**
 ///
 /// 所以它们不会因为重构而合理地变红——只有当有人无意改掉一个名字时才会。属性键一并
-/// 断言，理由相同：`captureArmed` 的四个布尔是「启动被跳过了 / 启动了但没跑起来」的
+/// 断言，理由相同：`captureArmed` 的两个布尔是「启动被跳过了 / 启动后又停了」的
 /// 唯一区分手段（`LiveAudioEngine` 那段注释：`running: false` 有两种成因，终态分不开），
 /// 改掉一个键就把它降级成一条无法判读的日志。
 ///
 /// `session` 是同一理由的延续：2026-09-24 真机上，keep-alive kick 报了 `playing`
 /// （即 `startKeepAlive` 刚确认过引擎在跑），而这一行的 `running` 仍是 false，
-/// 中间只有两个 `yield`、没有可交错点。四个布尔到此为止，只有 `session` 能指出
+/// 中间只有两个 `yield`、没有可交错点。两个布尔到此为止，只有 `session` 能指出
 /// 是**谁**把 session 拿走了。
 ///
 /// ## 两处顺序约束
@@ -623,7 +623,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     }
 
     // 采集图的自报（7 条，全部是纯埋点，不派发、不依赖相位）。
-    audioEngine.emit(.captureArmed(wasRunning: false, startAttempted: true, startThrew: false, running: true, session: "category=AVAudioSessionCategoryPlayAndRecord mode=AVAudioSessionModeVoiceChat sampleRate=48000 otherAudio=false duckHint=false"))
+    audioEngine.emit(.captureArmed(wasRunning: false, running: true, session: "category=AVAudioSessionCategoryPlayAndRecord mode=AVAudioSessionModeVoiceChat sampleRate=48000 otherAudio=false duckHint=false"))
     audioEngine.emit(.captureKick(started: true, detail: "kick-ok"))
     audioEngine.emit(.captureFirstBuffer)
     audioEngine.emit(.captureDropped(reason: "convert-failed"))
@@ -650,7 +650,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     let expected: [(name: String, keys: Set<String>)] = [
         ("timing_vad_speech_start", []),
         ("timing_audio_uplink_turn", ["forwarded", "dropped_outside"]),
-        ("timing_audio_capture_armed", ["was_running", "start_attempted", "start_threw", "running", "session"]),
+        ("timing_audio_capture_armed", ["was_running", "running", "session"]),
         ("timing_audio_capture_kick", ["started", "detail"]),
         ("timing_audio_capture_first_buffer", []),
         ("timing_audio_capture_dropped", ["reason"]),

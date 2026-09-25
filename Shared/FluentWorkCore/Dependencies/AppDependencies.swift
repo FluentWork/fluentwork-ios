@@ -61,25 +61,24 @@ public enum AudioEngineEvent: Equatable, Sendable {
     /// Emitted at the very end of `startCapture()`, so its presence proves the
     /// graph was armed rather than merely that it got as far as the format read.
     ///
-    /// The four flags describe the start transition, because "the engine is not
-    /// running" has two very different causes that the final state alone cannot
-    /// tell apart: `wasRunning` (the start was skipped because the engine was
-    /// believed to be up), and `startAttempted` + `startThrew` (it was started,
-    /// did not throw, and is nevertheless not running). Measured on device
+    /// `wasRunning` says the start was skipped because the engine was believed
+    /// to be up; `running` is the state at this instant. Measured on device
     /// 2026-09-20: armed with `running: false` and a tap that never fired.
     /// `session` is the shared `AVAudioSession`'s category/mode at this instant,
     /// as reported by `LiveAudioEngine.describeSession()`.
     ///
-    /// The four booleans say *that* the engine is not running; only this says
+    /// The two booleans say *that* the engine is not running; only this says
     /// *why*, and the two candidate causes are indistinguishable without it. An
     /// `AVAudioEngine` stops itself when its session is reconfigured — without
     /// executing a line of the engine's code — so `running: false` after a
     /// successful start and a successful keep-alive kick means something outside
     /// the engine took the session. A category other than `.playAndRecord` names
     /// the thief. Measured on device 2026-09-24.
-    case captureArmed(
-        wasRunning: Bool, startAttempted: Bool, startThrew: Bool, running: Bool, session: String
-    )
+    ///
+    /// The start's own failure, as opposed to this later stop, is reported by
+    /// `EngineStart.Failure.detail` in the thrown `AudioEngineError` — that is
+    /// the only channel that reaches the log.
+    case captureArmed(wasRunning: Bool, running: Bool, session: String)
     /// The tap delivered its first buffer of this capture session.
     ///
     /// Once per session, like `captureDropped`. Absent means the tap was

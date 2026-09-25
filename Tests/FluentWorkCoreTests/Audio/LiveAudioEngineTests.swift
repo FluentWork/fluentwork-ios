@@ -190,6 +190,97 @@ import Testing
     }
 }
 
+/// `AVAudioEngine.start()` returning is not the same as the engine running, and
+/// the only channel that fact has is the thrown `AudioEngineError`'s message —
+/// `AudioEngineError` is not `LocalizedError`, so the user-facing string is
+/// synthesized and the message reaches the tracker mark and nothing else.
+///
+/// The message this replaces was `wasRunning=false startAttempted=true
+/// startThrew=false isRunning=false`: four named fields that are **constants**
+/// on this branch, since reaching it means the start ran, did not throw, and
+/// left the engine stopped. It read like a diagnosis and carried none, which is
+/// why the 2026-10 device failure could not be told from any other.
+///
+/// Driven through the start step alone. `startCapture()` cannot reach it on a
+/// machine with no audio input: the format guard sits in front and throws first.
+@available(iOS 17, macOS 14, *)
+@Test func aStartThatReturnsWithoutStartingTheEngineNamesThatCauseAndTheSession() async {
+    let engine = LiveAudioEngine(
+        decoder: RawPCM16FrameDecoder(),
+        startCaptureEngine: { _ in }
+    )
+
+    let start = await engine._testArmEngine()
+
+    #expect(start.wasRunning == false)
+    let failure = start.failure
+    #expect(failure?.error == nil, "the seam returned normally, so there is no error to name")
+    #expect(
+        failure?.detail.contains("returned normally") == true,
+        "the fact that separates this from a throwing start must survive, got \(String(describing: failure?.detail))"
+    )
+    #expect(
+        failure?.detail.contains("interrupted=false") == true,
+        "the interruption flag is one of the two ways an engine is stopped with no stack to read, got \(String(describing: failure?.detail))"
+    )
+    #expect(
+        failure?.detail.contains(LiveAudioEngine.describeSession()) == true,
+        "the shared session is the other, and it is the only reading that names who took it, got \(String(describing: failure?.detail))"
+    )
+}
+
+@available(iOS 17, macOS 14, *)
+@Test func aStartFailureDuringAnInterruptionSaysSo() async {
+    let engine = LiveAudioEngine(
+        decoder: RawPCM16FrameDecoder(),
+        startCaptureEngine: { _ in }
+    )
+    await engine.handleInterruption(.began)
+
+    let failure = await engine._testArmEngine().failure
+
+    #expect(
+        failure?.detail.contains("interrupted=true") == true,
+        "a failure under an interruption is a phone call; the same failure without one is a bug, got \(String(describing: failure?.detail))"
+    )
+}
+
+@available(iOS 17, macOS 14, *)
+@Test func aStartThatThrowsReportsTheErrorItThrew() async {
+    struct EngineRefusedToStart: Error {}
+    let engine = LiveAudioEngine(
+        decoder: RawPCM16FrameDecoder(),
+        startCaptureEngine: { _ in throw EngineRefusedToStart() }
+    )
+
+    let start = await engine._testArmEngine()
+
+    let failure = start.failure
+    #expect(failure?.error != nil)
+    #expect(failure?.detail.contains("threw") == true)
+}
+
+/// The guard under the guard: a failure detail that is the same sentence for
+/// every cause is not a diagnostic. This is the property the previous message
+/// violated, and it is asserted rather than described because the four fields it
+/// printed made it *look* like it satisfied it.
+@available(iOS 17, macOS 14, *)
+@Test func theStartFailureDetailDiffersWithEachFactThatCanDiffer() {
+    let session = "category=AVAudioSessionCategoryPlayAndRecord mode=AVAudioSessionModeVoiceChat sampleRate=0 otherAudio=false duckHint=false"
+    let silentReturn = EngineStart.Failure(error: nil, interrupted: false, session: session)
+    let threw = EngineStart.Failure(error: "boom", interrupted: false, session: session)
+    let interrupted = EngineStart.Failure(error: nil, interrupted: true, session: session)
+    let sessionTaken = EngineStart.Failure(
+        error: nil,
+        interrupted: false,
+        session: "category=AVAudioSessionCategoryPlayback mode=AVAudioSessionModeDefault sampleRate=48000 otherAudio=true duckHint=true"
+    )
+
+    #expect(silentReturn.detail != threw.detail)
+    #expect(silentReturn.detail != interrupted.detail)
+    #expect(silentReturn.detail != sessionTaken.detail)
+}
+
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineManualSpeechEmitsStartAndEnd() async {
     let engine = LiveAudioEngine(

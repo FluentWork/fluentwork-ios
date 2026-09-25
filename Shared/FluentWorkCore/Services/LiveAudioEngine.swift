@@ -218,6 +218,30 @@ enum PlaybackTeardown {
     }
 }
 
+enum EngineStart {
+    struct Failure: Equatable, Sendable {
+        let error: String?
+        let interrupted: Bool
+        let session: String
+
+        var detail: String {
+            let cause: String
+            if let error {
+                cause = "start() threw: \(error)"
+            } else {
+                cause = "start() returned normally and the engine is still not running"
+            }
+            return "engine not running after the start attempt (\(cause)); "
+                + "interrupted=\(interrupted) \(session)"
+        }
+    }
+
+    struct Outcome: Equatable, Sendable {
+        let wasRunning: Bool
+        let failure: Failure?
+    }
+}
+
 public actor LiveAudioEngine: AudioEngineProtocol {
     private final class ConversionConsumptionState: @unchecked Sendable {
         var consumed = false
@@ -578,37 +602,6 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // in one synchronous block is the crash described above.
         attachKeepAliveIfNeeded()
 
-        let wasRunning = engine.isRunning
-        var startAttempted = false
-        var startThrew = false
-        if !engine.isRunning {
-            startAttempted = true
-            do {
-                try startCaptureEngine(engine)
-            } catch {
-                startThrew = true
-                // If start fails (e.g., another app holds the audio session),
-                // tear down the tap we just installed so a retry from a clean
-                // state doesn't trip the "tap already installed" precondition.
-                // Do not start interruption observation — the engine never came up.
-                if hasInstalledTap {
-                    inputNode.removeTap(onBus: 0)
-                    hasInstalledTap = false
-                }
-                // Voice processing gets a mention because it adds a failure
-                // this message would otherwise mis-describe. With it on, the
-                // input node's output format and the output node's input
-                // format have to agree, so a start failure can be a format
-                // mismatch rather than another app holding the session —
-                // "close your music app" would be the wrong advice.
-                let voiceProcessingNote = preparation.voiceProcessingActive
-                    ? " Voice processing is on (\(Self.describe(inputFormat))); its input and output formats must match."
-                    : ""
-                throw AudioEngineError.audioSessionConflict(
-                    "Audio engine failed to start: \(error.localizedDescription).\(voiceProcessingNote)"
-                )
-            }
-        }
         // `start()` returning is not the same as the engine running. It can come
         // back without throwing and leave the engine stopped, and nothing here
         // ever checked: the session went on to advertise a microphone it did not
@@ -620,12 +613,26 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // Silence is this project's one unacceptable failure (docs/03 §0.2), so
         // it fails here instead: a retryable error the user can see beats a
         // session that quietly cannot hear them.
-        guard engine.isRunning else {
-            throw AudioEngineError.audioSessionConflict(
-                "Audio engine did not start: wasRunning=\(wasRunning) "
-                    + "startAttempted=\(startAttempted) startThrew=\(startThrew) "
-                    + "isRunning=\(engine.isRunning). Capture would have been silent."
-            )
+        let start = armEngine()
+        if let failure = start.failure {
+            // If start fails (e.g., another app holds the audio session),
+            // tear down the tap we just installed so a retry from a clean
+            // state doesn't trip the "tap already installed" precondition.
+            // Do not start interruption observation — the engine never came up.
+            if hasInstalledTap {
+                inputNode.removeTap(onBus: 0)
+                hasInstalledTap = false
+            }
+            // Voice processing gets a mention because it adds a failure
+            // this message would otherwise mis-describe. With it on, the
+            // input node's output format and the output node's input
+            // format have to agree, so a start failure can be a format
+            // mismatch rather than another app holding the session —
+            // "close your music app" would be the wrong advice.
+            let voiceProcessingNote = preparation.voiceProcessingActive
+                ? ". Voice processing is on (\(Self.describe(inputFormat))); its input and output formats must match."
+                : ""
+            throw AudioEngineError.audioSessionConflict(failure.detail + voiceProcessingNote)
         }
 
         // The engine is up, so the playback direction is usable again. Only
@@ -650,9 +657,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // half of `captureFirstBuffer`: together they separate "the tap exists
         // but the graph never delivers" from "buffers arrive and die later".
         continuation.yield(.captureArmed(
-            wasRunning: wasRunning,
-            startAttempted: startAttempted,
-            startThrew: startThrew,
+            wasRunning: start.wasRunning,
             running: engine.isRunning,
             // Read here, at the moment the answer is `false`, because the two
             // ways the engine can already be stopped — the system interrupted
@@ -660,6 +665,29 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             // no other trace. See `describeSession()`.
             session: Self.describeSession()
         ))
+    }
+
+    private func armEngine() -> EngineStart.Outcome {
+        let wasRunning = engine.isRunning
+        var startError: String?
+        if !wasRunning {
+            do {
+                try startCaptureEngine(engine)
+            } catch {
+                startError = error.localizedDescription
+            }
+        }
+        guard !engine.isRunning else {
+            return EngineStart.Outcome(wasRunning: wasRunning, failure: nil)
+        }
+        return EngineStart.Outcome(
+            wasRunning: wasRunning,
+            failure: EngineStart.Failure(
+                error: startError,
+                interrupted: isSystemInterrupted,
+                session: Self.describeSession()
+            )
+        )
     }
 
     public func reconfigureForRouteChange() async {
@@ -741,8 +769,10 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         voiceProcessingActive = preparation.voiceProcessingActive
         continuation.yield(.voiceProcessing(preparation.report))
 
-        if !engine.isRunning {
-            try? startCaptureEngine(engine)
+        if let failure = armEngine().failure {
+            continuation.yield(
+                .failed("could not restart the engine after a route change: \(failure.detail)")
+            )
         }
     }
 
@@ -1471,6 +1501,10 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// answer from the same instant.
     func _testEngineRunning() -> Bool {
         engine.isRunning
+    }
+
+    func _testArmEngine() -> EngineStart.Outcome {
+        armEngine()
     }
 
     /// Test-only hook feeding one synthetic buffer through the real
