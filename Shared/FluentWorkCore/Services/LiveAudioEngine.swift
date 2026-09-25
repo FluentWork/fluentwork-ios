@@ -15,6 +15,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         channels: 1,
         interleaved: true
     )!
+    nonisolated static let maxCaptureRecoveries = 3
     private nonisolated let stream: AsyncStream<AudioEngineEvent>
     let continuation: AsyncStream<AudioEngineEvent>.Continuation
 
@@ -24,6 +25,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     var captureFirstBufferSeen = false
     /// 每个采集会话最多报一次：tap 每秒响约 86 次，一行一 buffer 会把要露的那件事埋掉。
     var captureDropReported = false
+    var captureRecoveryAttempts = 0
     /// 中断期间被 `isSystemInterrupted` 守卫吞掉的 buffer 数，中断抬起时上报。
     var interruptionDroppedBuffers = 0
     var speechTracker = AudioSpeechActivityTracker.forMode(.manual)
@@ -222,6 +224,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
         hasInstalledTap = true
         captureDropReported = false
+        captureRecoveryAttempts = 0
         captureFirstBufferSeen = false
         sourceFormat = inputFormat
         self.converter = converter
@@ -332,40 +335,47 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
         // 只在节点的流真的动了时才重建。一个既没改格式也没改单元状态的路由变化，过去会
         // 照样把 tap 拆了重装，丢掉正处在轮次中途的任何音频。
-        guard sourceFormat?.isEqual(inputFormat) != true
+        let formatChanged = sourceFormat?.isEqual(inputFormat) != true
             || voiceProcessingActive != preparation.voiceProcessingActive
-        else {
-            return
-        }
 
-        // 建在任何东西被拆掉**之前**，这样一个建不出来的 converter 会让能用的那条链留在原地，
-        // 而不是换上去一条死的。这条路径不能抛 —— 它是对路由变化的反应，不是会话启动 ——
-        // 所以在这里拒绝之外的选项是装上一个 converter 为 `nil` 的 tap，那是静音。
-        guard let replacement = AVAudioConverter(from: inputFormat, to: Self.targetFormat) else {
-            return
-        }
-        Self.applyCaptureChannelMap(replacement, from: inputFormat)
-
-        // 包起来，理由与 `startCapture` 的装 tap 相同：这是有文档的中止点，而这条路径
-        // 是在会话活着的时候跑的。
-        removeTapIfInstalled(engine)
-        if let installRaised = installCaptureTap(inputNode, inputFormat, { [weak self] buffer, _ in
-            guard let self else { return }
-            Task {
-                await self.processInput(buffer)
+        if formatChanged {
+            // 建在任何东西被拆掉**之前**，这样一个建不出来的 converter 会让能用的那条链留在原地，
+            // 而不是换上去一条死的。这条路径不能抛 —— 它是对路由变化的反应，不是会话启动 ——
+            // 所以在这里拒绝之外的选项是装上一个 converter 为 `nil` 的 tap，那是静音。
+            guard let replacement = AVAudioConverter(from: inputFormat, to: Self.targetFormat) else {
+                return
             }
-        }) {
-            // 没有 tap，而 `hasInstalledTap` 已经这么说了 —— 会话继续安静地跑，而不是把进程
-            // 一起带走。
-            continuation.yield(.failed("could not reinstall the capture tap after a route change: \(installRaised.localizedDescription)"))
-            return
+            Self.applyCaptureChannelMap(replacement, from: inputFormat)
+
+            // 包起来，理由与 `startCapture` 的装 tap 相同：这是有文档的中止点，而这条路径
+            // 是在会话活着的时候跑的。
+            removeTapIfInstalled(engine)
+            if let installRaised = installCaptureTap(inputNode, inputFormat, { [weak self] buffer, _ in
+                guard let self else { return }
+                Task {
+                    await self.processInput(buffer)
+                }
+            }) {
+                // 没有 tap，而 `hasInstalledTap` 已经这么说了 —— 会话继续安静地跑，而不是把进程
+                // 一起带走。
+                continuation.yield(.failed("could not reinstall the capture tap after a route change: \(installRaised.localizedDescription)"))
+                return
+            }
+
+            hasInstalledTap = true
+            sourceFormat = inputFormat
+            converter = replacement
+            voiceProcessingActive = preparation.voiceProcessingActive
+            continuation.yield(.voiceProcessing(preparation.report))
         }
 
-        hasInstalledTap = true
-        sourceFormat = inputFormat
-        converter = replacement
-        voiceProcessingActive = preparation.voiceProcessingActive
-        continuation.yield(.voiceProcessing(preparation.report))
+        if !engine.isRunning {
+            captureRecoveryAttempts += 1
+            guard captureRecoveryAttempts <= Self.maxCaptureRecoveries else {
+                continuation.yield(.failed("音频配置反复变化，采集引擎无法保持运行，本轮练习已停止"))
+                return
+            }
+        }
 
         if let failure = armEngine().failure {
             continuation.yield(

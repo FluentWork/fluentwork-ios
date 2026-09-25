@@ -952,6 +952,31 @@ struct SpeechSessionMiddlewareB14Tests {
     }
 
     @MainActor
+    @Test func engineConfigurationChangeReconfiguresCaptureWithoutChangingPhase() async throws {
+        let container = Container()
+        container.reset()
+        let audioEngine = StubAudioEngineForMiddleware()
+        let speechClient = StubSpeechSessionClientForMiddleware()
+        container.audioEngine.register { audioEngine }
+        container.speechSessionClient.register { speechClient }
+
+        let store = AppStoreFactory.make(container: container)
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        try await waitForPhase(store, phase: .connecting)
+        makeSessionLive(store)
+        try await waitForPhase(store, phase: .aiSpeaking)
+
+        audioEngine.emit(.engineConfigurationChanged(isRunning: false))
+        try await waitUntil() {
+            await audioEngine.reconfigureCalls == 1
+        }
+
+        #expect(store.state.speakingRoom.phase == .aiSpeaking)
+        #expect(store.state.speakingRoom.failureReason == nil)
+        #expect(await audioEngine.reconfigureCalls == 1)
+    }
+
+    @MainActor
     @Test func reconnectDuringProcessingDiscardsTurnWhenSocketReady() async throws {
         let container = Container()
         container.reset()
