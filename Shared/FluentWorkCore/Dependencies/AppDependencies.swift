@@ -18,6 +18,7 @@ public enum AudioEngineEvent: Equatable, Sendable {
     case systemInterruptEnded
     /// Headset unplug / old output gone. Informational — not a session failure.
     case routeChanged(String)
+    case engineConfigurationChanged(isRunning: Bool)
     /// Whether engine-level voice processing (AEC) actually took effect for the
     /// capture session that just started, plus the format the tap ended up
     /// with. Informational — not a session failure.

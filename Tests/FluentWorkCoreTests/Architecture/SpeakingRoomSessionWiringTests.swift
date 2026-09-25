@@ -564,11 +564,11 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(hit.properties["prev_event"] != nil)
 }
 
-/// 上行采集诊断的**埋点名与属性键**：一张表，把 11 条 `timing_*` 钉死。
+/// 上行采集诊断的**埋点名与属性键**：一张表，把 15 条 `timing_*` 钉死。
 ///
 /// ## 为什么这张表必须存在
 ///
-/// 这 14 条埋点是**设备验证唯一计划中的证据来源**。`70_/08_` §3 记的真机验证至今
+/// 这 15 条埋点是**设备验证唯一计划中的证据来源**。`70_/08_` §3 记的真机验证至今
 /// 未做，而它要查的那类问题（真机静音、真机 barge-in）本仓的测试层级**结构上测不到**
 /// （`80_/03_` §4.5）。真机出问题时，能读的只有这些行。
 ///
@@ -622,7 +622,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
         store.state.speakingRoom.phase == .aiSpeaking
     }
 
-    // 采集图的自报（7 条，全部是纯埋点，不派发、不依赖相位）。
+    // 采集图的自报（8 条，全部是纯埋点，不派发、不依赖相位）。
     audioEngine.emit(.captureArmed(wasRunning: false, running: true, session: "category=AVAudioSessionCategoryPlayAndRecord mode=AVAudioSessionModeVoiceChat sampleRate=48000 otherAudio=false duckHint=false"))
     audioEngine.emit(.captureKick(started: true, detail: "kick-ok"))
     audioEngine.emit(.captureFirstBuffer)
@@ -630,6 +630,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     audioEngine.emit(.captureInterruptionLifted(droppedBuffers: 7))
     audioEngine.emit(.voiceProcessing("aec-on"))
     audioEngine.emit(.routeChanged("headsetUnplugged"))
+    audioEngine.emit(.engineConfigurationChanged(isRunning: false))
     audioEngine.emit(.speechEndpointed(reason: "hold", windowMs: 1200, trailingSilenceMs: 800))
 
     // 上行本体：一轮的开启与结束（`.speechEnded` 要闸门已开）。
@@ -662,6 +663,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
         ("timing_audio_capture_interruption_lifted", ["dropped_buffers"]),
         ("timing_audio_voice_processing", ["detail"]),
         ("timing_audio_route_changed", ["reason"]),
+        ("timing_audio_engine_configuration_changed", ["is_running"]),
         ("timing_speech_endpointed", ["reason", "window_ms", "trailing_silence_ms"]),
         ("timing_audio_engine_failed", ["message"]),
     ]

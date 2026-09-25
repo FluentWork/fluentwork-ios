@@ -71,6 +71,26 @@ struct AudioInterruptionObserverTests {
         observer.stop()
     }
 
+    @Test func engineConfigurationChangeEmitsItsOwnKindAndNotARouteChange() async {
+        let center = NotificationCenter()
+        let observer = AudioInterruptionObserver(center: center)
+        let collector = InterruptionEventCollector()
+
+        observer.start { kind in
+            await collector.append(kind)
+        }
+
+        center.post(
+            name: AudioInterruptionObserver.engineConfigurationChangeNotification,
+            object: nil,
+            userInfo: nil
+        )
+
+        let events = await collector.wait(forCount: 1)
+        #expect(events == [.engineConfigurationChanged])
+        observer.stop()
+    }
+
     @Test func categoryChangeRouteEmitsNothing() async {
         let center = NotificationCenter()
         let observer = AudioInterruptionObserver(center: center)

@@ -40,6 +40,8 @@ extension LiveAudioEngine {
             continuation.yield(.systemInterruptEnded)
         case .routeChanged(let reason):
             continuation.yield(.routeChanged(reason))
+        case .engineConfigurationChanged:
+            continuation.yield(.engineConfigurationChanged(isRunning: engine.isRunning))
         }
     }
 }

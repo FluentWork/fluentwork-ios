@@ -237,10 +237,11 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // `start()` 返回不等于引擎在跑。它可能不抛就回来，然后把引擎留在停止状态，而这件事
         // 过去没有任何人检查：会话接着宣称有一个它并不拥有的麦克风，`startCapture()` 返回成功，
         // 唯一的症状是网关从没听到的那一轮。静音是本项目唯一不可接受的失败，所以在这里就失败。
+        startInterruptionObservation()
         let start = armEngine()
         if let failure = start.failure {
             // 拆掉刚装的 tap，好让从干净状态重试不会撞上「tap 已装」的前置条件。
-            // 不启动中断观察 —— 引擎根本没起来。
+            stopInterruptionObservation()
             removeTapIfInstalled(engine)
             // voice processing 要被提一句，因为它引入了一个这条文案否则会误述的失败：开着它
             // 时输入节点的输出格式和输出节点的输入格式必须一致，所以启动失败可能是格式不匹配
@@ -255,7 +256,6 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // 宣称它拥有一张并不存在的图。
         playbackRetired = false
         playbackPaused = false
-        startInterruptionObservation()
 
         // 在返回前踢一下渲染循环。`.connecting` 等麦克风自证，而麦克风在有什么东西播放之前
         // 一个 buffer 都不交付，所以一个只武装、什么都不播的会话永远进不了 ready。

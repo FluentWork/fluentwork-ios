@@ -598,6 +598,12 @@ private func audioEventPump(
                     timings.mark(event: "audio_route_changed", properties: ["reason": reason])
                     await audioEngine.reconfigureForRouteChange()
 
+                case let .engineConfigurationChanged(isRunning):
+                    timings.mark(
+                        event: "audio_engine_configuration_changed",
+                        properties: ["is_running": isRunning ? "true" : "false"]
+                    )
+
                 case let .speechEndpointed(reason, windowMs, trailingSilenceMs):
                     // The distribution that decides the endpointing hold.
                     //

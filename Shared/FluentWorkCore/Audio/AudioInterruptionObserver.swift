@@ -6,6 +6,7 @@ public enum AudioInterruptionKind: Equatable, Sendable {
     case began
     case ended(shouldResume: Bool)
     case routeChanged(reason: String)
+    case engineConfigurationChanged
 }
 
 public protocol AudioInterruptionObserving: Sendable {
@@ -28,6 +29,10 @@ public final class AudioInterruptionObserver: AudioInterruptionObserving, @unche
         #else
         Notification.Name("FluentWork.test.audio.routeChange")
         #endif
+    }
+
+    public static var engineConfigurationChangeNotification: Notification.Name {
+        Notification.Name.AVAudioEngineConfigurationChange
     }
 
     public static var interruptionTypeKey: String {
@@ -105,6 +110,17 @@ public final class AudioInterruptionObserver: AudioInterruptionObserving, @unche
                 }
             }
             observers.append(route)
+
+            let engine = center.addObserver(
+                forName: Self.engineConfigurationChangeNotification,
+                object: nil,
+                queue: nil
+            ) { _ in
+                Task { [onEvent] in
+                    await onEvent(.engineConfigurationChanged)
+                }
+            }
+            observers.append(engine)
         }
     }
 
