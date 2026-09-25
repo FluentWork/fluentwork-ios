@@ -160,7 +160,8 @@ import Testing
         decoder: RawPCM16FrameDecoder(),
         requestMicrophonePermission: { true },
         installCaptureTap: { _, _, _ in nil },
-        startCaptureEngine: { _ in }
+        startCaptureEngine: { _ in },
+        removeCaptureTap: { _ in }
     )
 
     await engine.setSpeechBoundaryMode(.tapToStart)
@@ -659,7 +660,8 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
         requestMicrophonePermission: { true },
         applyVoiceProcessing: { try recorder.record($0) },
         installCaptureTap: { _, _, _ in nil },
-        startCaptureEngine: { _ in }
+        startCaptureEngine: { _ in },
+        removeCaptureTap: { _ in }
     )
 
     await engine.setVoiceProcessingEnabled(true)
@@ -759,7 +761,8 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
         requestMicrophonePermission: { true },
         applyVoiceProcessing: { try recorder.record($0) },
         installCaptureTap: { _, _, _ in nil },
-        startCaptureEngine: { _ in }
+        startCaptureEngine: { _ in },
+        removeCaptureTap: { _ in }
     )
 
     _ = try? await engine.startCapture()
@@ -785,7 +788,8 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
         requestMicrophonePermission: { true },
         applyVoiceProcessing: { try recorder.record($0) },
         installCaptureTap: { _, _, _ in nil },
-        startCaptureEngine: { _ in }
+        startCaptureEngine: { _ in },
+        removeCaptureTap: { _ in }
     )
 
     await engine.setVoiceProcessingEnabled(true)

@@ -386,6 +386,8 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     /// 仍会因为输入节点被访问而打开设备 —— 半堵的替身比不堵更糟，因为它看起来已经安全了。
     private let startCaptureEngine: @Sendable (AVAudioEngine) throws -> Void
 
+    private let removeCaptureTap: @Sendable (AVAudioEngine) -> Void
+
     public init(
         sessionManager: any AudioSessionManaging = DefaultAudioSessionManager(),
         decoder: any WSAudioFrameDecoder = RawPCM16FrameDecoder(),
@@ -424,11 +426,13 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             )
         },
         startCaptureEngine: @escaping @Sendable (AVAudioEngine) throws -> Void = { try $0.start() },
+        removeCaptureTap: @escaping @Sendable (AVAudioEngine) -> Void = { $0.inputNode.removeTap(onBus: 0) },
     ) {
         self.startEngineForPlayback = startEngineForPlayback
         self.applyVoiceProcessing = applyVoiceProcessing
         self.installCaptureTap = installCaptureTap
         self.startCaptureEngine = startCaptureEngine
+        self.removeCaptureTap = removeCaptureTap
         let pair = AsyncStream.makeStream(
             of: AudioEngineEvent.self,
             bufferingPolicy: .bufferingNewest(64)
@@ -442,7 +446,9 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     }
 
     deinit {
-        engine.inputNode.removeTap(onBus: 0)
+        if hasInstalledTap {
+            removeCaptureTap(engine)
+        }
         engine.stop()
         continuation.finish()
     }
@@ -779,7 +785,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             case .stopEngine:
                 engine.stop()
             case .removeTap:
-                engine.inputNode.removeTap(onBus: 0)
+                removeCaptureTap(engine)
             case .detachPlayer:
                 engine.detach(playerNode)
                 playerAttached = false
