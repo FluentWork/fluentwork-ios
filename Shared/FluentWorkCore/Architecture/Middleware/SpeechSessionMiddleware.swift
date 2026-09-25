@@ -30,6 +30,7 @@ public enum SpeechSessionTaskID {
     /// left the room showing 「连接中」 with no timeout, no error and no way
     /// forward but backing out of the screen.
     public static let connectTimeout: CancellationID = "speechSession.connectTimeout"
+    public static let rescueHint: CancellationID = "speechSession.rescueHint"
 }
 
 /// A one-shot latch. `take()` returns true exactly once.
@@ -97,6 +98,22 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
             return .fireAndForget {
                 await resolvedContainer.audioEngine().endManualSpeech()
             }
+        }
+
+        if case .speakingRoom(.rescueHintArmed) = action {
+            return .merge([
+                next(action),
+                scheduleRescueHintTask(timeouts: resolvedContainer.processingTimeouts())
+            ])
+        }
+
+        if case .speakingRoom(.rescueHintTapped) = action {
+            return .merge([
+                next(action),
+                .fireAndForget {
+                    await resolvedContainer.speechSessionClient().sendRescueRequest()
+                }
+            ])
         }
 
         // The connection's reader starts the first time a session is asked for,
@@ -916,6 +933,7 @@ internal func makeTransportEventRouter(
         } else {
             await dispatchBox.dispatch(.speakingRoom(.session(.aiTurnEnd)))
             await dispatchBox.dispatch(.speakingRoom(.aiTurnFinalized(turnID: turnID)))
+            await dispatchBox.dispatch(.speakingRoom(.rescueHintArmed))
             if let turnID {
                 timings.markTurnEnded(turnID, source: "ios", stage: "ai_turn_end")
             }
@@ -1568,6 +1586,14 @@ private func scheduleConnectWaitTask(timeouts: ProcessingTimeouts) -> Effect<App
         try? await Task.sleep(for: timeouts.connectWait)
         guard !Task.isCancelled else { return nil }
         return .speakingRoom(.session(.failed("连接超时，请重试")))
+    }
+}
+
+private func scheduleRescueHintTask(timeouts: ProcessingTimeouts) -> Effect<AppAction> {
+    .task(id: SpeechSessionTaskID.rescueHint) {
+        try? await Task.sleep(for: timeouts.rescueHint)
+        guard !Task.isCancelled else { return nil }
+        return .speakingRoom(.rescueHintBecameDue)
     }
 }
 

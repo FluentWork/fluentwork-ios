@@ -74,6 +74,7 @@ import TGReduxKitTesting
         func sendTurnAbort(turnID: String, outcome: TurnOutcome) async throws {}
         func sendAudioPCM(_ data: Data) async throws {}
         func sendInterrupt() async {}
+        func sendRescueRequest() async {}
         func transportEvents() -> AsyncStream<SocketTransportEvent> {
             AsyncStream { continuation in
                 continuation.finish()
@@ -135,6 +136,7 @@ import TGReduxKitTesting
         func sendTurnAbort(turnID: String, outcome: TurnOutcome) async throws {}
         func sendAudioPCM(_ data: Data) async throws {}
         func sendInterrupt() async {}
+        func sendRescueRequest() async {}
         func transportEvents() -> AsyncStream<SocketTransportEvent> {
             AsyncStream { continuation in
                 continuation.finish()

@@ -228,6 +228,13 @@ public struct SpeechSessionState: Equatable, Sendable {
     /// talking into a room that looks like it is transcribing.
     public var isReadyToSpeak: Bool { socketReady && captureLive }
 
+    public var awaitsUserTurn: Bool {
+        if phase == .waitingUser {
+            return true
+        }
+        return phase == .processing && processingStage == .evaluation
+    }
+
     /// The cross-service log tag, resolved with the pipeline stage.
     ///
     /// `.processing` alone cannot answer this — `asr` / `llm` / `review` are

@@ -103,6 +103,7 @@ private final class StubSpeechSessionClientForForceClose: SpeechSessionClientPro
     func sendTurnAbort(turnID: String, outcome: TurnOutcome) async throws {}
     func sendAudioPCM(_ data: Data) async throws {}
     func sendInterrupt() async {}
+    func sendRescueRequest() async {}
     func transportEvents() -> AsyncStream<SocketTransportEvent> { stream }
     func pollReview(sessionID: String) async throws -> ReviewPollResponse {
         ReviewPollResponse(sessionID: sessionID, status: .pending, review: nil)

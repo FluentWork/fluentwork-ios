@@ -2056,6 +2056,10 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
         await _wireOrder.update { $0 + ["interrupt"] }
     }
 
+    func sendRescueRequest() async {
+        await _wireOrder.update { $0 + ["client.rescue.request"] }
+    }
+
     /// Counted so a test can assert the reader is built once per store rather
     /// than once per session. The stream itself is a single process-lifetime
     /// sequence (as the real transport's is), so asking for it per session

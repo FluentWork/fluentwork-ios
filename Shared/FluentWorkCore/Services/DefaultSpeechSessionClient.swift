@@ -203,6 +203,10 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         try? await transport.send(control: .interrupt)
     }
 
+    public func sendRescueRequest() async {
+        try? await transport.send(control: .clientRescueRequest)
+    }
+
     public func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {
         if started {
             try await transport.send(control: .userSpeechStart)

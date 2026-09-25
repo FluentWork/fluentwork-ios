@@ -20,6 +20,7 @@ public struct ProcessingTimeouts: Equatable, Sendable {
     /// later. Generous because it is a backstop, not an expected path: the
     /// handshake is an HTTP call plus a WSS auth on a LAN.
     public var connectWait: Duration = .seconds(10)
+    public var rescueHint: Duration = .seconds(3)
 
     public init(
         asr: Duration = .seconds(15),
@@ -27,7 +28,8 @@ public struct ProcessingTimeouts: Equatable, Sendable {
         review: Duration = .seconds(30),
         totalCap: Duration = .seconds(70),
         evaluationWait: Duration = .seconds(20),
-        connectWait: Duration = .seconds(10)
+        connectWait: Duration = .seconds(10),
+        rescueHint: Duration = .seconds(3)
     ) {
         self.asr = asr
         self.llm = llm
@@ -35,6 +37,7 @@ public struct ProcessingTimeouts: Equatable, Sendable {
         self.totalCap = totalCap
         self.evaluationWait = evaluationWait
         self.connectWait = connectWait
+        self.rescueHint = rescueHint
     }
 
     public static let standard = ProcessingTimeouts()

@@ -30,6 +30,7 @@ public enum WSControlFrame: Equatable, Sendable {
     /// must not start collectTurn. `session_id` is connection-scoped and omitted
     /// — same as `user.speech.end`.
     case clientTurnAbort(turnID: String?, outcome: ClientTurnAbortOutcome)
+    case clientRescueRequest
 
     /// C→S abort outcomes. Subset of Core `TurnOutcome`: `ok` is never abort.
     public enum ClientTurnAbortOutcome: String, Equatable, Sendable, Codable {
@@ -152,6 +153,7 @@ public enum WSControlFrameType: String, CaseIterable, Sendable, Hashable {
     case userSpeechStart = "user.speech.start"
     case userSpeechEnd = "user.speech.end"
     case clientTurnAbort = "client.turn.abort"
+    case clientRescueRequest = "client.rescue.request"
     case clientASRTranscription = "client.asr.transcription"
     case aiTextDelta = "ai.text.delta"
     case aiAudioChunk = "ai.audio.chunk"
@@ -180,6 +182,7 @@ extension WSControlFrame {
         case .userSpeechStart: return .userSpeechStart
         case .userSpeechEnd: return .userSpeechEnd
         case .clientTurnAbort: return .clientTurnAbort
+        case .clientRescueRequest: return .clientRescueRequest
         case .clientASRTranscription: return .clientASRTranscription
         case .aiTextDelta: return .aiTextDelta
         case .aiAudioChunk: return .aiAudioChunk
@@ -297,6 +300,9 @@ extension WSControlFrame: Codable {
                 outcome: try container.decode(ClientTurnAbortOutcome.self, forKey: .outcome)
             )
 
+        case "client.rescue.request":
+            self = .clientRescueRequest
+
         case "client.asr.transcription":
             self = .clientASRTranscription(
                 text: try container.decode(String.self, forKey: .text),
@@ -409,6 +415,9 @@ extension WSControlFrame: Codable {
             try container.encode("client.turn.abort", forKey: .type)
             try container.encodeIfPresent(turnID, forKey: .turnID)
             try container.encode(outcome, forKey: .outcome)
+
+        case .clientRescueRequest:
+            try container.encode("client.rescue.request", forKey: .type)
 
         case let .clientASRTranscription(text, turnID):
             try container.encode("client.asr.transcription", forKey: .type)

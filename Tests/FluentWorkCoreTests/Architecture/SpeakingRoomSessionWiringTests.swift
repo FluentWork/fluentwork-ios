@@ -2,6 +2,7 @@ import FactoryKit
 import FluentWorkDiagnostics
 import Foundation
 import Testing
+import TGReduxKit
 import TGReduxKitTesting
 @testable import FluentWorkCore
 @testable import FluentWorkNetworking
@@ -17,6 +18,7 @@ private actor StubSpeechSessionClientState {
     /// same observation with less indirection, and it cannot silently stop
     /// working if a caller passes a different string — there is no string.
     var interruptCalls = 0
+    var rescueRequestCalls = 0
     var endCalls = 0
     var boundaryTurnIDs: [String?] = []
     var sessionID: String?
@@ -40,6 +42,10 @@ private actor StubSpeechSessionClientState {
 
     func recordInterrupt() {
         interruptCalls += 1
+    }
+
+    func recordRescueRequest() {
+        rescueRequestCalls += 1
     }
 
     func recordEnd() {
@@ -107,6 +113,10 @@ private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unche
         await state.recordInterrupt()
     }
 
+    func sendRescueRequest() async {
+        await state.recordRescueRequest()
+    }
+
     func transportEvents() -> AsyncStream<SocketTransportEvent> {
         stream
     }
@@ -142,6 +152,10 @@ private final class StubSpeechSessionClient: SpeechSessionClientProtocol, @unche
 
     func snapshotInterruptCalls() async -> Int {
         await state.interruptCalls
+    }
+
+    func snapshotRescueRequestCalls() async -> Int {
+        await state.rescueRequestCalls
     }
 
     func snapshotBoundaryTurnIDs() async -> [String?] {
@@ -1460,4 +1474,100 @@ private struct TimeoutError: Error, CustomStringConvertible {
     let milliseconds: Int
 
     var description: String { "\(label) —— 超时（预算 \(milliseconds)ms）" }
+}
+
+/// B8：用户自己点出来的那一格梯子。
+///
+/// 门是客户端自己的钟，起摆的时刻是 `ai.turn.end` —— 网关的静默检测器也是那一刻
+/// 开窗的，所以两边数的是同一段时间。
+@MainActor
+private func makeRescueHintStore() async -> (Store<AppState, AppAction>, StubSpeechSessionClient) {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+    container.processingTimeouts.register { ProcessingTimeouts(rescueHint: .milliseconds(60)) }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .connecting
+    }
+    makeSessionLive(store)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .aiSpeaking
+    }
+    return (store, speechClient)
+}
+
+@MainActor
+@Test func theRescueOfferIsArmedByTheAITurnEnding() async throws {
+    let (store, speechClient) = await makeRescueHintStore()
+
+    #expect(store.state.speakingRoom.isRescueHintAvailable == false)
+
+    speechClient.emit(.control(.aiTurnEnd(turnID: "bootstrap", outcome: .ok, logID: nil)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .waitingUser
+    }
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.isRescueHintAvailable
+    }
+
+    #expect(
+        store.state.speakingRoom.isRescueHintAvailable,
+        "AI 说完一轮、用户一直沉默，提示却没有出现"
+    )
+}
+
+@MainActor
+@Test func theRescueTapPutsTheRequestOnTheWireAndTakesTheOfferAway() async throws {
+    let (store, speechClient) = await makeRescueHintStore()
+
+    speechClient.emit(.control(.aiTurnEnd(turnID: "bootstrap", outcome: .ok, logID: nil)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.isRescueHintAvailable
+    }
+    #expect(store.state.speakingRoom.isRescueHintAvailable)
+
+    store.dispatch(.speakingRoom(.rescueHintTapped))
+
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        await speechClient.snapshotRescueRequestCalls() == 1
+    }
+    #expect(
+        await speechClient.snapshotRescueRequestCalls() == 1,
+        "点了提示却没有把 client.rescue.request 发出去"
+    )
+    #expect(
+        store.state.speakingRoom.isRescueHintAvailable == false,
+        "点过一次之后提示还挂着——再点一次会要到一个用户没要的那一格"
+    )
+}
+
+/// 用户开口了，提示就该收起来。
+///
+/// 这条钉的是「有提示」与「用户有话语权」是**同一个判据**：如果它们各写一份，
+/// 用户说话说到一半时按钮会冒出来，而两边的清零点迟早会漂开。
+@MainActor
+@Test func theRescueOfferGoesAwayWhenTheUserStartsTalking() async throws {
+    let (store, speechClient) = await makeRescueHintStore()
+
+    speechClient.emit(.control(.aiTurnEnd(turnID: "bootstrap", outcome: .ok, logID: nil)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.isRescueHintAvailable
+    }
+    #expect(store.state.speakingRoom.isRescueHintAvailable)
+
+    store.dispatch(.speakingRoom(.manualSpeechBegin))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .recording
+    }
+
+    #expect(
+        store.state.speakingRoom.isRescueHintAvailable == false,
+        "用户已经开口了，提示还挂着——它会在用户说话时冒出来"
+    )
 }

@@ -92,6 +92,11 @@ public struct SpeakingRoomState: Equatable, Sendable, State {
     /// It is an id, not context. The server decides whether the transcript
     /// behind it may be read (`77_` P0-10), and the client never sees it.
     public var continueFromSessionID: String?
+    public var isRescueHintDue: Bool
+
+    public var isRescueHintAvailable: Bool {
+        isRescueHintDue && session.awaitsUserTurn
+    }
 
     public var phase: SpeechSessionPhase { session.phase }
     /// Which backend pipeline step is running, while `phase == .processing`.
@@ -107,7 +112,8 @@ public struct SpeakingRoomState: Equatable, Sendable, State {
         badgeHits: Int = 0,
         lastSessionID: String? = nil,
         timeline: [TurnTimelineItem] = [],
-        continueFromSessionID: String? = nil
+        continueFromSessionID: String? = nil,
+        isRescueHintDue: Bool = false
     ) {
         self.session = session
         self.liveTranscript = liveTranscript
@@ -117,6 +123,7 @@ public struct SpeakingRoomState: Equatable, Sendable, State {
         self.lastSessionID = lastSessionID
         self.timeline = timeline
         self.continueFromSessionID = continueFromSessionID
+        self.isRescueHintDue = isRescueHintDue
     }
 
     /// Test / Host helper mirroring the previous phase-centric initializer.
@@ -134,7 +141,8 @@ public struct SpeakingRoomState: Equatable, Sendable, State {
         failureReason: String? = nil,
         lastSessionID: String? = nil,
         timeline: [TurnTimelineItem] = [],
-        continueFromSessionID: String? = nil
+        continueFromSessionID: String? = nil,
+        isRescueHintDue: Bool = false
     ) {
         self.init(
             session: SpeechSessionState(
@@ -148,7 +156,8 @@ public struct SpeakingRoomState: Equatable, Sendable, State {
             badgeHits: badgeHits,
             lastSessionID: lastSessionID,
             timeline: timeline,
-            continueFromSessionID: continueFromSessionID
+            continueFromSessionID: continueFromSessionID,
+            isRescueHintDue: isRescueHintDue
         )
     }
 }
@@ -205,6 +214,9 @@ public enum SpeakingRoomAction: Equatable, Sendable, Action {
     /// 70s client-side fallback behavior. Nil outcome means pre-B15 protocol.
     /// B15-I3: log_id carries the vendor trace log_id for cross-layer correlation.
     case aiTurnEndReceived(turnID: String?, outcome: WSControlFrame.TurnOutcome?, logID: String?)
+    case rescueHintArmed
+    case rescueHintBecameDue
+    case rescueHintTapped
 }
 
 public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> = { state, action in
@@ -246,6 +258,7 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
         // as a continuation origin.
         state.session = .initial
         state.lastSessionID = nil
+        state.isRescueHintDue = false
 
     case let .applySession(session):
         // Deliberately does **not** clear the timeline when the session enters
@@ -375,5 +388,14 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
     // reducer just discards it — it has no display-side effect.
     case .aiTurnEndReceived:
         break
+
+    case .rescueHintArmed:
+        state.isRescueHintDue = false
+
+    case .rescueHintBecameDue:
+        state.isRescueHintDue = true
+
+    case .rescueHintTapped:
+        state.isRescueHintDue = false
     }
 }

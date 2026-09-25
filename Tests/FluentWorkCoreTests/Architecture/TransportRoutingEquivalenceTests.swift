@@ -15,8 +15,8 @@ struct TransportRoutingEquivalenceTests {
 
     /// 生产表**应当**注册的类型：七个有专属 handler 的控制帧。
     ///
-    /// 其余 12 类走 fallback——其中 11 类被 mapper 有意忽略、`.error` 触发 teardown。
-    /// 这 11 类不是路由表漏了，逐条理由在
+    /// 其余 13 类走 fallback——其中 12 类被 mapper 有意忽略、`.error` 触发 teardown。
+    /// 这 12 类不是路由表漏了，逐条理由在
     /// `ProductionRoutingWiringTests.unownedControlFramesChangeNothing` 的名单里。
     static let ownedTypes: [WSControlFrameType] = [
         .aiTTSStart,
@@ -28,7 +28,7 @@ struct TransportRoutingEquivalenceTests {
         .clientASRTranscription,
     ]
 
-    /// 全部 19 类控制帧各一个样本。
+    /// 全部 20 类控制帧各一个样本。
     ///
     /// 用字面量数组而不是循环构造：新增一类 `WSControlFrame` 时，这里不会自动
     /// 跟上——但样本表的断言 `count == WSControlFrameType.allCases.count` 会红，
@@ -41,6 +41,7 @@ struct TransportRoutingEquivalenceTests {
         .userSpeechStart,
         .userSpeechEnd(text: nil, turnID: "turn-1"),
         .clientTurnAbort(turnID: "turn-1", outcome: .userAbandoned),
+        .clientRescueRequest,
         .clientASRTranscription(text: "hello", turnID: "turn-1"),
         .aiTextDelta(text: "hi", turnID: "turn-1", serverTsMs: 1),
         .aiAudioChunk(sequence: 1),
@@ -92,7 +93,7 @@ struct TransportRoutingEquivalenceTests {
 
         // 七个各有专属 handler 的，只被自己的那个接走。
         #expect(owned == Set(Self.ownedTypes))
-        // 其余 12 类，全部落到 fallback，且一个不少。
+        // 其余 13 类，全部落到 fallback，且一个不少。
         let unowned = Set(WSControlFrameType.allCases).subtracting(Set(Self.ownedTypes))
         #expect(fallen == unowned)
         // 没有哪一类既走专属又走 fallback。
@@ -224,7 +225,7 @@ struct ProductionRoutingWiringTests {
     ///
     /// 断言写成集合相等，于是新增一类 `WSControlFrame` 会让这条红——要么给它
     /// 注册 handler，要么在这里补一条带理由的。这就是"分类不会靠纪律维持"。
-    @Test("11 类没有专属 handler 的控制帧什么都不做，且这 11 类逐条写明理由")
+    @Test("12 类没有专属 handler 的控制帧什么都不做，且这 12 类逐条写明理由")
     func unownedControlFramesChangeNothing() async {
         let unowned: [(frame: WSControlFrame, reason: String)] = [
             // 只上行：客户端发出去，这一侧收不到。
@@ -233,6 +234,7 @@ struct ProductionRoutingWiringTests {
             (.userSpeechStart, "客户端 → 网关"),
             (.userSpeechEnd(text: nil, turnID: "turn-1"), "客户端 → 网关"),
             (.clientTurnAbort(turnID: "turn-1", outcome: .userAbandoned), "客户端 → 网关"),
+            (.clientRescueRequest, "客户端 → 网关；梯子从网关走 ai.rescue.ladder 回来"),
             (.interrupt, "客户端 → 网关；网关不回声"),
             (.ping(ts: 1), "客户端 → 网关；网关回的是 pong"),
 
@@ -259,7 +261,7 @@ struct ProductionRoutingWiringTests {
             #expect(!evaluationArrival.consume(), "\(frame.wireType) 意外地 mark 了评测等待")
         }
 
-        // 这 11 类加上 `.error`，正好是 19 − 7：没有哪一类是"谁都没想过"的。
+        // 这 12 类加上 `.error`，正好是 20 − 7：没有哪一类是"谁都没想过"的。
         let classified = Set(unowned.map(\.frame.wireType)).union([.error])
         let unownedByTable = Set(WSControlFrameType.allCases)
             .subtracting(Set(TransportRoutingEquivalenceTests.ownedTypes))

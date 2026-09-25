@@ -55,6 +55,7 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
     public var timeline: [SpeakingRoomTimelineRow]
     /// I20 Item 4: `false` is tap-to-talk (default). `true` keeps energy VAD.
     public var usesAutoVAD: Bool
+    public var isRescueHintAvailable: Bool
 
     public init(
         phase: SpeechSessionPhase,
@@ -64,7 +65,8 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
         badgeHits: Int = 0,
         failureReason: String? = nil,
         timeline: [SpeakingRoomTimelineRow] = [],
-        usesAutoVAD: Bool = false
+        usesAutoVAD: Bool = false,
+        isRescueHintAvailable: Bool = false
     ) {
         self.phase = phase
         self.processingStage = processingStage
@@ -74,6 +76,7 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
         self.failureReason = failureReason
         self.timeline = timeline
         self.usesAutoVAD = usesAutoVAD
+        self.isRescueHintAvailable = isRescueHintAvailable
     }
 
     public var isRecording: Bool {
@@ -333,6 +336,7 @@ public struct SpeakingRoomView: View {
     let model: SpeakingRoomViewModel
     let onStartTapped: () -> Void
     let onStopTapped: () -> Void
+    let onRescueHintTapped: () -> Void
     let onHitTapped: (SpeakingRoomTimelineHit) -> Void
     let requestMicrophonePermission: @Sendable () async -> Bool
     let openSettingsAction: @Sendable () -> Void
@@ -355,6 +359,7 @@ public struct SpeakingRoomView: View {
         model: SpeakingRoomViewModel,
         onStartTapped: @escaping () -> Void,
         onStopTapped: @escaping () -> Void,
+        onRescueHintTapped: @escaping () -> Void = {},
         onHitTapped: @escaping (SpeakingRoomTimelineHit) -> Void = { _ in },
         requestMicrophonePermission: @escaping @Sendable () async -> Bool = {
             await MicrophonePermission.request()
@@ -371,6 +376,7 @@ public struct SpeakingRoomView: View {
         self.model = model
         self.onStartTapped = onStartTapped
         self.onStopTapped = onStopTapped
+        self.onRescueHintTapped = onRescueHintTapped
         self.onHitTapped = onHitTapped
         self.requestMicrophonePermission = requestMicrophonePermission
         self.openSettingsAction = openSettingsAction
@@ -416,6 +422,10 @@ public struct SpeakingRoomView: View {
             #endif
         }
         .padding()
+        .overlay(alignment: .bottom) {
+            rescueHintButton
+        }
+        .animation(.easeInOut(duration: 0.35), value: model.isRescueHintAvailable)
         .alert("需要麦克风权限", isPresented: $showPermissionDeniedAlert) {
             Button("去设置", role: .none) {
                 openAppSettings()
@@ -538,6 +548,26 @@ public struct SpeakingRoomView: View {
                     .background(Color.red)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
+        }
+    }
+
+    @ViewBuilder
+    private var rescueHintButton: some View {
+        if model.isRescueHintAvailable {
+            Button {
+                onRescueHintTapped()
+            } label: {
+                Label("给我点儿提示", systemImage: "lightbulb")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 11)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(.quaternary, lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .padding(.bottom, 12)
+            .transition(.opacity)
         }
     }
 
@@ -741,6 +771,11 @@ extension SpeakingRoomViewModel {
         phase: .failed,
         failureReason: "麦克风权限被拒绝"
     )
+
+    public static let previewRescueHint = SpeakingRoomViewModel(
+        phase: .waitingUser,
+        isRescueHintAvailable: true
+    )
 }
 
 #Preview("Idle") {
@@ -780,6 +815,17 @@ extension SpeakingRoomViewModel {
     NavigationStack {
         SpeakingRoomView(
             model: .previewFailed,
+            onStartTapped: {},
+            onStopTapped: {}
+        )
+        .navigationTitle("说的房间")
+    }
+}
+
+#Preview("Rescue hint") {
+    NavigationStack {
+        SpeakingRoomView(
+            model: .previewRescueHint,
             onStartTapped: {},
             onStopTapped: {}
         )

@@ -101,6 +101,9 @@ struct HostRootView: View {
                             break
                         }
                     },
+                    onRescueHintTapped: {
+                        store.dispatch(.speakingRoom(.rescueHintTapped))
+                    },
                     onHitTapped: { hit in
                         guard let blockID = hit.phraseBlockID,
                               !blockID.isEmpty else { return }
@@ -413,7 +416,8 @@ struct HostRootView: View {
                     }
                 )
             },
-            usesAutoVAD: store.state.usesVoiceVadAuto
+            usesAutoVAD: store.state.usesVoiceVadAuto,
+            isRescueHintAvailable: state.isRescueHintAvailable
         )
     }
 

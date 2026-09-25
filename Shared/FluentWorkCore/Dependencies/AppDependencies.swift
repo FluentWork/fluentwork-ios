@@ -304,6 +304,7 @@ public protocol SpeechSessionClientProtocol: Sendable {
     /// method was not a redundant way to submit text, it was a misleading one.
     /// See `docs/70_tts_wss_refactor/19_打断改成显式入口.md`.
     func sendInterrupt() async
+    func sendRescueRequest() async
     func transportEvents() -> AsyncStream<SocketTransportEvent>
     func pollReview(sessionID: String) async throws -> ReviewPollResponse
     func sendDegradedTextMessage(_ text: String) async throws -> PostMessageResponse
@@ -457,6 +458,8 @@ public final class PlaceholderSpeechSessionClient: SpeechSessionClientProtocol, 
     public func activeSessionID() async -> String? { nil }
 
     public func sendInterrupt() async {}
+
+    public func sendRescueRequest() async {}
 
     public func sendSpeechBoundary(started: Bool, turnID: String?, text: String?) async throws {}
 
