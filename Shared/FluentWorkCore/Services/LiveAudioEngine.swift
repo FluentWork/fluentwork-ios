@@ -3,252 +3,13 @@ import FluentWorkNetworking
 import FluentWorkObjCSupport
 import Foundation
 
-public enum AudioEnginePermissionError: Error {
-    case microphoneDenied
-}
-
-public enum AudioEngineError: Error {
-    case invalidFormat(String)
-    case audioSessionConflict(String)
-}
-
-struct AudioSpeechActivityTracker: Sendable {
-    /// Endpointing hold for auto-VAD. Nobody taps in that mode, so silence is
-    /// the only signal and a short hold is what keeps turn-taking responsive.
-    static let autoVADSilenceHold: Duration = .milliseconds(1500)
-    /// Endpointing hold for tap-to-start. Deliberately much longer: the user
-    /// opened the turn on purpose and is usually mid-thought, and a learner
-    /// pausing to find a word routinely exceeds the auto-VAD hold. A 1.5s hold
-    /// cut turns off mid-sentence, so the auto-submit is a fallback here rather
-    /// than the expected way to finish — 「说完了」 is always available.
-    ///
-    /// Raised 4s → 8s after the mode fix landed: until then this value never
-    /// reached the audio path (see `forMode`), so the first real tap-to-start
-    /// session was also the first chance to judge the hold, and a pause to
-    /// think still submitted the turn.
-    static let tapToStartSilenceHold: Duration = .milliseconds(8000)
-
-    private(set) var isSpeechActive = false
-    private(set) var lastSpeechAt: ContinuousClock.Instant?
-
-    /// When the current utterance opened, and the shape of the one that just
-    /// closed.
-    ///
-    /// The endpointing hold is a guess about how long a speaker pauses before
-    /// finishing a sentence. Nothing measured it, so raising it would only
-    /// trade one guess for another — this is the number that decides.
-    ///
-    /// `trailingSilence` is the one that matters: it is how long the room
-    /// waited after the last sound before submitting. When it lands on the
-    /// hold, the hold is what closed the turn — which is the case where a
-    /// learner pausing to think gets cut off mid-sentence.
-    private(set) var lastEndpoint: Endpoint?
-
-    struct Endpoint: Equatable, Sendable {
-        /// `manual` — the user pressed 说完了. `silenceHold` — the room decided.
-        /// Only the second can cut someone off mid-sentence.
-        enum Reason: String, Equatable, Sendable {
-            case manual
-            case silenceHold
-        }
-
-        let reason: Reason
-        /// Last detected speech → close. The number the hold is measured
-        /// against.
-        ///
-        /// `nil` on a tap, which has no trailing silence to measure — `nil`
-        /// rather than zero, because a zero here reads as "the user stopped
-        /// and immediately finished", which is a real and different case.
-        let trailingSilence: Duration?
-    }
-    let speechThreshold: Float
-    var silenceHold: Duration
-    /// When false an utterance can only begin via `forceStart()`; energy is
-    /// still what closes it. This is the tap-to-start mode: the tap opens the
-    /// turn, a stable silence submits it, so a turn costs one gesture instead
-    /// of two. Energy must *start* the turn in auto-VAD mode, where nobody taps.
-    var autoStart: Bool
-
-    init(
-        speechThreshold: Float = 0.015,
-        silenceHold: Duration = AudioSpeechActivityTracker.autoVADSilenceHold,
-        autoStart: Bool = true
-    ) {
-        self.speechThreshold = speechThreshold
-        self.silenceHold = silenceHold
-        self.autoStart = autoStart
-    }
-
-    mutating func register(energy: Float, at now: ContinuousClock.Instant) -> AudioEngineEvent? {
-        if energy >= speechThreshold {
-            lastSpeechAt = now
-            guard !isSpeechActive else { return nil }
-            guard autoStart else { return nil }
-            isSpeechActive = true
-            return .speechStarted
-        }
-
-        // `lastSpeechAt` stays nil until the user actually speaks, so a tap
-        // followed by silence never submits an empty turn — it falls through to
-        // the 60s recording abort instead.
-        guard isSpeechActive, let lastSpeechAt else { return nil }
-        let trailing = now - lastSpeechAt
-        guard trailing >= silenceHold else { return nil }
-
-        isSpeechActive = false
-        self.lastSpeechAt = nil
-        lastEndpoint = Endpoint(reason: .silenceHold, trailingSilence: trailing)
-        return .speechEnded
-    }
-
-    mutating func forceStart() -> AudioEngineEvent? {
-        guard !isSpeechActive else { return nil }
-        isSpeechActive = true
-        lastSpeechAt = nil
-        return .speechStarted
-    }
-
-    mutating func forceEnd() -> AudioEngineEvent? {
-        guard isSpeechActive else { return nil }
-        discard()
-        lastEndpoint = Endpoint(reason: .manual, trailingSilence: nil)
-        return .speechEnded
-    }
-
-    mutating func reset() -> AudioEngineEvent? {
-        let wasActive = isSpeechActive
-        discard()
-        return wasActive ? .speechEnded : nil
-    }
-
-    /// Clear in-progress speech without emitting `.speechEnded`.
-    mutating func discard() {
-        isSpeechActive = false
-        lastSpeechAt = nil
-    }
-
-    /// The tracker a boundary mode implies.
-    ///
-    /// One source of truth for the mode → (`autoStart`, `silenceHold`) mapping.
-    /// It used to live inline in `setSpeechBoundaryMode` while every other site
-    /// built trackers from the initializer defaults, and the two disagreed:
-    /// `startCapture()` runs immediately after the mode is set and rebuilt a
-    /// fresh tracker for the session, handing the audio path the auto-VAD
-    /// defaults — energy free to open a turn, 1.5s of silence able to close one
-    /// — whichever mode the session had actually asked for.
-    static func forMode(_ mode: SpeechBoundaryMode) -> AudioSpeechActivityTracker {
-        AudioSpeechActivityTracker(
-            silenceHold: mode == .tapToStart ? tapToStartSilenceHold : autoVADSilenceHold,
-            autoStart: mode == .autoVAD
-        )
-    }
-}
-
-/// The order in which one session's audio graph is torn down.
-///
-/// Pure, and split out from `stopCapture()` for exactly one reason: **the order
-/// is the part that can be wrong, and it was untestable.**
-/// `AVAudioEngine` cannot be driven in CI (no audio device — the same reason
-/// `startCapture()` never gets past its format guard), so a teardown sequence
-/// embedded in an actor was a sequence nobody could assert anything about.
-///
-/// The rule the order has to obey: **graph mutations may not run while the
-/// engine is running.** Changing an `AVAudioEngine`'s graph while it is running
-/// is the F14/F15 family — this repository has paid for it three times, and
-/// its own lesson is "build the graph before `engine.start()`, do not rearrange
-/// it after". `engine.detach(_:)` is an `NSException`-raising call, not a
-/// throwing one, so getting it wrong takes the process down rather than
-/// returning an error. `inputNode.removeTap` is the same mutation with a
-/// quieter failure: a burst of static in the speaker after 结束练习.
-enum PlaybackTeardown {
-    enum Step: Equatable, Sendable {
-        case stopPlayer
-        case resetPlayer
-        case stopKeepAlive
-        case resetKeepAlive
-        case stopEngine
-        case removeTap
-        case detachPlayer
-        case detachKeepAlive
-    }
-
-    /// The steps to run, in order, for the state capture is being stopped from.
-    ///
-    /// `stopEngine` is emitted whenever the engine is running, whether or not a
-    /// player is attached: a session that never played anything still has a
-    /// running engine, and leaving it running is what makes the *next*
-    /// session's graph work against a stale one.
-    ///
-    /// Graph mutations (`removeTap`, `detach`) come *after* `stopEngine`.
-    /// `resetPlayer` sits between `stopPlayer` and `stopEngine` so scheduled
-    /// TTS buffers are dumped instead of draining as static through the stop.
-    static func steps(
-        playerAttached: Bool,
-        engineRunning: Bool,
-        tapInstalled: Bool = false,
-        keepAliveAttached: Bool = false
-    ) -> [Step] {
-        var steps: [Step] = []
-        if playerAttached {
-            steps.append(.stopPlayer)
-            steps.append(.resetPlayer)
-        }
-        // The keep-alive node gets the TTS player's treatment in full, including
-        // the detach. It renders silence, so no one would hear it survive a
-        // session — but a node left attached across a teardown is exactly the
-        // state the next session's `play()` crashes on, and "it was only the
-        // silent one" is not a property `AVAudioPlayerNode` cares about.
-        if keepAliveAttached {
-            steps.append(.stopKeepAlive)
-            steps.append(.resetKeepAlive)
-        }
-        if engineRunning {
-            steps.append(.stopEngine)
-        }
-        if tapInstalled {
-            steps.append(.removeTap)
-        }
-        if playerAttached {
-            steps.append(.detachPlayer)
-        }
-        if keepAliveAttached {
-            steps.append(.detachKeepAlive)
-        }
-        return steps
-    }
-}
-
-enum EngineStart {
-    struct Failure: Equatable, Sendable {
-        let error: String?
-        let interrupted: Bool
-        let session: String
-
-        var detail: String {
-            let cause: String
-            if let error {
-                cause = "start() threw: \(error)"
-            } else {
-                cause = "start() returned normally and the engine is still not running"
-            }
-            return "engine not running after the start attempt (\(cause)); "
-                + "interrupted=\(interrupted) \(session)"
-        }
-    }
-
-    struct Outcome: Equatable, Sendable {
-        let wasRunning: Bool
-        let failure: Failure?
-    }
-}
-
 public actor LiveAudioEngine: AudioEngineProtocol {
-    private final class ConversionConsumptionState: @unchecked Sendable {
+    final class ConversionConsumptionState: @unchecked Sendable {
         var consumed = false
     }
 
-    private let engine = AVAudioEngine()
-    nonisolated private static let targetFormat = AVAudioFormat(
+    let engine = AVAudioEngine()
+    nonisolated static let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16,
         sampleRate: 16_000,
         channels: 1,
@@ -257,74 +18,56 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     // Sendable immutable state exposed nonisolated so `events()` can stay a
     // synchronous protocol requirement.
     private nonisolated let stream: AsyncStream<AudioEngineEvent>
-    private let continuation: AsyncStream<AudioEngineEvent>.Continuation
+    let continuation: AsyncStream<AudioEngineEvent>.Continuation
 
-    private var converter: AVAudioConverter?
-    private var sourceFormat: AVAudioFormat?
+    var converter: AVAudioConverter?
+    var sourceFormat: AVAudioFormat?
     private var hasInstalledTap = false
-    /// Whether this capture session's tap has delivered its first buffer.
-    private var captureFirstBufferSeen = false
-    /// Whether this capture session has already reported a dropped buffer.
-    ///
-    /// The tap fires ~86 times a second at 48 kHz, so an unreported-per-buffer
-    /// diagnostic would bury the fact it exists to reveal. Reset when capture
-    /// starts, so a *new* session that starts dropping says so again.
-    private var captureDropReported = false
+    var captureFirstBufferSeen = false
+    /// Emitted at most once per capture session: the tap fires ~86 times a
+    /// second at 48 kHz, so a line per buffer would bury the fact it reveals.
+    var captureDropReported = false
     /// Buffers the `isSystemInterrupted` guard swallowed during the interruption
     /// in progress. Reset when one begins, reported when it lifts.
-    private var interruptionDroppedBuffers = 0
-    private var speechTracker = AudioSpeechActivityTracker.forMode(.manual)
+    var interruptionDroppedBuffers = 0
+    var speechTracker = AudioSpeechActivityTracker.forMode(.manual)
     /// When the current utterance opened, so its length can be reported
     /// alongside how it closed. The tracker cannot hold this itself: it has no
     /// clock — every timestamp it uses is handed in by the caller.
-    private var speechStartedAt: ContinuousClock.Instant?
-    private var speechBoundaryMode: SpeechBoundaryMode = .manual
+    var speechStartedAt: ContinuousClock.Instant?
+    var speechBoundaryMode: SpeechBoundaryMode = .manual
     /// Whether the session asked for engine-level voice processing (AEC).
     ///
     /// An intent, not a state: it is applied when the capture graph is built,
     /// because voice processing may only be toggled while the engine is
-    /// stopped — and `startCapture()` is what starts it. Same shape as
-    /// `speechBoundaryMode`.
-    private var voiceProcessingRequested = false
-    /// What voice processing is doing on the current graph.
-    ///
-    /// Read back from the node, never inferred from the request, and stored
-    /// only so `reconfigureForRouteChange` can tell whether a route change
-    /// actually moved it — the report carries the value to the log, so nothing
-    /// else reads it.
-    private var voiceProcessingActive = false
-    private let clock = ContinuousClock()
+    /// stopped — and `startCapture()` is what starts it.
+    var voiceProcessingRequested = false
+    /// What voice processing is doing on the current graph. Read back from the
+    /// node, never inferred from the request, and stored only so
+    /// `reconfigureForRouteChange` can tell whether a route change moved it.
+    var voiceProcessingActive = false
+    let clock = ContinuousClock()
 
-    // Playback graph (lazy-attached on first frame).
-    //
-    // AVAudioPlayerNode is not Sendable but is actor-isolated here so access
-    // from `play(pcm:)` and `interruptNow()` is serialized. The node stays
-    // detached until the first frame arrives so construction stays cheap in
-    // tests that only exercise the capture / event side.
-    private let playerNode = AVAudioPlayerNode()
-    private var playerAttached = false
+    // Playback graph, lazy-attached on the first frame. `AVAudioPlayerNode` is
+    // not `Sendable` but is actor-isolated here, so access from `play(pcm:)`
+    // and `interruptNow()` is serialized.
+    let playerNode = AVAudioPlayerNode()
+    var playerAttached = false
     /// A player that loops silence for the session's whole life, so the render
-    /// cycle is running before anything is asked of the microphone.
-    ///
-    /// **A player, not a source node, and that distinction is measured.** The
-    /// first attempt at this used an `AVAudioSourceNode` rendering zeros
-    /// (`ff2c142`) and changed nothing: the tap's first buffer still arrived
-    /// 283.9ms after the first playback, the same as the 283.6ms before it. A
-    /// silent source does not start the render cycle; a player *playing* does.
-    /// The mechanism is not fully understood, but the evidence is one-sided
-    /// enough to pick the side it supports.
+    /// cycle is running before anything is asked of the microphone: the
+    /// microphone does not deliver a buffer until something plays.
     ///
     /// Deliberately **not** `playerNode`. That node is the TTS player, and
-    /// `interruptNow()` stops and resets it on every barge-in — sharing it would
-    /// put the microphone back to sleep exactly when the user is talking.
-    private let keepAliveNode = AVAudioPlayerNode()
-    private var keepAliveAttached = false
+    /// `interruptNow()` stops and resets it on every barge-in — sharing it
+    /// would put the microphone back to sleep exactly when the user is talking.
+    let keepAliveNode = AVAudioPlayerNode()
+    var keepAliveAttached = false
     /// Whether the looping buffer is already queued. Scheduling it twice would
     /// queue a second loop over the first.
-    private var keepAliveBufferScheduled = false
+    var keepAliveBufferScheduled = false
     /// Silence at 16 kHz mono, looping. One second is long enough that the loop
     /// point is irrelevant and short enough to stay trivial to render.
-    private let keepAliveBuffer: AVAudioPCMBuffer? = {
+    let keepAliveBuffer: AVAudioPCMBuffer? = {
         guard
             let buffer = AVAudioPCMBuffer(
                 pcmFormat: LiveAudioEngine.targetFormat,
@@ -344,70 +87,46 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         return buffer
     }()
 
-    /// Set when `stopCapture()` tears the audio graph down.
-    ///
-    /// Capture and playback share one `AVAudioEngine`, so ending a session
-    /// retires **both** directions — the player node goes down with the graph.
-    /// Retiring it is not bookkeeping: `AVAudioPlayerNode.play()` on a node
-    /// whose engine has been torn down raises an uncaught `NSException`
-    /// ("player started when in a disconnected state"). It does not throw, so
-    /// there is no error to catch and no state to inspect — refusing the frame
-    /// is the only safe answer.
-    ///
-    /// Defaults to `false`: a freshly built engine can play, and a session that
-    /// never called `stopCapture()` behaves exactly as before.
-    private var playbackRetired = false
+    /// Set when `stopCapture()` tears the audio graph down. Capture and playback
+    /// share one `AVAudioEngine`, so ending a session retires **both**
+    /// directions. `AVAudioPlayerNode.play()` on a node whose engine has been
+    /// torn down raises an uncaught `NSException` ("player started when in a
+    /// disconnected state") — it does not throw, so refusing the frame is the
+    /// only safe answer.
+    var playbackRetired = false
 
     /// 结束练习 confirmation is on screen. The player is paused and incoming
     /// TTS still schedules, but `play()` is not called until `resumePlayback()`.
     /// Dumping the queue here would make cancel unable to continue the reply.
-    private var playbackPaused = false
+    var playbackPaused = false
     /// 排进播放器的 buffer 计数。只为 `_testScheduledBufferCount()` 存在。
-    private var scheduledBufferCount = 0
+    var scheduledBufferCount = 0
 
-    // Barge-in timing — captured at the moment `interruptNow()` is requested so
-    // tests can assert the local-silence budget (≤ 200 ms) without depending on
-    // hardware audio output.
-    private var lastInterruptRequestedAt: ContinuousClock.Instant?
-    private var isSystemInterrupted = false
+    /// Captured at the moment `interruptNow()` is requested, so tests can assert
+    /// the local-silence budget without depending on hardware audio output.
+    var lastInterruptRequestedAt: ContinuousClock.Instant?
+    var isSystemInterrupted = false
 
     private let sessionManager: any AudioSessionManaging
-    private let decoder: any WSAudioFrameDecoder
-    private let interruptionObserver: any AudioInterruptionObserving
+    let decoder: any WSAudioFrameDecoder
+    let interruptionObserver: any AudioInterruptionObserving
     private let requestMicrophonePermission: @Sendable () async -> Bool
-    /// How the playback direction brings the shared engine up.
-    ///
-    /// Injectable for the same reason as `requestMicrophonePermission`: the
-    /// branch that matters most is the one a real `AVAudioEngine` on a healthy
-    /// device will not take. Here that branch is "the engine refuses to start",
-    /// and reaching it with the real implementation is not a recoverable error
-    /// — see `startPlaybackIfNeeded()`.
-    private let startEngineForPlayback: @Sendable (AVAudioEngine) throws -> Void
-    /// Turns on engine-level voice processing and reports whether it is now on.
-    ///
-    /// Returns the read-back rather than `Void` because "we asked and nothing
-    /// threw" is not the same fact as "the unit is engaged" — the call can
-    /// succeed and take no effect, which is precisely the case a device log has
-    /// to be able to show. Callers use the return value, never the intent.
-    ///
-    /// Injectable for the same reason as `startEngineForPlayback`: the branch
-    /// that matters is the one a healthy device will not take, and here the
-    /// branch is "the device refuses voice processing". It also keeps `swift
-    /// test` off the real API entirely — the capture path is already entered on
-    /// CI as far as the input node, and a test must not depend on whether the
-    /// machine has an audio device.
-    private let applyVoiceProcessing: @Sendable (AVAudioInputNode) throws -> Bool
-    /// 装上采集 tap。可注入**只为**让 `swift test` 不碰本机输入设备。
-    ///
-    /// 采集路径的用例（边界模式、语音处理顺序）会特意把 `startCapture()` 推过守卫；
-    /// 用真实实现时，在有输入设备的开发机上这一步会打开麦克风 —— 系统亮指示、
-    /// CI 机器开始录音。返回非 `nil` 表示安装失败，保留 `FWTryCatch` 抓到的那条
-    /// `NSError`，报错文案与原来一致。
+    /// How the playback direction brings the shared engine up. Injectable
+    /// because the branch that matters — the engine refusing to start — is the
+    /// one a healthy device will not take.
+    let startEngineForPlayback: @Sendable (AVAudioEngine) throws -> Void
+    /// Turns on engine-level voice processing and returns the read-back rather
+    /// than `Void`, because "we asked and nothing threw" is not the same fact as
+    /// "the unit is engaged". Injectable because the branch that matters — the
+    /// device refusing the unit — is one a healthy device will not take, and
+    /// because it keeps `swift test` off the real API.
+    let applyVoiceProcessing: @Sendable (AVAudioInputNode) throws -> Bool
+    /// 装上采集 tap。可注入**只为**让 `swift test` 不碰本机输入设备 —— 用真实实现时，
+    /// 在有输入设备的开发机上这一步会打开麦克风（系统亮指示、CI 机器开始录音）。
     private let installCaptureTap: @Sendable (AVAudioInputNode, AVAudioFormat, @escaping AVAudioNodeTapBlock) -> NSError?
-    /// 启动采集引擎。
-    ///
-    /// 与 `installCaptureTap` 分成两个口子而不是一个：只堵住 tap，`engine.start()`
-    /// 仍会因为输入节点被访问而打开设备 —— 半堵的替身比不堵更糟，因为它看起来已经安全了。
+    /// 启动采集引擎。与 `installCaptureTap` 分成两个口子而不是一个：只堵住 tap，
+    /// `engine.start()` 仍会因为输入节点被访问而打开设备 —— 半堵的替身比不堵更糟，
+    /// 因为它看起来已经安全了。
     private let startCaptureEngine: @Sendable (AVAudioEngine) throws -> Void
 
     private let removeCaptureTap: @Sendable (AVAudioEngine) -> Void
@@ -421,13 +140,11 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         },
         startEngineForPlayback: @escaping @Sendable (AVAudioEngine) throws -> Void = { try $0.start() },
         applyVoiceProcessing: @escaping @Sendable (AVAudioInputNode) throws -> Bool = { node in
-            // Two failure shapes, two mechanisms, and both are needed here.
+            // Two failure shapes, two mechanisms, both needed here.
             // `setVoiceProcessingEnabled` is a throwing Swift call, so a refusal
-            // arrives as a Swift error; but asking while the engine is running
-            // is documented to fail the other way — an `AVAEInternal` "required
-            // condition is false" raise — and that is an `NSException`, which
-            // `do/catch` cannot see. That second shape is the F12–F16 class and
-            // the reason `FWTryCatch` exists at all.
+            // arrives as a Swift error; asking while the engine is running fails
+            // the other way — an `AVAEInternal` "required condition is false"
+            // raise — and an `NSException` is invisible to `do/catch`.
             var raised: NSError?
             var thrown: Error?
             _ = FWTryCatch({
@@ -477,10 +194,13 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         continuation.finish()
     }
 
+    nonisolated public func events() -> AsyncStream<AudioEngineEvent> {
+        stream
+    }
+
     public func startCapture() async throws {
-        // Request microphone permission before activating audio session.
-        // This prevents activation error 1 from the audio session
-        // when permission hasn't been explicitly granted yet.
+        // Permission before activating the session, or activation fails with
+        // error 1 when it has not been granted yet.
         let granted = await requestMicrophonePermission()
         guard granted else {
             throw AudioEnginePermissionError.microphoneDenied
@@ -488,55 +208,38 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
         try sessionManager.configure(for: .fullDuplex)
 
-        // Access inputNode FIRST so the audio graph has at least one node
-        // attached before `engine.start()`. On devices without an audio input
-        // (e.g., iOS simulator without host audio, Mac Catalyst without mic),
-        // starting without an attached node asserts:
-        //   `inputNode != nullptr || outputNode != nullptr`
-        // and crashes the app. Querying the input format forces lazy node
-        // creation; only then do we attempt to start.
+        // Access `inputNode` FIRST so the graph has at least one node attached
+        // before `engine.start()`. Starting without one asserts
+        // `inputNode != nullptr || outputNode != nullptr` and crashes the app.
         let inputNode = engine.inputNode
 
         // Voice processing is enabled *before* any format is read, because
         // enabling is what changes the input node's shape. `prepareCaptureNode`
-        // owns both halves as one operation — read before enable is the silent
-        // failure this change exists to prevent, and it is documented there.
+        // owns both halves as one operation; read-before-enable does not throw,
+        // it silently builds a converter and a tap against a stream that no
+        // longer exists.
         //
-        // It also validates the format: empty formats mean no usable input
-        // device, which we surface as a recoverable error instead of letting
-        // AVAudioEngine's internal precondition fire.
-        // Gated on the engine being stopped, even here. `startCapture()` is not
-        // only ever the first thing to touch the engine: a playback frame that
+        // Gated on the engine being stopped even here: a playback frame that
         // outlived its session brings the engine up through
-        // `startPlaybackIfNeeded()`, and a retry of `startCapture()` then finds
-        // it already running. Toggling voice processing there raises rather
-        // than returning an error — the F12–F16 class — so it is not attempted.
+        // `startPlaybackIfNeeded()`, and toggling voice processing on a running
+        // engine raises rather than returning an error.
         let preparation = try prepareCaptureNode(
             inputNode,
             skipEnableReason: engine.isRunning ? "engine already running" : nil
         )
         let inputFormat = preparation.format
         // Reported before the engine starts, so a session that dies during
-        // `engine.start()` still leaves behind the one fact a device log needs:
-        // whether AEC was even on. See `AudioEngineEvent.voiceProcessing`.
+        // `engine.start()` still leaves behind whether AEC was even on.
         continuation.yield(.voiceProcessing(preparation.report))
 
-        // Guarded rather than assigned blind. `AVAudioConverter(from:to:)`
-        // returns an Optional and the old line stored it unchecked: a converter
-        // that failed to build became `nil`, `convertToPCM16` then returned
-        // `nil` for every buffer, and `processInput` dropped them all in
-        // silence — capture that looks alive and carries nothing. A format the
-        // voice-processing unit changed underneath us would have landed exactly
-        // there, which is why the format chain and the engine-level switch were
-        // never separable.
+        // Guarded rather than assigned blind: a converter that failed to build
+        // would become `nil`, `convertToPCM16` would return `nil` for every
+        // buffer, and `processInput` would drop them all in silence.
         //
         // Built *before* the old tap is torn down. Removing the tap is
         // irreversible in this window and `hasInstalledTap` is what two other
-        // paths act on: throwing between the two used to leave the flag
-        // claiming a tap that no longer existed, after which a route change
-        // would reinstall into a dead session and `stopCapture()` would remove
-        // a tap that was not there. `reconfigureForRouteChange` already had the
-        // right order; this is the same order.
+        // paths act on, so throwing between the two would leave the flag
+        // claiming a tap that no longer exists.
         guard let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat) else {
             throw AudioEngineError.invalidFormat(
                 "Could not convert \(Self.describe(inputFormat)) to \(Self.describe(Self.targetFormat)). Check microphone permission or device audio input."
@@ -544,22 +247,18 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         }
         Self.applyCaptureChannelMap(converter, from: inputFormat)
 
-        // Install tap BEFORE startCapture calls engine.start(). The tap must
-        // be in place when the engine comes online, otherwise the first audio
-        // buffers are lost and the speaking-room UI never sees `.speechStarted`.
+        // Install the tap BEFORE `engine.start()`, or the first audio buffers
+        // are lost and the speaking-room UI never sees `.speechStarted`.
         if hasInstalledTap {
             inputNode.removeTap(onBus: 0)
             hasInstalledTap = false
         }
 
-        // Wrapped, and this one is not speculative. `installTap` is the
-        // documented abort site for engine-level voice processing: the reported
-        // failure is `AVAEGraphNode.mm … CreateRecordingTap:
-        // (IsFormatSampleRateAndChannelCountValid(format))`, raised as an
-        // `NSException` when the format handed to the tap does not match what
-        // the node produces — which is exactly what voice processing changes.
-        // `prepareCaptureNode` is what makes them match; this is what keeps a
-        // mismatch from taking the process down if it ever does not.
+        // Wrapped, and this one is not speculative: `installTap` is the
+        // documented abort site for engine-level voice processing, raising
+        // `AVAEGraphNode.mm … CreateRecordingTap:
+        // (IsFormatSampleRateAndChannelCountValid(format))` when the format
+        // handed to it does not match what the node produces.
         if let installRaised = installCaptureTap(inputNode, inputFormat, { [weak self] buffer, _ in
             guard let self else { return }
             // # weak-required: actor value after guard; Task retains this engine for one buffer hop.
@@ -574,61 +273,43 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
         // Committed together, and only once there is a tap to use them.
         hasInstalledTap = true
-        self.captureDropReported = false
-        self.captureFirstBufferSeen = false
-        self.sourceFormat = inputFormat
+        captureDropReported = false
+        captureFirstBufferSeen = false
+        sourceFormat = inputFormat
         self.converter = converter
-        // Rebuild from the configured mode, not from the initializer defaults.
-        // A bare `AudioSpeechActivityTracker()` here silently reinstated the
-        // auto-VAD configuration for every session.
-        self.speechTracker = .forMode(speechBoundaryMode)
+        // Rebuild from the configured mode, not from the initializer defaults,
+        // or every session silently runs with the auto-VAD configuration.
+        speechTracker = .forMode(speechBoundaryMode)
 
         // Build the WHOLE graph before the engine starts — including the
-        // playback node.
-        //
-        // It used to be attached lazily on the first assistant audio frame,
-        // which arrives while capture is already running. Attaching and
-        // connecting into a *live* render graph and then calling `play()` in
-        // the same synchronous block leaves the node looking disconnected to
-        // AVFoundation: the connection has not been committed yet, and `play()`
-        // raises "player started when in a disconnected state" rather than
-        // returning. Every crash so far landed on the first audio frame of a
-        // session, which is the only moment attach, connect and play ever
-        // happened together.
+        // playback nodes. Attaching and connecting into a *live* render graph
+        // and then calling `play()` in the same synchronous block leaves the
+        // node looking disconnected to AVFoundation, and `play()` raises
+        // "player started when in a disconnected state" rather than returning.
         attachPlayerIfNeeded()
-        // Same window, same reason: the graph is finished before the engine
-        // starts and is never mutated after. The keep-alive player is started
-        // later, once the engine is confirmed running — attaching and starting
-        // in one synchronous block is the crash described above.
         attachKeepAliveIfNeeded()
 
         // `start()` returning is not the same as the engine running. It can come
-        // back without throwing and leave the engine stopped, and nothing here
-        // ever checked: the session went on to advertise a microphone it did not
+        // back without throwing and leave the engine stopped, and nothing used
+        // to check: the session went on to advertise a microphone it did not
         // have, `startCapture()` returned success, and the only symptom was a
-        // turn the gateway never heard. Measured on device 2026-09-20 —
-        // `captureArmed(running: false)` with a tap that never fired, no error
-        // anywhere, and a room that looked connected.
-        //
-        // Silence is this project's one unacceptable failure (docs/03 §0.2), so
-        // it fails here instead: a retryable error the user can see beats a
-        // session that quietly cannot hear them.
+        // turn the gateway never heard. Silence is this project's one
+        // unacceptable failure, so it fails here instead.
         let start = armEngine()
         if let failure = start.failure {
-            // If start fails (e.g., another app holds the audio session),
-            // tear down the tap we just installed so a retry from a clean
-            // state doesn't trip the "tap already installed" precondition.
-            // Do not start interruption observation — the engine never came up.
+            // Tear down the tap just installed so a retry from a clean state
+            // does not trip the "tap already installed" precondition. Do not
+            // start interruption observation — the engine never came up.
             if hasInstalledTap {
                 inputNode.removeTap(onBus: 0)
                 hasInstalledTap = false
             }
-            // Voice processing gets a mention because it adds a failure
-            // this message would otherwise mis-describe. With it on, the
-            // input node's output format and the output node's input
-            // format have to agree, so a start failure can be a format
-            // mismatch rather than another app holding the session —
-            // "close your music app" would be the wrong advice.
+            // Voice processing gets a mention because it adds a failure this
+            // message would otherwise mis-describe: with it on, the input
+            // node's output format and the output node's input format have to
+            // agree, so a start failure can be a format mismatch rather than
+            // another app holding the session — "close your music app" would be
+            // the wrong advice.
             let voiceProcessingNote = preparation.voiceProcessingActive
                 ? ". Voice processing is on (\(Self.describe(inputFormat))); its input and output formats must match."
                 : ""
@@ -643,19 +324,14 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         startInterruptionObservation()
 
         // Kick the render cycle before returning. `.connecting` waits for the
-        // microphone to prove itself (`SpeechSessionEvent.captureLive`), and on
-        // device the microphone does not deliver a single buffer until
-        // something plays — so a session that armed and played nothing could
-        // never become ready. Reported either way: this is a hypothesis under
-        // test, not a guarantee, and the event distinguishes "playing" from
-        // each of the five ways it can fail to be.
+        // microphone to prove itself, and the microphone does not deliver a
+        // single buffer until something plays, so a session that armed and
+        // played nothing could never become ready.
         let kick = startKeepAlive()
         continuation.yield(.captureKick(started: kick.started, detail: kick.detail))
 
-        // The last line of startCapture, so its presence proves the graph was
-        // armed — not merely that it reached the format read. It is the other
-        // half of `captureFirstBuffer`: together they separate "the tap exists
-        // but the graph never delivers" from "buffers arrive and die later".
+        // The last line of `startCapture`, so its presence proves the graph was
+        // armed — not merely that it reached the format read.
         continuation.yield(.captureArmed(
             wasRunning: start.wasRunning,
             running: engine.isRunning,
@@ -667,7 +343,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         ))
     }
 
-    private func armEngine() -> EngineStart.Outcome {
+    func armEngine() -> EngineStart.Outcome {
         let wasRunning = engine.isRunning
         var startError: String?
         if !wasRunning {
@@ -703,52 +379,44 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
         let inputNode = engine.inputNode
 
-        // This path **never toggles** voice processing, and says so rather than
-        // leaving it to the engine's run state.
-        //
-        // Toggling here would be wrong twice over. It requires stopping the
-        // engine, which throws away the assistant's in-flight playback mid-
-        // reply — a route change is not worth cutting the sentence the user is
-        // owed. And the toggle would land while the previous tap is still
+        // This path **never toggles** voice processing. Toggling requires
+        // stopping the engine, which throws away the assistant's in-flight
+        // playback mid-reply, and it would land while the previous tap is still
         // installed on bus 0, changing the node's produced format underneath a
         // tap that describes the old one.
         //
-        // Nothing is lost by not toggling: the state is *read back* either way,
-        // so a unit the route change dropped yields the raw format and a unit
-        // that survived yields the processed one. Both are consistent.
+        // Nothing is lost: the state is *read back* either way, so a unit the
+        // route change dropped yields the raw format and a unit that survived
+        // yields the processed one. Both are consistent.
         guard let preparation = try? prepareCaptureNode(inputNode, skipEnableReason: "route change") else {
             // No usable format after the route change. Keep the existing graph
-            // and let the interruption observer surface the failure — killing
-            // the session on a headset unplug is worse than a stale chain.
+            // and let the interruption observer surface the failure.
             return
         }
         let inputFormat = preparation.format
 
-        // Rebuild only when the node's stream actually moved.
-        //
-        // A route change that leaves the format and the unit state alone — the
-        // common case for a plug/unplug of the same headset — used to tear the
-        // tap down and reinstall it regardless, dropping whatever audio was
-        // buffered mid-turn and emitting a telemetry line per event.
+        // Rebuild only when the node's stream actually moved. A route change
+        // that leaves the format and the unit state alone used to tear the tap
+        // down and reinstall it regardless, dropping whatever audio was
+        // buffered mid-turn.
         guard sourceFormat?.isEqual(inputFormat) != true
             || voiceProcessingActive != preparation.voiceProcessingActive
         else {
             return
         }
 
-        // Built before anything is torn down, so a converter that will not
-        // build leaves the working chain in place instead of swapping in a
-        // dead one. This path cannot throw — it is a reaction to a route
-        // change, not a session start — so the alternative to refusing here is
-        // installing a tap whose converter is `nil`, which is silent.
+        // Built before anything is torn down, so a converter that will not build
+        // leaves the working chain in place instead of swapping in a dead one.
+        // This path cannot throw — it is a reaction to a route change, not a
+        // session start — so the alternative to refusing here is installing a
+        // tap whose converter is `nil`, which is silent.
         guard let replacement = AVAudioConverter(from: inputFormat, to: Self.targetFormat) else {
             return
         }
         Self.applyCaptureChannelMap(replacement, from: inputFormat)
 
         // Wrapped for the same reason `startCapture`'s install is: this is the
-        // documented abort site, and this path is the one that runs while a
-        // session is live and a real device pair changes underneath it.
+        // documented abort site, and this path runs while a session is live.
         inputNode.removeTap(onBus: 0)
         hasInstalledTap = false
         if let installRaised = installCaptureTap(inputNode, inputFormat, { [weak self] buffer, _ in
@@ -778,22 +446,20 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
     public func stopCapture() async {
         stopInterruptionObservation()
-        // Retire before anything that yields or mutates the graph. Leftover
-        // TTS frames from a socket that has not closed yet still call
-        // `play(pcm:)`; once this flag is set they drop instead of
-        // restarting the player (and instead of `.failed`, which would kill
-        // the process-lifetime audio pump).
+        // Retire before anything that yields or mutates the graph. Leftover TTS
+        // frames from a socket that has not closed yet still call `play(pcm:)`;
+        // once this flag is set they drop instead of restarting the player (and
+        // instead of `.failed`, which would kill the process-lifetime audio
+        // pump).
         playbackRetired = true
         playbackPaused = false
         let shouldRemoveTap = hasInstalledTap
         hasInstalledTap = false
-        // Also stop any in-flight AI playback so a session end always leaves
-        // the engine silent on both directions, and detach the node so the next
-        // session re-attaches it against a graph that actually exists.
-        //
-        // Leaving it attached is what makes the *next* `play()` dangerous: the
-        // graph below is about to be torn down, and `playerAttached` would go on
-        // claiming the node is fine. See `playbackRetired`.
+        // Also stop any in-flight AI playback, and detach the nodes so the next
+        // session re-attaches them against a graph that actually exists.
+        // Leaving them attached is what makes the *next* `play()` dangerous:
+        // the graph is about to be torn down, and `playerAttached` would go on
+        // claiming the node is fine.
         for step in PlaybackTeardown.steps(
             playerAttached: playerAttached,
             engineRunning: engine.isRunning,
@@ -831,881 +497,12 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         lastInterruptRequestedAt = nil
         isSystemInterrupted = false
 
-        // NOTE: Do NOT deactivate the audio session here.
-        // Deactivating while AI audio is still playing (during aiSpeaking→waitingUser
-        // transitions) uninitializes the AVAudioEngine internal graph, causing:
-        //   `required condition is false: inputNode != nullptr || outputNode != nullptr`
-        // on the next engine.start() or any node access.
-        // The session stays active across the full speaking-room session; it is
-        // only deactivated when the app explicitly ends the session or moves to
-        // background (handled by AppDelegate scene phase changes).
-    }
-
-    nonisolated public func events() -> AsyncStream<AudioEngineEvent> {
-        stream
-    }
-
-    /// Plays PCM that a decoder has already produced (`AudioSink.play(pcm:)`).
-    ///
-    /// **这是引擎唯一的播放入口。** 带轮次归属的帧走这条：`TTSPlaybackCoordinator`
-    /// 判定这一帧属于一个活跃的轮次，并解码好交给这里。
-    ///
-    /// 两道守卫：
-    ///
-    /// - `playbackRetired` —— 会话已经结束了、而 socket 还在投递时，不能让一个
-    ///   在途帧把它重新拉起来。
-    /// - `makePCMBuffer` 的长度校验 —— 它是畸形 payload 与"永远播不出来的一
-    ///   个 scheduledBuffer"之间唯一的东西。
-    ///
-    /// **没有序列号水印，这是有意的。** 这里曾经还有 `play(frame:)`，它带一道
-    /// 按序列号的 barge-in 水印（`AudioPlaybackGate`）。那道门后来删了，因为它
-    /// 既没有生产调用者、也不可能被武装，更根本的原因是它的轴选错了：
-    /// **序列号说不出一个帧属于哪一轮**（证据见 `07_Stage4_删除死路径.md` §2
-    /// 里 2026-09-12 03:57 那段）。轮次归属由协调器在正确的轴上回答——
-    /// 被作废那一轮的帧根本到不了这里。
-    ///
-    /// 另一道同类的水印在传输层（`BargeInAudioGate`，按入站帧序号），
-    /// 2026-09-22 也删了，理由与上面完全相同。所以**现在没有任何一层按序号丢弃
-    /// 音频**——两道都去掉了，而不是把两处合成一处。证据见
-    /// `18_删除传输层序号水印.md`。
-    public func play(pcm: Data) async {
-        guard !playbackRetired else { return }
-
-        guard let buffer = makePCMBuffer(from: pcm) else {
-            continuation.yield(.failed("scheduling dropped: PCM length \(pcm.count) not multiple of 2"))
-            return
-        }
-
-        guard startPlaybackIfNeeded() else { return }
-        enqueueWithoutWaiting(buffer)
-    }
-
-    /// Queues a buffer and returns immediately.
-    ///
-    /// Deliberately **not** `await playerNode.scheduleBuffer(...)`, which is the
-    /// alternative the editor suggests here. That overload returns only once the
-    /// buffer has been *rendered*, so awaiting it would pace the gateway's
-    /// turn-end burst to real time: a 32-second reply arrives as one burst, and
-    /// the middleware's transport loop would spend those 32 seconds inside this
-    /// call — text frames, control frames and the next turn's audio all queued
-    /// behind it. Returning immediately also keeps the graph irrelevant to the
-    /// tests that only assert on the gate / decoder path.
-    ///
-    /// Extracted into a synchronous function with `completionHandler: nil` for
-    /// two reasons: the queue needs no completion bookkeeping, and the "consider
-    /// the asynchronous alternative" diagnostic is about handing a closure to
-    /// this API from an async context — neither applies once the call has a
-    /// signature of its own.
-    private func enqueueWithoutWaiting(_ buffer: AVAudioPCMBuffer) {
-        scheduledBufferCount += 1
-        playerNode.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
-    }
-
-    /// Queues audio onto the player node and makes sure something is actually
-    /// playing it.
-    ///
-    /// `scheduleBuffer` only enqueues — a node that was never started plays
-    /// nothing. Nothing started it, which is why the speaking room stayed
-    /// silent even after the gateway began forwarding the assistant's audio.
-    /// `interruptNow()` stops the node for barge-in, so this also has to bring
-    /// it back on the next frame.
-    ///
-    /// Returns whether the node is queued onto a running engine. Every caller
-    /// must treat `false` as "nothing will play" — the reason this returns a
-    /// value instead of being best-effort is the line it guards:
-    ///
-    /// `AVAudioPlayerNode.play()` does not throw. On a stopped engine it raises
-    /// an **uncaught `NSException`** ("player started when in a disconnected
-    /// state") and terminates the app. `try? engine.start()` was exactly the
-    /// wrong shape here — it swallowed the failure that leaves the engine
-    /// stopped, then ran the one call that cannot survive it. That is reachable
-    /// whenever an audio frame outlives the session playing it: `stopCapture()`
-    /// runs on `endSession`, the socket still holds frames in flight, and the
-    /// next one to arrive used to take the process down.
-    private func startPlaybackIfNeeded() -> Bool {
-        attachPlayerIfNeeded()
-        if !engine.isRunning {
-            do {
-                try startEngineForPlayback(engine)
-            } catch {
-                continuation.yield(.failed("playback engine did not start: \(error.localizedDescription)"))
-                return false
-            }
-        }
-        guard engine.isRunning else {
-            continuation.yield(.failed("playback engine is not running; dropped frame"))
-            return false
-        }
-        // `playerAttached` is this actor's cached belief; `playerNode.engine` is
-        // what AVFoundation will actually consult. They disagree exactly when
-        // the graph was torn down underneath us — deactivating the audio session
-        // does that — and "disconnected state" in the raised exception is this
-        // condition, not the engine's run state.
-        guard playerNode.engine === engine else {
-            continuation.yield(.failed("playback node is detached from the engine; dropped frame"))
-            playerAttached = false
-            return false
-        }
-        if playbackPaused {
-            // Schedule-only: cancel of 结束练习 must continue from here.
-            return true
-        }
-        if !playerNode.isPlaying {
-            // `play()` raises rather than returning when the node has nothing to
-            // play into, and "has nothing to play into" is not a state this
-            // layer can read — three device builds died here on the first audio
-            // frame of a session. Every precondition above narrows the window;
-            // this is what makes the window not matter.
-            var raised: NSError?
-            guard FWTryCatch({ self.playerNode.play() }, &raised) else {
-                continuation.yield(.failed("player start raised: \(raised?.localizedDescription ?? "unknown")"))
-                return false
-            }
-        }
-        return true
-    }
-
-    public func interruptNow() async {
-        lastInterruptRequestedAt = clock.now
-        playbackPaused = false
-        if playerAttached {
-            playerNode.stop()
-            playerNode.reset()
-        }
-    }
-
-    public func pausePlayback() async {
-        playbackPaused = true
-        if playerAttached {
-            playerNode.pause()
-        }
-    }
-
-    public func resumePlayback() async {
-        guard !playbackRetired else { return }
-        playbackPaused = false
-        guard playerAttached, engine.isRunning, playerNode.engine === engine else { return }
-        if !playerNode.isPlaying {
-            var raised: NSError?
-            _ = FWTryCatch({ self.playerNode.play() }, &raised)
-        }
-    }
-
-    /// Snapshot for tests: confirmation-dialog pause must hold without retiring playback.
-    public func isPlaybackPaused() -> Bool {
-        playbackPaused
-    }
-
-    public func discardActiveSpeech() async {
-        speechTracker.discard()
-    }
-
-    public func setSpeechBoundaryMode(_ mode: SpeechBoundaryMode) async {
-        speechBoundaryMode = mode
-        // The endpointing hold belongs to the mode: tap-to-start has to tolerate
-        // a speaker pausing to think, auto-VAD does not. `forMode` also hands
-        // back a tracker with no speech in flight, which is the `discard()` a
-        // mode switch needs. See `AudioSpeechActivityTracker.forMode`.
-        speechTracker = .forMode(mode)
-    }
-
-    /// Declares whether the next capture graph should run engine-level voice
-    /// processing — the echo canceller, noise suppression and AGC that keep the
-    /// assistant from hearing its own voice through the speaker.
-    ///
-    /// Recorded, not applied. Voice processing may only be toggled while the
-    /// engine is stopped, so the value takes effect when `startCapture()` builds
-    /// the graph. Setting it mid-session is therefore not an error and not a
-    /// no-op either: it changes the *next* session, which is what makes the
-    /// feature flag usable as a comparison harness on a device.
-    public func setVoiceProcessingEnabled(_ enabled: Bool) async {
-        voiceProcessingRequested = enabled
-    }
-
-    public func beginManualSpeech() async {
-        if let emitted = speechTracker.forceStart() {
-            yieldSpeechBoundary(emitted)
-        }
-    }
-
-    public func endManualSpeech() async {
-        if let emitted = speechTracker.forceEnd() {
-            yieldSpeechBoundary(emitted)
-        }
-    }
-
-    /// Snapshot of the last `interruptNow()` instant for barge-in latency tests.
-    /// Public on the actor so tests can read it without exposing the raw clock.
-    public func lastInterruptInstant() -> ContinuousClock.Instant? {
-        lastInterruptRequestedAt
-    }
-
-    func startInterruptionObservation() {
-        interruptionObserver.start { [weak self] kind in
-            await self?.handleInterruption(kind)
-        }
-    }
-
-    func stopInterruptionObservation() {
-        interruptionObserver.stop()
-    }
-
-    /// Maps AVAudioSession interruption / route changes onto `AudioEngineEvent`.
-    /// Does not deactivate the audio session — capture stays configured across
-    /// a phone-call-style interrupt so resume does not rebuild the graph.
-    func handleInterruption(_ kind: AudioInterruptionKind) {
-        switch kind {
-        case .began:
-            isSystemInterrupted = true
-            // Counted from here so the number that comes out at `.ended` is
-            // about *this* interruption, not every one this engine has seen.
-            interruptionDroppedBuffers = 0
-            _ = speechTracker.reset()
-            if playerAttached {
-                playerNode.pause()
-            }
-            continuation.yield(.interruptedBySystem)
-        case .ended(let shouldResume):
-            // Only resume the speech session when iOS says we may.
-            // Do not `playerNode.play()` — interruptedBySystem already asked
-            // the machine to stopPlayback, and resume lands in waitingUser.
-            //
-            // Saying nothing when iOS withholds resume was a trap, not caution.
-            // `.began` parked the machine in its suspended phase, and a
-            // suspended machine discards every event but five — so with no
-            // `.systemInterruptEnded` and no failure, nothing on any path could
-            // lift the suspension. Playback stopped, the UI kept rendering the
-            // phase it was in, and every later audio event was dropped. The run
-            // was over and nothing said so.
-            //
-            // Ending it is the honest outcome: we may not resume, so we cannot
-            // continue, and `.failed` is one of the five events that still land
-            // — it reaches the user as a retryable error instead of a freeze.
-            guard shouldResume else {
-                continuation.yield(.failed("音频被系统中断，本轮练习已停止"))
-                return
-            }
-            isSystemInterrupted = false
-            // Before the lift, so the count is attributed to the interruption
-            // that just ended rather than to whatever comes next.
-            continuation.yield(.captureInterruptionLifted(droppedBuffers: interruptionDroppedBuffers))
-            continuation.yield(.systemInterruptEnded)
-        case .routeChanged(let reason):
-            continuation.yield(.routeChanged(reason))
-        }
-    }
-
-    private func processInput(_ buffer: AVAudioPCMBuffer) async {
-        // First, before ANY guard. It used to sit after the `isSystemInterrupted`
-        // one, which made "the tap never delivered" and "the tap delivered and
-        // this guard ate it" indistinguishable — and those are different bugs
-        // with the same symptom. The whole point of the event is that the tap
-        // fired, which is a fact about the graph, not about this buffer's fate.
-        if !captureFirstBufferSeen {
-            captureFirstBufferSeen = true
-            continuation.yield(.captureFirstBuffer)
-        }
-        // Correct to drop, and it used to be silent — which made "the system
-        // interrupted us" and "the microphone produced nothing" the same thing
-        // from the outside. Counted here, reported once when the interruption
-        // lifts (`captureInterruptionLifted`).
-        guard !isSystemInterrupted else {
-            interruptionDroppedBuffers += 1
-            return
-        }
-        // The three `return nil`s inside `convertToPCM16`, plus the bare `return`
-        // that used to sit here, were the last silent gate on the uplink. At
-        // 48 kHz the tap fires ~86 times a second, and a graph whose every buffer
-        // fails conversion is indistinguishable from one that works: the tap
-        // still reports a healthy format, the engine still runs, and the only
-        // symptom is a turn the gateway never heard. Reported once per capture
-        // session — the fact is worth one line, not eighty-six a second.
-        guard converter != nil, sourceFormat != nil else {
-            reportCaptureDropOnce("no_converter")
-            return
-        }
-        do {
-            guard let pcm = try convertToPCM16(buffer) else {
-                // The formats ride along because the likeliest cause is a
-                // mismatch between what the tap was told it would receive and
-                // what the buffers actually carry — enabling voice processing
-                // reshapes the input node, and a converter built from the
-                // pre-reshape format fails silently for the whole session. The
-                // buffer's own format is the third number, and the one that
-                // settles it.
-                reportCaptureDropOnce(
-                    "conversion_produced_no_pcm src=\(Self.describe(sourceFormat)) "
-                        + "target=\(Self.describe(Self.targetFormat)) "
-                        + "buffer=\(Self.describe(buffer.format)) "
-                        + "frames=\(buffer.frameLength)"
-                )
-                return
-            }
-            continuation.yield(.pcmChunk(pcm))
-            updateSpeechState(using: pcm)
-        } catch {
-            continuation.yield(.failed(error.localizedDescription))
-        }
-    }
-
-    /// Emits `.captureDropped` at most once per capture session.
-    private func reportCaptureDropOnce(_ reason: String) {
-        guard !captureDropReported else { return }
-        captureDropReported = true
-        continuation.yield(.captureDropped(reason: reason))
-    }
-
-    /// Yields a speech-boundary event, and attaches the endpointing facts when
-    /// it closes an utterance.
-    ///
-    /// Kept in one place so every path that opens or closes a turn — energy,
-    /// the tap, and `stopCapture`'s reset — is measured the same way. A path
-    /// that emitted its boundary directly would silently contribute nothing to
-    /// the distribution, and the missing data would look like a quiet week.
-    private func yieldSpeechBoundary(_ event: AudioEngineEvent) {
-        switch event {
-        case .speechStarted:
-            speechStartedAt = clock.now
-            continuation.yield(event)
-
-        case .speechEnded:
-            let now = clock.now
-            let facts = speechTracker.lastEndpoint
-            continuation.yield(.speechEndpointed(
-                reason: facts?.reason.rawValue ?? "unknown",
-                windowMs: speechStartedAt.map { Self.milliseconds($0.duration(to: now)) },
-                trailingSilenceMs: facts?.trailingSilence.map(Self.milliseconds)
-            ))
-            speechStartedAt = nil
-            continuation.yield(event)
-
-        default:
-            continuation.yield(event)
-        }
-    }
-
-    private static func milliseconds(_ duration: Duration) -> Int {
-        Int((duration / .milliseconds(1)).rounded())
-    }
-
-    private func updateSpeechState(using pcm: Data) {
-        // `.manual` decides both ends with taps, so energy is not consulted at
-        // all. The other modes let energy close the utterance; only `.autoVAD`
-        // also lets it open one (see AudioSpeechActivityTracker.autoStart).
-        guard speechBoundaryMode != .manual else { return }
-        let energy = normalizedEnergy(for: pcm)
-        let now = clock.now
-
-        if let emitted = speechTracker.register(energy: energy, at: now) {
-            yieldSpeechBoundary(emitted)
-        }
-    }
-
-    /// What the capture chain resolved to for one graph build.
-    struct CapturePreparation {
-        /// The format the tap is installed with *and* the format the converter
-        /// is built from. One value on purpose: the two have to agree, and when
-        /// they do not nothing throws.
-        let format: AVAudioFormat
-        /// Whether the engine-level voice-processing unit is driving the input.
-        let voiceProcessingActive: Bool
-        /// One line for the telemetry event. Device logs are read on a phone;
-        /// this is what says whether the switch was on before anyone tries to
-        /// judge how well it worked.
-        let report: String
-    }
-
-    /// Turns on engine-level voice processing when the session asked for it,
-    /// then reads back the format the tap will actually receive.
-    ///
-    /// The two are one operation, not two steps, because enabling is what
-    /// changes the input node's shape. A caller that reads the format first and
-    /// enables second gets the *pre-processing* format while the tap goes on to
-    /// receive the processed stream — and that mistake does not throw. The
-    /// format is still perfectly valid, so the converter builds, the tap
-    /// installs, and every buffer is then dropped at `processInput`'s guard.
-    /// Capture that looks alive and carries nothing is the failure shape this
-    /// whole change was warned about.
-    ///
-    /// Enabling is best-effort: a device that refuses voice processing must
-    /// still capture. Losing echo cancellation is bad, losing the microphone is
-    /// worse — and the outcome is reported either way, so the two can be told
-    /// apart afterwards.
-    ///
-    /// - Parameter attemptEnable: `false` when the engine may be running.
-    ///   Voice processing can only be toggled while it is stopped, and asking
-    ///   anyway does not fail politely — it raises, which is why this is a
-    ///   parameter rather than something the caller is trusted to remember. The
-    ///   formats are resolved from the node's real state either way, so a
-    ///   caller that cannot toggle still gets the chain that matches what the
-    ///   node is producing right now.
-    private func prepareCaptureNode(
-        _ inputNode: AVAudioInputNode,
-        skipEnableReason: String?
-    ) throws -> CapturePreparation {
-        // The node is asked what it is doing, not what was asked of it. The
-        // unit engages on both I/O nodes at once and can already be on from an
-        // earlier session, so the request alone does not determine the state —
-        // and the state is what decides which format the tap has to use.
-        let wasAlreadyOn = inputNode.isVoiceProcessingEnabled
-        var isOn = wasAlreadyOn
-        var enableFailure: String?
-
-        if voiceProcessingRequested, skipEnableReason == nil, !wasAlreadyOn {
-            do {
-                isOn = try applyVoiceProcessing(inputNode)
-            } catch {
-                // Surfaced in the report rather than thrown. A device without
-                // voice processing gets a working capture chain and a log line
-                // that says AEC is off; it does not get a dead microphone.
-                enableFailure = error.localizedDescription
-                isOn = wasAlreadyOn
-            }
-        }
-
-        // Read *after* the enable attempt, and gated on the read-back rather
-        // than the request. On success these are the processed formats; when
-        // the unit is off they are the raw ones, which is what the fallback
-        // wants — so a refused or skipped enable leaves the old chain untouched
-        // rather than half-converted.
-        let rawInput = inputNode.inputFormat(forBus: 0)
-        let processedOutput = isOn ? inputNode.outputFormat(forBus: 0) : nil
-
-        guard let format = Self.captureFormat(
-            input: rawInput,
-            processedOutput: processedOutput,
-            voiceProcessingActive: isOn
-        ) else {
-            throw AudioEngineError.invalidFormat(
-                "No usable audio input (voiceProcessing=\(isOn), input=\(Self.describe(rawInput)), processed=\(Self.describe(processedOutput))). Check microphone permission or device audio input."
-            )
-        }
-
-        return CapturePreparation(
-            format: format,
-            voiceProcessingActive: isOn,
-            report: Self.voiceProcessingReport(
-                requested: voiceProcessingRequested,
-                isOn: isOn,
-                wasAlreadyOn: wasAlreadyOn,
-                skipReason: skipEnableReason,
-                format: format,
-                failure: enableFailure
-            )
-        )
-    }
-
-    /// One line for the telemetry event.
-    ///
-    /// Reports the state the node was found in, the state it ended in, and the
-    /// format the tap got — three facts, because a device run that comes back
-    /// "AEC did not help" is unreadable without knowing which of them was true.
-    /// `alreadyOn` in particular is not noise: the unit is shared across both
-    /// I/O nodes and survives between sessions, so "it was on before we asked"
-    /// is a different story from "we turned it on".
-    nonisolated static func voiceProcessingReport(
-        requested: Bool,
-        isOn: Bool,
-        wasAlreadyOn: Bool,
-        skipReason: String?,
-        format: AVAudioFormat,
-        failure: String?
-    ) -> String {
-        if let failure { return "unavailable: \(failure)" }
-
-        let state: String
-        if isOn {
-            state = wasAlreadyOn ? "on, alreadyOn" : "on"
-        } else if requested, let skipReason {
-            // The one state that must never read as a plain `off`. The session
-            // asked for the unit, this code path could not toggle it, and it is
-            // off — reported as `off` it is byte-identical to a build where the
-            // flag is off, and the device procedure's rule ("not `on`, don't
-            // judge yet") would send the tester off to patch `firstWave` and
-            // rebuild while the real cause was a running engine.
-            state = "off, requested-but-not-applied (\(skipReason))"
-        } else {
-            state = "off"
-        }
-        return "\(state), tap=\(Self.describe(format))"
-    }
-
-    /// Chooses the format the capture tap is installed with.
-    ///
-    /// Without voice processing this is the raw input format — byte for byte
-    /// what the chain used before, which is the property the fallback path
-    /// depends on. With voice processing the stream the tap receives is the
-    /// node's *output* format, not its input format: the unit sits between them.
-    ///
-    /// With the unit engaged there is no fallback, and that is deliberate.
-    ///
-    /// The obvious `?? usable(input)` is wrong: while the unit is on the node
-    /// produces the *processed* stream, so the raw input format describes a
-    /// stream that is no longer there. Tapping it is a format mismatch, and a
-    /// format mismatch at the tap is the documented abort site for this very
-    /// feature — so the "safe" fallback re-admits the crash it was written to
-    /// avoid. Worse, the report would still say `on`, because the unit really
-    /// is on; a dead chain would be logged as a healthy one.
-    ///
-    /// Returning `nil` hands that to the caller, which refuses the session with
-    /// both formats in the message. A half-supporting device fails loudly on
-    /// the first session instead of running deaf.
-    nonisolated static func captureFormat(
-        input: AVAudioFormat?,
-        processedOutput: AVAudioFormat?,
-        voiceProcessingActive: Bool
-    ) -> AVAudioFormat? {
-        guard voiceProcessingActive else { return usable(input) }
-        return usable(processedOutput)
-    }
-
-    nonisolated private static func usable(_ format: AVAudioFormat?) -> AVAudioFormat? {
-        guard let format, format.sampleRate > 0, format.channelCount > 0 else { return nil }
-        return format
-    }
-
-    /// Takes channel 0 only, when the input carries more than one.
-    ///
-    /// Voice processing does not hand back a cleaned copy of the microphone
-    /// signal — it hands back the microphone channel *plus* the channels the
-    /// echo canceller needs to do its job. Only channel 0 is the speaker.
-    ///
-    /// The default is worse than a bad mix. A discrete multi-channel layout
-    /// implies no mapping onto a single channel, so `AVAudioConverter` reports
-    /// `channelMap == [-1]`, which the API defines as "this output channel gets
-    /// no input at all" — the uplink is *empty*, from a chain that builds
-    /// cleanly and throws nothing. That is the same shape as the stale-format
-    /// failure `prepareCaptureNode` documents, reached one layer further down.
-    ///
-    /// A no-op for the single-channel formats that arrive without voice
-    /// processing, whose default mapping is already `[0]`, so the fallback path
-    /// is untouched. `channelMap` composes with sample-rate conversion — the
-    /// conversion below uses the block-based `convert(to:error:withInputFrom:)`
-    /// for that reason.
-    nonisolated static func applyCaptureChannelMap(
-        _ converter: AVAudioConverter,
-        from format: AVAudioFormat
-    ) {
-        guard format.channelCount > 1 else { return }
-        converter.channelMap = [0]
-    }
-
-    /// Short description of a format for telemetry — sample rate and channel
-    /// count are the two numbers that explain a capture chain that came up
-    /// wrong.
-    nonisolated static func describe(_ format: AVAudioFormat?) -> String {
-        guard let format else { return "none" }
-        return "\(Int(format.sampleRate))Hz/\(format.channelCount)ch"
-    }
-
-    /// Short description of the shared audio session, read at the moment a
-    /// start failed.
-    ///
-    /// An `AVAudioEngine` stops itself when the session it is running on is
-    /// deactivated, or when that session's category stops supporting input —
-    /// and it does so without executing a line of ours, so `isRunning` going
-    /// false leaves no stack to read. The category and mode are the tell:
-    /// anything but `.playAndRecord`/`.voiceChat` while a capture session is
-    /// expected means another component in this app took the session, which is
-    /// a different bug from a system interruption and wants a different fix.
-    /// Measured on device 2026-09-24, where the engine was confirmed running
-    /// and then was not, with no line of this file in between.
-    ///
-    /// No `isActive` here — `AVAudioSession` exposes `setActive` but **no**
-    /// getter for it, so activity is not reportable and must not be faked from
-    /// the manager's own flag (that flag is never cleared in production; see
-    /// `DailyReadAudioPlayer.configurePlaybackCategoryIfUncontested`).
-    ///
-    /// `sampleRate` stands in for it, and it is the reading that matters most:
-    /// category and mode survive deactivation, so a session that has been
-    /// switched off still reports `playAndRecord`/`voiceChat` while the engine
-    /// it was carrying has already stopped. A deactivated session reports a
-    /// **zero** sample rate. This is a proxy, not an API — measured on device
-    /// 2026-09-24, where category and mode were both correct and correctly
-    /// reported nothing wrong.
-    nonisolated static func describeSession() -> String {
-        #if os(iOS)
-        let session = AVAudioSession.sharedInstance()
-        return "category=\(session.category.rawValue) mode=\(session.mode.rawValue)"
-            + " sampleRate=\(Int(session.sampleRate)) otherAudio=\(session.isOtherAudioPlaying)"
-            + " duckHint=\(session.secondaryAudioShouldBeSilencedHint)"
-        #else
-        return "session=n/a"
-        #endif
-    }
-
-    private func convertToPCM16(_ buffer: AVAudioPCMBuffer) throws -> Data? {
-        guard let converter, let sourceFormat else { return nil }
-
-        let ratio = Self.targetFormat.sampleRate / max(sourceFormat.sampleRate, 1)
-        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 16
-        guard let output = AVAudioPCMBuffer(pcmFormat: Self.targetFormat, frameCapacity: capacity) else {
-            return nil
-        }
-
-        let consumptionState = ConversionConsumptionState()
-        var convertError: NSError?
-        let status = converter.convert(to: output, error: &convertError) { _, outStatus in
-            if consumptionState.consumed {
-                outStatus.pointee = .noDataNow
-                return nil
-            }
-            consumptionState.consumed = true
-            outStatus.pointee = .haveData
-            return buffer
-        }
-
-        if let convertError {
-            throw convertError
-        }
-        guard status != .error, output.frameLength > 0 else { return nil }
-
-        let audioBuffer = output.audioBufferList.pointee.mBuffers
-        guard let bytes = audioBuffer.mData else { return nil }
-        return Data(bytes: bytes, count: Int(audioBuffer.mDataByteSize))
-    }
-
-    /// Test-only hook exposing the tracker a mode switch configured. The
-    /// endpointing hold and auto-start both come from the mode, so a unit test
-    /// has to read them through the same path `setSpeechBoundaryMode` writes.
-    func _testSpeechTracker() -> AudioSpeechActivityTracker {
-        speechTracker
-    }
-
-    /// Test-only hook: how many buffers have been handed to the player node.
-    ///
-    /// `play(pcm:)` 不再经过解码器，所以"这一帧有没有被排进播放器"没法再从解码器
-    /// 的调用日志上看出来——而这条断言是有价值的：`stopCapture()` 之后到达的迟到帧
-    /// **不**该再被排进去（`playbackRetired`），暂停期间到达的帧**该**排队但不出声。
-    /// 丢掉这个观察，正是「结束练习后迟到帧又被排进播放器」复发的方式。
-    func _testScheduledBufferCount() -> Int {
-        scheduledBufferCount
-    }
-
-    /// Test-only hook reporting whether the player node is running.
-    ///
-    /// `scheduleBuffer` queues audio onto a node that plays nothing until it is
-    /// started, and nothing here ever started it — which is why the assistant
-    /// stayed silent even once the gateway began forwarding its audio. Nothing
-    /// asserted on this because the existing playback tests only check that the
-    /// decoder was reached.
-    func _testPlaybackStarted() -> Bool {
-        playerNode.isPlaying
-    }
-
-    /// Test-only hook reporting whether the shared engine is running.
-    ///
-    /// `AVAudioPlayerNode.play()` raises — it does not throw — when the engine
-    /// is stopped, so "was a node started while the engine was down?" is the
-    /// question the crash test has to ask, and it needs both halves of the
-    /// answer from the same instant.
-    func _testEngineRunning() -> Bool {
-        engine.isRunning
-    }
-
-    func _testArmEngine() -> EngineStart.Outcome {
-        armEngine()
-    }
-
-    /// Test-only hook feeding one synthetic buffer through the real
-    /// `processInput`.
-    ///
-    /// The tap needs audio hardware, so every guard inside `processInput` — the
-    /// interruption counter, the converter check, the conversion guard — was
-    /// unreachable from a test. That is not a small gap: "the tap fired and a
-    /// guard ate the buffer" is the exact shape of the 2026-09-20 silence
-    /// (`102_` §2), and it was the one shape with no way to reproduce it off a
-    /// device. This hook closes it without making the guards testable through a
-    /// second, divergent code path.
-    ///
-    /// The buffer is built here rather than passed in because `AVAudioPCMBuffer`
-    /// is not `Sendable`: handing one across the actor boundary from a test
-    /// trips region isolation, and working around that would mean the test no
-    /// longer drives the same call the tap does.
-    ///
-    /// Silence is enough for the guards this exists for — they decide before any
-    /// sample is read.
-    func _testProcessInputSilentBuffer(frames: AVAudioFrameCount = 160) async {
-        guard
-            let format = AVAudioFormat(
-                commonFormat: .pcmFormatInt16,
-                sampleRate: 16_000,
-                channels: 1,
-                interleaved: true
-            ),
-            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames)
-        else { return }
-        buffer.frameLength = frames
-        await processInput(buffer)
-    }
-
-
-    /// Test-only hook exercising `convertToPCM16` for the supplied input
-    /// buffer + input format. Production callers should keep using
-    /// `startCapture()` so the tap stays the source of truth — this hook is
-    /// here so the tap-chain format test can verify the converter aligns with
-    /// the Volcengine-aligned target (16 kHz, mono, interleaved PCM16)
-    /// without pulling in real audio hardware.
-    nonisolated func _testConvertToPCM16(_ buffer: AVAudioPCMBuffer, from inputFormat: AVAudioFormat) throws -> Data? {
-        guard let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat) else {
-            return nil
-        }
-        // The map production applies, applied here too. Without it this hook
-        // models a chain that no longer exists: for a multi-channel source the
-        // default mapping is silence (see `applyCaptureChannelMap`), so a hook
-        // that skips it would report "the tap chain works" for input that
-        // production turns into an empty uplink.
-        Self.applyCaptureChannelMap(converter, from: inputFormat)
-        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * (Self.targetFormat.sampleRate / max(inputFormat.sampleRate, 1))) + 16
-        guard let output = AVAudioPCMBuffer(pcmFormat: Self.targetFormat, frameCapacity: capacity) else {
-            return nil
-        }
-        let consumptionState = ConversionConsumptionState()
-        var convertError: NSError?
-        let status = converter.convert(to: output, error: &convertError) { _, outStatus in
-            if consumptionState.consumed {
-                outStatus.pointee = .noDataNow
-                return nil
-            }
-            consumptionState.consumed = true
-            outStatus.pointee = .haveData
-            return buffer
-        }
-        if let convertError {
-            throw convertError
-        }
-        guard status != .error, output.frameLength > 0 else { return nil }
-        let audioBuffer = output.audioBufferList.pointee.mBuffers
-        guard let bytes = audioBuffer.mData else { return nil }
-        return Data(bytes: bytes, count: Int(audioBuffer.mDataByteSize))
-    }
-
-    private func normalizedEnergy(for pcm: Data) -> Float {
-        guard !pcm.isEmpty else { return 0 }
-        return pcm.withUnsafeBytes { rawBuffer in
-            let samples = rawBuffer.bindMemory(to: Int16.self)
-            guard !samples.isEmpty else { return 0 }
-
-            var total: Float = 0
-            for sample in samples {
-                total += abs(Float(sample)) / Float(Int16.max)
-            }
-            return total / Float(samples.count)
-        }
-    }
-
-    /// Deliberately *not* wrapped in `FWTryCatch`, unlike `play()`.
-    ///
-    /// The format here is the source node's own output format, which
-    /// `AVAudioEngine` always accepts — the mixer resamples. Voice processing
-    /// does not change that: it changes the *output* node's format, and the
-    /// mixer→output connection is one the engine manages and re-derives on the
-    /// next `stop()`/`start()`. So the raise this would guard is speculative,
-    /// while the guard itself is not free: `.failed` ends the middleware's
-    /// audio pump for the rest of the process, which would turn a
-    /// one-session playback problem into every later session going silent.
-    private func attachPlayerIfNeeded() {
-        guard !playerAttached else { return }
-        engine.attach(playerNode)
-        engine.connect(playerNode, to: engine.mainMixerNode, format: Self.targetFormat)
-        playerAttached = true
-    }
-
-    /// Attaches the keep-alive player. Same window as the TTS player — **before
-    /// `engine.start()`, never after** — because graph mutation on a running
-    /// engine is the F14/F15 crash family.
-    private func attachKeepAliveIfNeeded() {
-        guard !keepAliveAttached else { return }
-        engine.attach(keepAliveNode)
-        engine.connect(keepAliveNode, to: engine.mainMixerNode, format: Self.targetFormat)
-        keepAliveAttached = true
-    }
-
-    /// Starts the render cycle before anything is asked of the microphone.
-    ///
-    /// Measured on device 2026-09-20. `captureArmed` reported `running: true`
-    /// with the tap installed — and then the tap delivered **no buffer at all**
-    /// for the first eleven seconds. The user spoke and tapped 说完了 inside
-    /// that window; the gateway received zero bytes and the turn ended
-    /// `partial`. The tap's first buffer arrived **283 ms after the rescue
-    /// ladder began playing audio**, and 283.6ms against 283.9ms across two
-    /// runs: deterministic, not a race.
-    ///
-    /// So the input follows the output, and `.connecting` now waits for the
-    /// microphone to prove itself — which means a session that never plays
-    /// anything can no longer start at all. This is what breaks that circle.
-    ///
-    /// Six outcomes, and the event carries which one happened, because
-    /// `ff2c142`'s silent source taught the cost of an unverified fix that
-    /// reports nothing: it may never have been attached at all (its format
-    /// guard could fail unnoticed), and there was no way to tell that from
-    /// "attached and useless".
-    ///
-    /// - Returns: whether the cycle was asked to start, for the caller's log.
-    private func startKeepAlive() -> (started: Bool, detail: String) {
-        attachKeepAliveIfNeeded()
-        guard keepAliveAttached else {
-            return (false, "keep-alive node not attached")
-        }
-        guard let buffer = keepAliveBuffer else {
-            return (false, "keep-alive buffer could not be built")
-        }
-        guard engine.isRunning else {
-            // Two ways an engine can be stopped again this soon after `start()`
-            // returned, and they need different fixes: the system interrupted
-            // us, or something in this app reconfigured the shared session out
-            // from under us. Both leave `isRunning` false with no error
-            // anywhere, so the detail has to say which — a bare "engine not
-            // running" is what made the 2026-09-24 device failure unreadable.
-            return (
-                false,
-                "engine not running (interrupted=\(isSystemInterrupted), \(Self.describeSession()))"
-            )
-        }
-        guard keepAliveNode.engine === engine else {
-            keepAliveAttached = false
-            return (false, "keep-alive node detached from the engine")
-        }
-        if keepAliveNode.isPlaying {
-            return (true, "already playing")
-        }
-        if !keepAliveBufferScheduled {
-            // `.loops` rather than a one-shot: if the input really follows the
-            // output, a single kick would go quiet again the moment it drained
-            // — the same silence, forty milliseconds later.
-            keepAliveNode.scheduleBuffer(buffer, at: nil, options: [.loops], completionHandler: nil)
-            keepAliveBufferScheduled = true
-        }
-        // Raises rather than returns when the node has nothing to play into —
-        // measured on macOS 2026-09-20 as "player did not see an IO cycle",
-        // i.e. the engine reported `isRunning` while its render cycle had never
-        // ticked. That is the same confusion the `captureLive` gate exists for,
-        // from the other direction.
-        var raised: NSError?
-        guard FWTryCatch({ keepAliveNode.play() }, &raised) else {
-            return (false, "play() raised: \(raised?.localizedDescription ?? "unknown")")
-        }
-        return (true, "playing")
-    }
-
-    /// Wraps raw 16 kHz mono interleaved PCM16 bytes in an `AVAudioPCMBuffer`
-    /// suitable for `AVAudioPlayerNode.scheduleBuffer`.
-    ///
-    /// The returned buffer's `frameLength` is `payload.count / 2`. If the
-    /// payload length is not a multiple of 2, returns `nil` so the caller can
-    /// surface a `.failed` event instead of corrupting the player queue.
-    private func makePCMBuffer(from payload: Data) -> AVAudioPCMBuffer? {
-        guard !payload.isEmpty, payload.count.isMultiple(of: 2) else { return nil }
-        let frameCount = AVAudioFrameCount(payload.count / 2)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: Self.targetFormat, frameCapacity: frameCount) else {
-            return nil
-        }
-        buffer.frameLength = frameCount
-        guard let target = buffer.audioBufferList.pointee.mBuffers.mData else { return nil }
-        return payload.withUnsafeBytes { raw -> AVAudioPCMBuffer? in
-            guard let source = raw.baseAddress else { return nil }
-            memcpy(target, source, payload.count)
-            return buffer
-        }
+        // NOTE: Do NOT deactivate the audio session here. Deactivating while AI
+        // audio is still playing (during aiSpeaking→waitingUser transitions)
+        // uninitializes the AVAudioEngine internal graph, causing
+        // `required condition is false: inputNode != nullptr || outputNode != nullptr`
+        // on the next `engine.start()` or any node access. The session stays
+        // active across the full speaking-room session; it is only deactivated
+        // when the app explicitly ends the session or moves to background.
     }
 }
