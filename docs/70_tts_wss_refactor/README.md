@@ -82,17 +82,33 @@
 
 > **修订（2026-09-20，第二次）**：第二版（下面就收进修订记录的那版）核对的是 `d004869`。本轮接线与删除之后，行号与两行的存在性都变了：`TransportEventRouter` 已接线，`play(frame:)` 与 `AudioPlaybackGate` 已删除。下表按本轮之后的 HEAD 重新核对。
 
-| 组件 | 文件:行 |
+> **修订（2026-09-25，第三次）**：上一版之后 D14（`35dba0f`）与 D15（`493352d`）都改在 `SpeechSessionMiddleware` 与 `LiveAudioEngine` 里，**速查表的行号整体下移**。核对结果：
+>
+> | 锚点 | 上一版 | `493352d` |
+> |---|---|---|
+> | `makeTransportEventRouter` | `:568` | **`:710`** |
+> | 路由表组装 | `:880` | **`:1049`** |
+> | `router.route(event:)` 分发 | `:958` | **`:1127`** |
+> | `LiveAudioEngine.play(pcm:)` | `:697` | **`:830`** |
+> | `audioFrameDecoder` seam | `:566-571` | **`:663`** |
+> | 回滚注释块 | `:571` | **`:672-676`** |
+> | `RawPCM16FrameDecoder` | `:562-564` | **`:214`** |
+>
+> 仍然对得上的三处：`TTSPlaybackCoordinator.onAudioFrame:136`、`TransportEventRouter.route:63`、`WSControlFrame.wireType:174`。
+> 文件规模同时更新：`SpeechSessionMiddleware` **1735** 行（本节别处写的 1470 是 09-20 的计数）、`LiveAudioEngine` **1621** 行。
+> **注意**：工作区当时有未提交改动（`SpeechSessionMiddleware` 1754 行），**行号一律以 HEAD 为准**，不要按工作区数。
+
+| 组件 | 文件:行（@ `493352d`） |
 |------|---------|
 | **`TTSPlaybackCoordinator`**（唯一的播/丢决策点；裸帧入口 `onAudioFrame`） | `Shared/FluentWorkCore/TTS/TTSPlaybackCoordinator.swift:136-143` |
 | **`TransportEventRouter`**（传输事件的真实分发点） | `Shared/FluentWorkCore/Architecture/Middleware/TransportEventRouter.swift:63` |
-| **生产路由表**（四个 handler 就地定义在这里） | `Shared/FluentWorkCore/Architecture/Middleware/SpeechSessionMiddleware.swift:568`（`makeTransportEventRouter`），组装于 `:880`，分发于 `:958` |
+| **生产路由表**（四个 handler 就地定义在这里） | `Shared/FluentWorkCore/Architecture/Middleware/SpeechSessionMiddleware.swift:710`（`makeTransportEventRouter`），组装于 `:1049`，分发于 `:1127` |
 | **控制帧的路由键**（`String` 原始值取线上 discriminator；穷尽 switch） | `Shared/FluentWorkNetworking/Socket/WSControlFrame.swift:174`（`wireType`） |
-| 生产 DI：解码 seam（`audioFrameDecoder`）与「引擎即 sink」的绑定 | `Shared/FluentWorkCore/Dependencies/AppDependencies.swift:566-571`、`:74-80` |
-| 生产 DI 绑定处的回滚注释（**没有回滚开关**） | `Shared/FluentWorkCore/Dependencies/AppDependencies.swift:571` |
+| 生产 DI：解码 seam（`audioFrameDecoder`）与「引擎即 sink」的绑定 | `Shared/FluentWorkCore/Dependencies/AppDependencies.swift:663`、`:137`（`AudioEngineProtocol: AudioSink`） |
+| 生产 DI 绑定处的回滚注释（**没有回滚开关**） | `Shared/FluentWorkCore/Dependencies/AppDependencies.swift:672-676` |
 | `WSAudioFrame`（只有 seq、无 turn_id） | `Shared/FluentWorkNetworking/Socket/WSAudioFrameCodec.swift:9` |
-| **`LiveAudioEngine.play(pcm:)`**（引擎唯一的播放入口；`playbackRetired` 守卫在此） | `Shared/FluentWorkCore/Services/LiveAudioEngine.swift:697` |
-| `RawPCM16FrameDecoder`（`audioFrameDecoder` 的底层实现，一个 codec 两个调用点） | `Shared/FluentWorkCore/Dependencies/AppDependencies.swift:562-564` |
+| **`LiveAudioEngine.play(pcm:)`**（引擎唯一的播放入口；`playbackRetired` 守卫在此） | `Shared/FluentWorkCore/Services/LiveAudioEngine.swift:830` |
+| `RawPCM16FrameDecoder`（`audioFrameDecoder` 的底层实现，一个 codec 两个调用点） | `Shared/FluentWorkCore/Dependencies/AppDependencies.swift:214` |
 | ~~传输层的 barge-in 门~~ / ~~`AudioFrameDropGate.swift`~~ | **已删除**（2026-09-22）。整文件（`AudioFrameDropPolicy` / `AudioFrameDropGate` / `AudioDropReport` / `BargeInAudioGate`）连同 `SocketTransportDiagnostic.audioFrameDropped` 与 `SocketTransportProtocol.markInterrupted()` 一起删除。理由见 `18` §2 |
 | ~~`TTSFrameDispatcher`~~ / ~~`MockTTSDecoder`~~ | 已删除（Stage 4）。文件与 DI 绑定都不在了 |
 | ~~`LiveAudioEngine.play(frame:)`~~ / ~~`AudioPlaybackGate`~~ | **已删除**（2026-09-20）。理由与证据见 `07` §2 |

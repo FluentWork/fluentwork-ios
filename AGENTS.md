@@ -69,11 +69,20 @@ The implementation note's test section must quote the **actual pre-fix failure o
 ## Testing Index
 
 The test-discipline documents that used to be listed here were removed with `docs/`
-on 2026-09-20 (TTS/WSS refactor reset). The surviving statement of hermetic-test
-policy is the doubles list under **Defect Fix Discipline**: reproduce with
-`InMemorySocketTransport`, `StubAudioEngine`, `StubSpeechSessionClient`, or
-`FixedClock` rather than the device. The existing tests are now the spec — read the
-test file next to the code you are changing before you change it.
+on 2026-09-20 (TTS/WSS refactor reset). `docs/` has since been rebuilt as two
+series — `docs/70_tts_wss_refactor/` (per-ticket implementation notes, D1–D15) and
+`docs/80_架构分析/` (whole-repo architecture analysis) — but neither restates the
+hermetic-test policy, so it still lives only here.
+
+The surviving statement of hermetic-test policy is the doubles list under
+**Defect Fix Discipline**: reproduce with `InMemorySocketTransport`,
+`StubAudioEngine`, `StubSpeechSessionClient`, or `FixedClock` rather than the
+device. The existing tests are now the spec — read the test file next to the code
+you are changing before you change it.
+
+Where current status lives: `docs/80_架构分析/05_问题清单与建议.md` (S0/S1/S2) and
+`docs/70_tts_wss_refactor/README.md` (per-ticket state). Environment bring-up is in
+`fluentwork-meta/docs/40_研发流程与协作/82_FluentWork环境启动总览.md`.
 
 ## Local Review Gate
 

@@ -67,20 +67,23 @@ After `./Scripts/setup-git-hooks.sh`, `core.hooksPath` points at `.githooks`. Th
 
 Product and architecture decisions should come from `fluentwork-meta`.
 
-## Current Initialization Status
+## Current Status
 
-This repository currently includes:
+As of 2026-09-25 the repository is past initialization:
 
-- `CLAUDE.md`
-- `AGENTS.md`
-- `CODEOWNERS`
-- `Package.swift`
-- `.github/workflows/agent-config-check.yml`
-- `.github/workflows/ios-ci.yml`
-- `.githooks/pre-commit` + `Scripts/setup-git-hooks.sh`
-- `Scripts/swift-format-staged.sh` + `Scripts/swiftlint-staged.sh`
-- executable Swift package baseline
-- initial directory skeleton
+- ~100 production `.swift` files across seven SPM targets (`Shared/`) plus `App/`
+- 591 `@Test` cases under `Tests/FluentWorkCoreTests/`
+- local tooling: `CLAUDE.md`, `AGENTS.md`, `CODEOWNERS`, `Package.swift`,
+  `.github/workflows/{agent-config-check,ios-ci}.yml`,
+  `.githooks/pre-commit` + `Scripts/setup-git-hooks.sh`,
+  `Scripts/swift-format-staged.sh` + `Scripts/swiftlint-staged.sh`
+- `Modules/` is still an empty placeholder (only `.gitkeep`)
+
+Progress and open items:
+
+- `docs/80_架构分析/05_问题清单与建议.md` — S0/S1/S2 list for the whole repo
+- `docs/70_tts_wss_refactor/README.md` — TTS/WSS ticket-by-ticket state (D1–D15)
+- environment bring-up: `fluentwork-meta/docs/40_研发流程与协作/82_FluentWork环境启动总览.md`
 
 ## Agent Tooling
 
