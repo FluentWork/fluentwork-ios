@@ -67,7 +67,19 @@ public enum AudioEngineEvent: Equatable, Sendable {
     /// believed to be up), and `startAttempted` + `startThrew` (it was started,
     /// did not throw, and is nevertheless not running). Measured on device
     /// 2026-09-20: armed with `running: false` and a tap that never fired.
-    case captureArmed(wasRunning: Bool, startAttempted: Bool, startThrew: Bool, running: Bool)
+    /// `session` is the shared `AVAudioSession`'s category/mode at this instant,
+    /// as reported by `LiveAudioEngine.describeSession()`.
+    ///
+    /// The four booleans say *that* the engine is not running; only this says
+    /// *why*, and the two candidate causes are indistinguishable without it. An
+    /// `AVAudioEngine` stops itself when its session is reconfigured — without
+    /// executing a line of the engine's code — so `running: false` after a
+    /// successful start and a successful keep-alive kick means something outside
+    /// the engine took the session. A category other than `.playAndRecord` names
+    /// the thief. Measured on device 2026-09-24.
+    case captureArmed(
+        wasRunning: Bool, startAttempted: Bool, startThrew: Bool, running: Bool, session: String
+    )
     /// The tap delivered its first buffer of this capture session.
     ///
     /// Once per session, like `captureDropped`. Absent means the tap was

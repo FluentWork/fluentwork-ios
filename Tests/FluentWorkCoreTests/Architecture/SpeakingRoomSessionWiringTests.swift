@@ -520,6 +520,50 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(store.state.speakingRoom.phase == .aiSpeaking)
 }
 
+/// `.interruptedBySystem` 现在留下痕迹了。
+///
+/// 2026-09-24 真机上，一次「`engine.start()` 没抛错、`:617` 的守卫也过了，引擎却
+/// 在几十毫秒后不再运行」的失败无法归因。唯一能解释它的正是 `.interruptedBySystem`
+/// —— 而它当时**只派发、不埋点**，于是有没有它，日志长得一模一样。失败按构造不可观测。
+///
+/// 独立成条，而不是并进上面那张表：这条事件会**挂起状态机**，并进去就等于顺带
+/// 改动了表里其余每一条的到达条件。（第一版就是那么写的，`swift test` 上红。）
+@MainActor
+@Test func systemInterruptionIsVisibleInTheTracker() async throws {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    let tracker = CapturingTracker()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+    container.tracker.register { tracker }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .connecting
+    }
+    makeSessionLive(store)
+    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+        store.state.speakingRoom.phase == .aiSpeaking
+    }
+
+    audioEngine.emit(.interruptedBySystem)
+    try? await waitUntil(timeoutNanoseconds: 2_000_000_000) {
+        tracker.events.contains { $0.name == "timing_session_interrupted_by_system" }
+    }
+
+    let hit = try #require(
+        tracker.events.first { $0.name == "timing_session_interrupted_by_system" },
+        "系统中断发生了却没有任何 tracker 记录——这正是这次要修的可观测性洞"
+    )
+    // 事件本身不带属性（中断没有可报道的参数），但记录器总会补上这三个。
+    // 断言它们存在是为了钉住「它走的仍是同一个 mark 通道」，而不是被谁另起了一条。
+    #expect(hit.properties["total_ms"] != nil)
+    #expect(hit.properties["prev_event"] != nil)
+}
+
 /// 上行采集诊断的**埋点名与属性键**：一张表，把 11 条 `timing_*` 钉死。
 ///
 /// ## 为什么这张表必须存在
@@ -541,6 +585,11 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 /// 唯一区分手段（`LiveAudioEngine` 那段注释：`running: false` 有两种成因，终态分不开），
 /// 改掉一个键就把它降级成一条无法判读的日志。
 ///
+/// `session` 是同一理由的延续：2026-09-24 真机上，keep-alive kick 报了 `playing`
+/// （即 `startKeepAlive` 刚确认过引擎在跑），而这一行的 `running` 仍是 false，
+/// 中间只有两个 `yield`、没有可交错点。四个布尔到此为止，只有 `session` 能指出
+/// 是**谁**把 session 拿走了。
+///
 /// ## 两处顺序约束
 ///
 /// - `.speechEnded` 要求闸门已开（`guard speechCaptureGate.isOpen`），所以排在
@@ -548,6 +597,10 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 /// - `.failed` 排在最后：它会把会话推进 `.failed`（`endSession` 随之触发）。
 ///   它同时充当**屏障**——事件是逐条串行处理的，等到 `timing_audio_engine_failed`
 ///   出现，前面 10 条必然都已经处理完了。
+///
+/// `.interruptedBySystem` 的埋点**刻意不在这张表里**，也不在这条事件流里：
+/// 它会把状态机挂起，插进来就同时改动了其余每一条的到达条件。它有自己的测试
+/// （`systemInterruptionIsVisibleInTheTracker`），那条只做一件事。
 @MainActor
 @Test func captureDiagnosticsKeepTheirMarkNamesAndPropertyKeys() async throws {
     let container = Container()
@@ -570,7 +623,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     }
 
     // 采集图的自报（7 条，全部是纯埋点，不派发、不依赖相位）。
-    audioEngine.emit(.captureArmed(wasRunning: false, startAttempted: true, startThrew: false, running: true))
+    audioEngine.emit(.captureArmed(wasRunning: false, startAttempted: true, startThrew: false, running: true, session: "category=AVAudioSessionCategoryPlayAndRecord mode=AVAudioSessionModeVoiceChat sampleRate=48000 otherAudio=false duckHint=false"))
     audioEngine.emit(.captureKick(started: true, detail: "kick-ok"))
     audioEngine.emit(.captureFirstBuffer)
     audioEngine.emit(.captureDropped(reason: "convert-failed"))
@@ -594,7 +647,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     let expected: [(name: String, keys: Set<String>)] = [
         ("timing_vad_speech_start", []),
         ("timing_audio_uplink_turn", ["forwarded", "dropped_outside"]),
-        ("timing_audio_capture_armed", ["was_running", "start_attempted", "start_threw", "running"]),
+        ("timing_audio_capture_armed", ["was_running", "start_attempted", "start_threw", "running", "session"]),
         ("timing_audio_capture_kick", ["started", "detail"]),
         ("timing_audio_capture_first_buffer", []),
         ("timing_audio_capture_dropped", ["reason"]),

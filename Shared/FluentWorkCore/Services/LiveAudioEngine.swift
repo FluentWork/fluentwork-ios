@@ -647,7 +647,12 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             wasRunning: wasRunning,
             startAttempted: startAttempted,
             startThrew: startThrew,
-            running: engine.isRunning
+            running: engine.isRunning,
+            // Read here, at the moment the answer is `false`, because the two
+            // ways the engine can already be stopped — the system interrupted
+            // us, or another component reconfigured the shared session — leave
+            // no other trace. See `describeSession()`.
+            session: Self.describeSession()
         ))
     }
 
@@ -1357,6 +1362,42 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         return "\(Int(format.sampleRate))Hz/\(format.channelCount)ch"
     }
 
+    /// Short description of the shared audio session, read at the moment a
+    /// start failed.
+    ///
+    /// An `AVAudioEngine` stops itself when the session it is running on is
+    /// deactivated, or when that session's category stops supporting input —
+    /// and it does so without executing a line of ours, so `isRunning` going
+    /// false leaves no stack to read. The category and mode are the tell:
+    /// anything but `.playAndRecord`/`.voiceChat` while a capture session is
+    /// expected means another component in this app took the session, which is
+    /// a different bug from a system interruption and wants a different fix.
+    /// Measured on device 2026-09-24, where the engine was confirmed running
+    /// and then was not, with no line of this file in between.
+    ///
+    /// No `isActive` here — `AVAudioSession` exposes `setActive` but **no**
+    /// getter for it, so activity is not reportable and must not be faked from
+    /// the manager's own flag (that flag is never cleared in production; see
+    /// `DailyReadAudioPlayer.configurePlaybackCategoryIfUncontested`).
+    ///
+    /// `sampleRate` stands in for it, and it is the reading that matters most:
+    /// category and mode survive deactivation, so a session that has been
+    /// switched off still reports `playAndRecord`/`voiceChat` while the engine
+    /// it was carrying has already stopped. A deactivated session reports a
+    /// **zero** sample rate. This is a proxy, not an API — measured on device
+    /// 2026-09-24, where category and mode were both correct and correctly
+    /// reported nothing wrong.
+    nonisolated static func describeSession() -> String {
+        #if os(iOS)
+        let session = AVAudioSession.sharedInstance()
+        return "category=\(session.category.rawValue) mode=\(session.mode.rawValue)"
+            + " sampleRate=\(Int(session.sampleRate)) otherAudio=\(session.isOtherAudioPlaying)"
+            + " duckHint=\(session.secondaryAudioShouldBeSilencedHint)"
+        #else
+        return "session=n/a"
+        #endif
+    }
+
     private func convertToPCM16(_ buffer: AVAudioPCMBuffer) throws -> Data? {
         guard let converter, let sourceFormat else { return nil }
 
@@ -1570,7 +1611,16 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             return (false, "keep-alive buffer could not be built")
         }
         guard engine.isRunning else {
-            return (false, "engine not running")
+            // Two ways an engine can be stopped again this soon after `start()`
+            // returned, and they need different fixes: the system interrupted
+            // us, or something in this app reconfigured the shared session out
+            // from under us. Both leave `isRunning` false with no error
+            // anywhere, so the detail has to say which — a bare "engine not
+            // running" is what made the 2026-09-24 device failure unreadable.
+            return (
+                false,
+                "engine not running (interrupted=\(isSystemInterrupted), \(Self.describeSession()))"
+            )
         }
         guard keepAliveNode.engine === engine else {
             keepAliveAttached = false

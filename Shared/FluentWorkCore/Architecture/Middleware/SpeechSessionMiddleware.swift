@@ -554,6 +554,16 @@ private func audioEventPump(
                     }
     
                 case .interruptedBySystem:
+                    // The one event that can stop a running AVAudioEngine
+                    // without a line of our code executing — the system tears
+                    // the session down underneath us — and until now the only
+                    // member of its family that left no trace. Dispatch alone is
+                    // invisible to the tracker, so a session killed by an
+                    // interruption looked identical to one killed by anything
+                    // else, and neither could be told from the log. Same gap
+                    // `.captureInterruptionLifted` closes at the other end of
+                    // this interruption.
+                    timings.mark(event: "session_interrupted_by_system")
                     await dispatchBox.dispatch(.speakingRoom(.session(.interruptedBySystem)))
     
                 case let .captureKick(started, detail):
@@ -627,12 +637,20 @@ private func audioEventPump(
                     // capture session by the engine.
                     timings.mark(event: "audio_capture_dropped", properties: ["reason": reason])
 
-                case let .captureArmed(wasRunning, startAttempted, startThrew, running):
+                case let .captureArmed(wasRunning, startAttempted, startThrew, running, session):
                     // Proves the graph was armed, not merely that it reached the
                     // format read. The four flags describe the start transition:
                     // "not running" is either "skipped, believed up" or
                     // "started, did not throw, still not running" — different
                     // bugs with one symptom.
+                    //
+                    // `session` narrows those further. Measured on device
+                    // 2026-09-24: the keep-alive kick reported `playing` — which
+                    // means `startKeepAlive` had just confirmed the engine was
+                    // running — and `running` here was still false, with nothing
+                    // but two `yield`s in between and no `await` to interleave.
+                    // Something outside the engine stopped it, and a category
+                    // other than `.playAndRecord` names which.
                     timings.mark(
                         event: "audio_capture_armed",
                         properties: [
@@ -640,6 +658,7 @@ private func audioEventPump(
                             "start_attempted": startAttempted ? "true" : "false",
                             "start_threw": startThrew ? "true" : "false",
                             "running": running ? "true" : "false",
+                            "session": session,
                         ]
                     )
 

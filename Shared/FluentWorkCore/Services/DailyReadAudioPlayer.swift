@@ -120,11 +120,41 @@ public final class DailyReadAudioPlayer: NSObject, DailyReadAudioPlayerProtocol,
 
   // MARK: - Private
 
+  #if os(iOS)
+  /// Switches the shared session to playback — unless the speaking room is
+  /// holding it.
+  ///
+  /// `AVAudioSession` is one object for the whole process, and two components
+  /// here configure it: `LiveAudioEngine` takes it as `.playAndRecord` +
+  /// `.voiceChat` for the speaking room, while this player wants `.playback` so
+  /// the Daily Read keeps going with the screen locked. Changing the category
+  /// away from `.playAndRecord` tears down the input route, which stops a
+  /// running `AVAudioEngine` without executing a single line of its code. On
+  /// device 2026-09-24 that left a practice session stuck in `.connecting`
+  /// until the 10s watchdog failed it, and nothing in the engine's own logs
+  /// could say why — the engine was confirmed running, then it was not, with no
+  /// stack to read.
+  ///
+  /// `AVPlayer` plays perfectly well under `.playAndRecord`, so the Daily Read
+  /// does not need to win this argument; it only needs to not lose it on the
+  /// room's behalf.
+  ///
+  /// The check reads the real category rather than a flag someone maintains,
+  /// because the only such flag — `DefaultAudioSessionManager.active` — is
+  /// never cleared in production: its `pause()` has no callers outside tests,
+  /// so it would report "the room is live" forever and silently disable Daily
+  /// Read audio instead.
+  private func configurePlaybackCategoryIfUncontested(_ session: AVAudioSession) throws {
+    guard session.category != .playAndRecord else { return }
+    try session.setCategory(.playback, mode: .spokenAudio, options: [])
+  }
+  #endif
+
   private func configureForBackgroundPlayback() {
     #if os(iOS)
     do {
       let session = AVAudioSession.sharedInstance()
-      try session.setCategory(.playback, mode: .spokenAudio, options: [])
+      try configurePlaybackCategoryIfUncontested(session)
     } catch {
       eventsContinuation.yield(.failed(error.localizedDescription))
     }
@@ -134,7 +164,7 @@ public final class DailyReadAudioPlayer: NSObject, DailyReadAudioPlayerProtocol,
   private func configureAudioSessionForPlayback() throws {
     #if os(iOS)
     let session = AVAudioSession.sharedInstance()
-    try session.setCategory(.playback, mode: .spokenAudio, options: [])
+    try configurePlaybackCategoryIfUncontested(session)
     try session.setActive(true)
     #endif
   }
