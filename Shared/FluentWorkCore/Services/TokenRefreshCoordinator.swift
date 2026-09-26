@@ -75,7 +75,7 @@ public actor TokenRefreshCoordinator {
         
         // 4. Token 即将过期，需要刷新
         cachedTokenCheck = nil // 清除缓存
-        return try await refreshTokenIfNeeded(currentToken: token)
+        return try await refreshTokenIfNeeded()
     }
     
     /// 处理 401 错误，强制刷新 token
@@ -87,13 +87,13 @@ public actor TokenRefreshCoordinator {
     ///          `TokenError.refreshFailed` 如果刷新失败
     public func handle401Error() async throws -> AuthToken {
         cachedTokenCheck = nil // 清除缓存，因为 token 已经无效
-        
-        guard let token = try await tokenStore.loadAccessToken() else {
+
+        guard try await tokenStore.loadAccessToken() != nil else {
             throw TokenError.noToken
         }
 
         // 强制刷新（忽略过期时间）
-        return try await refreshTokenIfNeeded(currentToken: token, force: true)
+        return try await refreshTokenIfNeeded(force: true)
     }
     
     // MARK: - Private Helpers
@@ -102,12 +102,9 @@ public actor TokenRefreshCoordinator {
     ///
     /// 如果已经有刷新任务在进行，会等待现有任务完成（防止惊群）
     ///
-    /// - Parameters:
-    ///   - currentToken: 当前的 token
-    ///   - force: 是否强制刷新（忽略过期检查）
+    /// - Parameter force: 是否强制刷新（忽略过期检查）
     /// - Returns: 刷新后的新 token
     private func refreshTokenIfNeeded(
-        currentToken: AuthToken,
         force: Bool = false
     ) async throws -> AuthToken {
         // 如果已经有刷新任务在进行，等待它完成（防惊群）
@@ -117,12 +114,23 @@ public actor TokenRefreshCoordinator {
         
         // 创建新的刷新任务
         let task = Task<AuthToken, Error> {
-            do {
-                // 调用 API 刷新 token
-                let newToken = try await sessionAPI.refreshToken(currentToken.value)
+            guard let refreshToken = try await tokenStore.refreshToken(), !refreshToken.isEmpty else {
+                cachedTokenCheck = nil
+                throw TokenError.noToken
+            }
 
-                // 保存新 token
-                try await tokenStore.saveAccessToken(newToken)
+            do {
+                // 调用 API 用 refresh token 换新令牌对
+                let tokens = try await sessionAPI.refreshToken(refreshToken)
+
+                // 保存新令牌对（含轮换后的 refresh token）
+                let deviceID = try await tokenStore.deviceID()
+                try await tokenStore.save(tokens: tokens, deviceID: deviceID)
+
+                let newToken = AuthToken(
+                    value: tokens.accessToken,
+                    expiresAt: currentTime().addingTimeInterval(TimeInterval(tokens.expiresIn))
+                )
 
                 // 更新缓存
                 cachedTokenCheck = (newToken, currentTime())

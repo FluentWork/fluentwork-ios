@@ -122,6 +122,7 @@ private final class RecordingSpeechSessionTokenStore: AuthTokenStoreProtocol, @u
     func isGuest() async throws -> Bool { true }
     func loadAccessToken() async throws -> AuthToken? { seededAccessToken }
     func saveAccessToken(_ token: AuthToken) async throws { seededAccessToken = token }
+    func refreshToken() async throws -> String? { savedTokenResponse?.refreshToken }
 }
 
 @MainActor

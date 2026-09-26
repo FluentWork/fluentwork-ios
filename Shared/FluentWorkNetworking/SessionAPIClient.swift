@@ -18,8 +18,8 @@ public protocol SessionAPIClientProtocol: Sendable {
         text: String,
         channel: String
     ) async throws -> PostMessageResponse
-    /// Refresh access token using current token
-    func refreshToken(_ accessToken: String) async throws -> AuthToken
+    /// Exchange a refresh token for a fresh token pair (the credential rotates).
+    func refreshToken(_ refreshToken: String) async throws -> TokenResponse
 }
 
 public final class SessionAPIClient: SessionAPIClientProtocol, Sendable {
@@ -87,15 +87,10 @@ public final class SessionAPIClient: SessionAPIClientProtocol, Sendable {
         )
     }
     
-    public func refreshToken(_ accessToken: String) async throws -> AuthToken {
-        let tokenResponse = try await decode(
+    public func refreshToken(_ refreshToken: String) async throws -> TokenResponse {
+        try await decode(
             TokenResponse.self,
-            .refreshToken(accessToken: accessToken)
-        )
-        let expiresAt = Date().addingTimeInterval(TimeInterval(tokenResponse.expiresIn))
-        return AuthToken(
-            value: tokenResponse.accessToken,
-            expiresAt: expiresAt
+            .refreshToken(refreshToken: refreshToken)
         )
     }
 

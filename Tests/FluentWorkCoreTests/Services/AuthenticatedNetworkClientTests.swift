@@ -35,6 +35,7 @@ struct AuthenticatedNetworkClientTests {
         private var _userID: String?
         private var _isGuest = false
         var savedAccessToken: AuthToken?
+        var savedRefreshToken: String?
 
         func loadAccessToken() async throws -> AuthToken? {
             savedAccessToken
@@ -42,6 +43,10 @@ struct AuthenticatedNetworkClientTests {
 
         func saveAccessToken(_ token: AuthToken) async throws {
             savedAccessToken = token
+        }
+
+        func refreshToken() async throws -> String? {
+            savedRefreshToken
         }
 
         func deviceID() async throws -> String { _deviceID }
@@ -55,6 +60,7 @@ struct AuthenticatedNetworkClientTests {
                 value: tokens.accessToken,
                 expiresAt: Date().addingTimeInterval(3600)
             )
+            savedRefreshToken = tokens.refreshToken
             _deviceID = deviceID
             _userID = tokens.userID
             _isGuest = tokens.isGuest
@@ -62,6 +68,7 @@ struct AuthenticatedNetworkClientTests {
 
         func clear() async throws {
             savedAccessToken = nil
+            savedRefreshToken = nil
             _userID = nil
             _isGuest = false
         }
@@ -71,10 +78,10 @@ struct AuthenticatedNetworkClientTests {
     }
     
     final class MockSessionAPI: SessionAPIClientProtocol, @unchecked Sendable {
-        var refreshTokenStub: AuthToken?
+        var refreshTokenStub: TokenResponse?
         var refreshTokenCallCount = 0
         
-        func refreshToken(_ accessToken: String) async throws -> AuthToken {
+        func refreshToken(_ refreshToken: String) async throws -> TokenResponse {
             refreshTokenCallCount += 1
             guard let stub = refreshTokenStub else {
                 throw APIError.backend(code: "no_stub", message: "No refresh stub")
@@ -187,10 +194,15 @@ struct AuthenticatedNetworkClientTests {
             value: "old-token",
             expiresAt: fixedTime.addingTimeInterval(3 * 60)
         )
+        tokenStore.savedRefreshToken = "stored-refresh-token"
         
-        sessionAPI.refreshTokenStub = AuthToken(
-            value: "refreshed-token",
-            expiresAt: fixedTime.addingTimeInterval(60 * 60)
+        sessionAPI.refreshTokenStub = TokenResponse(
+            userID: "user-1",
+            isGuest: true,
+            status: "active",
+            accessToken: "refreshed-token",
+            refreshToken: "rotated-refresh-token",
+            expiresIn: 3600
         )
         
         let coordinator = TokenRefreshCoordinator(
@@ -228,10 +240,15 @@ struct AuthenticatedNetworkClientTests {
             value: "expired-token",
             expiresAt: fixedTime.addingTimeInterval(60 * 60)
         )
+        tokenStore.savedRefreshToken = "stored-refresh-token"
         
-        sessionAPI.refreshTokenStub = AuthToken(
-            value: "new-token",
-            expiresAt: fixedTime.addingTimeInterval(60 * 60)
+        sessionAPI.refreshTokenStub = TokenResponse(
+            userID: "user-1",
+            isGuest: true,
+            status: "active",
+            accessToken: "new-token",
+            refreshToken: "rotated-refresh-token",
+            expiresIn: 3600
         )
         
         // First call returns 401, second succeeds

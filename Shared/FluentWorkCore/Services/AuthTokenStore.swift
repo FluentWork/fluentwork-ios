@@ -40,6 +40,9 @@ public protocol AuthTokenStoreProtocol: Sendable {
 
     /// Save access token with expiration time
     func saveAccessToken(_ token: AuthToken) async throws
+
+    /// Load the stored refresh token, or nil when the session has none.
+    func refreshToken() async throws -> String?
 }
 
 public struct SecureAuthTokenStore: AuthTokenStoreProtocol {
@@ -133,5 +136,12 @@ public struct SecureAuthTokenStore: AuthTokenStoreProtocol {
         // Save expiration time as timestamp
         let expiresAtTimestamp = String(token.expiresAt.timeIntervalSince1970)
         try await storage.write(Data(expiresAtTimestamp.utf8), key: AuthTokenStoreKey.accessTokenExpiresAt)
+    }
+
+    public func refreshToken() async throws -> String? {
+        guard let data = try await storage.read(key: AuthTokenStoreKey.refreshToken) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
     }
 }

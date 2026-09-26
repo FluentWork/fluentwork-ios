@@ -13,6 +13,8 @@ struct TokenRefreshCoordinatorTests {
         var loadAccessTokenCallCount = 0
         var saveAccessTokenCallCount = 0
         var clearAllTokensCallCount = 0
+        var storedRefreshToken: String? = "stored-refresh-token"
+        var lastSavedTokens: TokenResponse?
         private var _deviceID = "test-device"
         private var _userID: String?
         private var _isGuest = false
@@ -27,6 +29,10 @@ struct TokenRefreshCoordinatorTests {
             savedAccessToken = token
         }
 
+        func refreshToken() async throws -> String? {
+            storedRefreshToken
+        }
+
         // Required by AuthTokenStoreProtocol
         func deviceID() async throws -> String {
             _deviceID
@@ -37,6 +43,8 @@ struct TokenRefreshCoordinatorTests {
         }
 
         func save(tokens: TokenResponse, deviceID: String) async throws {
+            lastSavedTokens = tokens
+            storedRefreshToken = tokens.refreshToken
             savedAccessToken = AuthToken(
                 value: tokens.accessToken,
                 expiresAt: Date().addingTimeInterval(3600)
@@ -49,6 +57,7 @@ struct TokenRefreshCoordinatorTests {
         func clear() async throws {
             clearAllTokensCallCount += 1
             savedAccessToken = nil
+            storedRefreshToken = nil
             _userID = nil
             _isGuest = false
         }
@@ -63,14 +72,14 @@ struct TokenRefreshCoordinatorTests {
     }
     
     final class MockSessionAPI: SessionAPIClientProtocol, @unchecked Sendable {
-        var refreshTokenStub: AuthToken?
+        var refreshTokenStub: TokenResponse?
         var refreshTokenError: Error?
         var refreshTokenCallCount = 0
         var lastRefreshTokenInput: String?
         
-        func refreshToken(_ accessToken: String) async throws -> AuthToken {
+        func refreshToken(_ refreshToken: String) async throws -> TokenResponse {
             refreshTokenCallCount += 1
-            lastRefreshTokenInput = accessToken
+            lastRefreshTokenInput = refreshToken
             
             if let error = refreshTokenError {
                 throw error
@@ -147,10 +156,15 @@ struct TokenRefreshCoordinatorTests {
             value: "old-token",
             expiresAt: soonExpiry
         )
+        tokenStore.storedRefreshToken = "stored-refresh-token"
         
-        sessionAPI.refreshTokenStub = AuthToken(
-            value: "new-token",
-            expiresAt: fixedTime.addingTimeInterval(60 * 60)
+        sessionAPI.refreshTokenStub = TokenResponse(
+            userID: "user-1",
+            isGuest: true,
+            status: "active",
+            accessToken: "new-token",
+            refreshToken: "rotated-refresh-token",
+            expiresIn: 3600
         )
         
         let coordinator = TokenRefreshCoordinator(
@@ -166,8 +180,74 @@ struct TokenRefreshCoordinatorTests {
         // Then: 刷新并返回新 token
         #expect(result.value == "new-token")
         #expect(sessionAPI.refreshTokenCallCount == 1)
-        #expect(sessionAPI.lastRefreshTokenInput == "old-token")
-        #expect(tokenStore.saveAccessTokenCallCount == 1)
+        #expect(sessionAPI.lastRefreshTokenInput == "stored-refresh-token")
+    }
+
+    @Test("refresh persists the rotated credential, not only the access token")
+    func refreshToken_persistsTheRotatedCredential() async throws {
+        let tokenStore = MockTokenStore()
+        let sessionAPI = MockSessionAPI()
+        let fixedTime = Date()
+
+        tokenStore.savedAccessToken = AuthToken(
+            value: "expired-access",
+            expiresAt: fixedTime.addingTimeInterval(-60)
+        )
+        tokenStore.storedRefreshToken = "stored-refresh-token"
+        sessionAPI.refreshTokenStub = TokenResponse(
+            userID: "user-1",
+            isGuest: true,
+            status: "active",
+            accessToken: "fresh-access",
+            refreshToken: "rotated-refresh-token",
+            expiresIn: 3600
+        )
+
+        let coordinator = TokenRefreshCoordinator(
+            tokenStore: tokenStore,
+            sessionAPI: sessionAPI,
+            expiryBuffer: 5 * 60,
+            currentTime: { fixedTime }
+        )
+
+        let result = try await coordinator.getValidToken()
+
+        #expect(result.value == "fresh-access")
+        #expect(tokenStore.lastSavedTokens?.refreshToken == "rotated-refresh-token")
+        #expect(tokenStore.storedRefreshToken == "rotated-refresh-token")
+    }
+
+    @Test("refresh without a stored credential throws noToken and never calls the API")
+    func refreshToken_withoutStoredCredential_throwsNoToken() async throws {
+        let tokenStore = MockTokenStore()
+        let sessionAPI = MockSessionAPI()
+        let fixedTime = Date()
+
+        tokenStore.savedAccessToken = AuthToken(
+            value: "expiring-access",
+            expiresAt: fixedTime.addingTimeInterval(60)
+        )
+        tokenStore.storedRefreshToken = nil
+        sessionAPI.refreshTokenStub = TokenResponse(
+            userID: "user-1",
+            isGuest: true,
+            status: "active",
+            accessToken: "fresh-access",
+            refreshToken: "rotated-refresh-token",
+            expiresIn: 3600
+        )
+
+        let coordinator = TokenRefreshCoordinator(
+            tokenStore: tokenStore,
+            sessionAPI: sessionAPI,
+            expiryBuffer: 5 * 60,
+            currentTime: { fixedTime }
+        )
+
+        await #expect(throws: TokenError.noToken) {
+            try await coordinator.getValidToken()
+        }
+        #expect(sessionAPI.refreshTokenCallCount == 0)
     }
     
     // MARK: - Test: No Token
@@ -205,9 +285,13 @@ struct TokenRefreshCoordinatorTests {
         )
         
         // 模拟慢速刷新（100ms）
-        sessionAPI.refreshTokenStub = AuthToken(
-            value: "new-token",
-            expiresAt: fixedTime.addingTimeInterval(60 * 60)
+        sessionAPI.refreshTokenStub = TokenResponse(
+            userID: "user-1",
+            isGuest: true,
+            status: "active",
+            accessToken: "new-token",
+            refreshToken: "rotated-refresh-token",
+            expiresIn: 3600
         )
         
         let coordinator = TokenRefreshCoordinator(
@@ -253,9 +337,13 @@ struct TokenRefreshCoordinatorTests {
             expiresAt: futureExpiry
         )
         
-        sessionAPI.refreshTokenStub = AuthToken(
-            value: "new-token",
-            expiresAt: fixedTime.addingTimeInterval(60 * 60)
+        sessionAPI.refreshTokenStub = TokenResponse(
+            userID: "user-1",
+            isGuest: true,
+            status: "active",
+            accessToken: "new-token",
+            refreshToken: "rotated-refresh-token",
+            expiresIn: 3600
         )
         
         let coordinator = TokenRefreshCoordinator(
@@ -322,9 +410,13 @@ struct TokenRefreshCoordinatorTests {
             expiresAt: boundaryExpiry
         )
         
-        sessionAPI.refreshTokenStub = AuthToken(
-            value: "new-token",
-            expiresAt: fixedTime.addingTimeInterval(60 * 60)
+        sessionAPI.refreshTokenStub = TokenResponse(
+            userID: "user-1",
+            isGuest: true,
+            status: "active",
+            accessToken: "new-token",
+            refreshToken: "rotated-refresh-token",
+            expiresIn: 3600
         )
         
         let coordinator = TokenRefreshCoordinator(
@@ -355,9 +447,13 @@ struct TokenRefreshCoordinatorTests {
             expiresAt: pastExpiry
         )
         
-        sessionAPI.refreshTokenStub = AuthToken(
-            value: "new-token",
-            expiresAt: fixedTime.addingTimeInterval(60 * 60)
+        sessionAPI.refreshTokenStub = TokenResponse(
+            userID: "user-1",
+            isGuest: true,
+            status: "active",
+            accessToken: "new-token",
+            refreshToken: "rotated-refresh-token",
+            expiresIn: 3600
         )
         
         let coordinator = TokenRefreshCoordinator(

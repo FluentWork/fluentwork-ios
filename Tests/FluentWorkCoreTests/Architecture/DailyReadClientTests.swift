@@ -178,7 +178,7 @@ private final class StubSessionAPIClient: SessionAPIClientProtocol, @unchecked S
     throw IssueMismatch()
   }
   
-  func refreshToken(_ accessToken: String) async throws -> AuthToken {
+  func refreshToken(_ refreshToken: String) async throws -> TokenResponse {
     throw IssueMismatch()
   }
 }
@@ -193,6 +193,7 @@ private final class StubSessionAPIClient: SessionAPIClientProtocol, @unchecked S
 private final class InMemoryAuthTokenStore: AuthTokenStoreProtocol, @unchecked Sendable {
   private struct State {
     var accessToken: String?
+    var refreshToken: String?
     var deviceID: String
     var userID: String?
     var isGuest: Bool = true
@@ -217,6 +218,7 @@ private final class InMemoryAuthTokenStore: AuthTokenStoreProtocol, @unchecked S
   func save(tokens: TokenResponse, deviceID: String) async throws {
     storage.withLock { state in
       state.accessToken = tokens.accessToken
+      state.refreshToken = tokens.refreshToken
       state.deviceID = deviceID
       state.userID = tokens.userID
       state.isGuest = tokens.isGuest
@@ -226,6 +228,7 @@ private final class InMemoryAuthTokenStore: AuthTokenStoreProtocol, @unchecked S
   func clear() async throws {
     storage.withLock { state in
       state.accessToken = nil
+      state.refreshToken = nil
       state.userID = nil
       state.isGuest = true
     }
@@ -251,6 +254,10 @@ private final class InMemoryAuthTokenStore: AuthTokenStoreProtocol, @unchecked S
 
   func saveAccessToken(_ token: AuthToken) async throws {
     storage.withLock { $0.accessToken = token.value }
+  }
+
+  func refreshToken() async throws -> String? {
+    storage.withLock { $0.refreshToken }
   }
 }
 

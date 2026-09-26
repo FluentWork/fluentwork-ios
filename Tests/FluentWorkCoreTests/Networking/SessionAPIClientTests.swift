@@ -213,6 +213,41 @@ private enum NetworkClientCancellationTarget: FluentWorkTargetType {
     #expect(merged.alreadyMerged == false)
 }
 
+@Test func sessionAPIClientRefreshesWithTheRefreshTokenInTheBody() async throws {
+    let refreshedJSON = Data(
+        """
+        {
+          "user_id":"u-1",
+          "is_guest":true,
+          "status":"active",
+          "access_token":"fresh-access",
+          "refresh_token":"rotated-refresh",
+          "token_type":"Bearer",
+          "expires_in":7200
+        }
+        """.utf8
+    )
+    let client = SessionAPIClient(
+        network: StubNetworkClient { target in
+            #expect(target.path == "/auth/refresh")
+            #expect(target.method == .post)
+            #expect(target.headers?["Authorization"] == nil)
+            if case let .requestParameters(parameters, _) = target.task {
+                #expect(parameters["refresh_token"] as? String == "stored-refresh-token")
+            } else {
+                Issue.record("expected a JSON body carrying refresh_token")
+            }
+            return refreshedJSON
+        },
+        baseURL: URL(string: "http://127.0.0.1:8080/api/v1")!
+    )
+
+    let tokens = try await client.refreshToken("stored-refresh-token")
+
+    #expect(tokens.accessToken == "fresh-access")
+    #expect(tokens.refreshToken == "rotated-refresh")
+}
+
 @Test func moyaNetworkClientMapsCancellationToAPIErrorCancelled() async {
     let provider = MoyaProvider<MultiTarget>(stubClosure: MoyaProvider.delayedStub(1.0))
     let client = MoyaNetworkClient(provider: provider)
