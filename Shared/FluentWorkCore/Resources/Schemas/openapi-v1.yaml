@@ -1,0 +1,1980 @@
+openapi: 3.0.3
+info:
+  title: FluentWork app-server
+  version: 0.4.0
+  description: Contracts for guest auth, merge, sessions, second-wave review, B17 TTS, B19 B7 hit injection, B22 drill, A4 privacy, B18 review eval, B24 session history, B21 materials, B23 topic cards, and PRD B1 session length.
+servers:
+  - url: /api/v1
+paths:
+  /auth/guest:
+    post:
+      summary: Issue or reuse a device-bound guest identity
+      operationId: issueGuest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_id]
+              properties:
+                device_id:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+      responses:
+        "200":
+          description: Token pair for the device identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/refresh:
+    post:
+      summary: Exchange a refresh token for a fresh token pair, rotating the credential
+      operationId: refreshSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+                  minLength: 1
+      responses:
+        "200":
+          description: Fresh token pair for the same identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /account/merge:
+    post:
+      summary: Merge guest data onto the authenticated registered account
+      operationId: mergeGuestAccount
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_id]
+              properties:
+                device_id:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+      responses:
+        "200":
+          description: Merge result, including idempotent retries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MergeResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /account/data:
+    delete:
+      summary: Soft-delete the authenticated user's data (A4)
+      description: |
+        Requires confirmation_code `DELETE-MY-DATA`. Soft-deletes users,
+        phrase_blocks, and practice_sessions; hard-deletes drill_records;
+        anonymizes ai_cost_logs. Idempotent on a second call. Wrong confirmation
+        returns 422 FAILED_PRECONDITION. Per 48 §1.1.6.
+      operationId: deleteAccountData
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteAccountDataRequest"
+      responses:
+        "200":
+          description: Cascade counts and backup purge deadline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteAccountDataResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /account/export:
+    post:
+      summary: Enqueue a personal data export job
+      description: |
+        Returns export_id immediately. Email delivery is a V1.5 stub
+        (estimated_ready_at is now + 24h). Per 48 §1.1.7.
+      operationId: exportAccountData
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportAccountDataRequest"
+      responses:
+        "200":
+          description: Export job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportAccountDataResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /sessions:
+    get:
+      summary: List the caller's practice sessions
+      operationId: listSessions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        "200":
+          description: Cursor page of sessions (newest first)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionListPage"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      summary: Create a practice session and issue a one-time WSS ticket
+      operationId: createSession
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                material_id:
+                  type: string
+                  nullable: true
+                  maxLength: 36
+                scene_type:
+                  type: string
+                  maxLength: 64
+                  default: demo
+                session_length:
+                  type: string
+                  enum: [standard, mini]
+                  default: standard
+      responses:
+        "200":
+          description: Session id, WSS URL, and ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateSessionResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /sessions/{id}:
+    get:
+      summary: Get one practice session with utterances and review eval
+      operationId: getSession
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionDetail"
+        "403":
+          description: Session owned by another user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Session not found or A4-deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /sessions/{id}/review:
+    get:
+      summary: Poll review readiness for a practice session
+      operationId: getSessionReview
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Review is ready (includes optional B18 eval)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewPollResponse"
+        "202":
+          description: Review still pending
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewPollResponse"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Session not found or not owned by the caller
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /sessions/{id}/messages:
+    post:
+      summary: Send a degraded text message (stub AI reply)
+      description: |
+        Non-streaming text fallback. Requires `channel: text`.
+        Omitting channel or using a non-text channel returns CONFLICT while voice is preferred.
+        Only the session owner may post; session must be `created` or `active`.
+      operationId: postSessionMessage
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PostMessageRequest"
+      responses:
+        "200":
+          description: Stub AI reply for text degrade mode
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostMessageResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /corpus/blocks:
+    get:
+      summary: List corpus phrase blocks
+      description: |
+        Browse order is pinned first, then favorite, then updated_at descending.
+        Use favorite_only=true or pinned_only=true to filter. Incremental sync
+        (updated_after) cannot be combined with those filters.
+      operationId: listCorpusBlocks
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: scene
+          schema: { type: string }
+        - in: query
+          name: func
+          schema: { type: string }
+        - in: query
+          name: kw
+          schema: { type: string }
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: updated_after
+          schema: { type: string, format: date-time }
+        - in: query
+          name: limit
+          schema: { type: integer }
+        - in: query
+          name: favorite_only
+          schema: { type: boolean }
+        - in: query
+          name: pinned_only
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Corpus phrase block page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListPhraseBlocksResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /corpus/blocks/batch-accept:
+    post:
+      summary: Batch accept refine blocks into corpus
+      operationId: batchAcceptCorpusBlocks
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchAcceptBlocksRequest"
+      responses:
+        "200":
+          description: Accepted phrase blocks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchAcceptBlocksResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /corpus/blocks/{id}:
+    put:
+      summary: Update one phrase block
+      operationId: updateCorpusBlock
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePhraseBlockRequest"
+      responses:
+        "200":
+          description: Updated phrase block
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhraseBlock"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      summary: Soft delete one phrase block
+      operationId: deleteCorpusBlock
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted: { type: boolean }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /corpus/blocks/{id}/pin:
+    patch:
+      summary: Pin or unpin one phrase block
+      operationId: pinCorpusBlock
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchPinRequest"
+      responses:
+        "200":
+          description: Updated phrase block
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhraseBlock"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /corpus/blocks/{id}/favorite:
+    patch:
+      summary: Favorite or unfavorite one phrase block
+      operationId: patchCorpusBlockFavorite
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchFavoriteRequest"
+      responses:
+        "200":
+          description: Updated phrase block
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhraseBlock"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      deprecated: true
+      summary: Toggle favorite and pin state
+      description: |
+        Deprecated. Use PATCH /corpus/blocks/{id}/pin and
+        PATCH /corpus/blocks/{id}/favorite. Removed in V1.5.
+      operationId: favoriteCorpusBlock
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FavoritePhraseBlockRequest"
+      responses:
+        "200":
+          description: Updated phrase block
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhraseBlock"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /corpus/recommendations:
+    get:
+      summary: Recommend phrase blocks worth putting to work in a session
+      operationId: listCorpusRecommendations
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: scene
+          in: query
+          required: false
+          schema: { type: string }
+        - name: func
+          in: query
+          required: false
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Recommended blocks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecommendationListResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /corpus/blocks/{id}/feedback:
+    post:
+      summary: Report a rewritten block as not good enough
+      description: |
+        The signal prompt iteration reads when deciding whether a rewrite rule
+        landed (83 §2.2 risk 1). Idempotent per (block, reason): a repeated tap
+        answers `recorded: false` instead of counting twice.
+      operationId: postBlockFeedback
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  enum: [not_idiomatic, not_useful, wrong_meaning]
+      responses:
+        "200":
+          description: Feedback recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlockFeedbackResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /corpus/feedback:
+    get:
+      summary: Summarise reported block problems by reason
+      operationId: getCorpusFeedbackSummary
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: One bucket per reason
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CorpusFeedbackSummary"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /daily-reads/today:
+    get:
+      summary: Get or generate today's daily read
+      operationId: getDailyReadToday
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Daily read poll payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyReadTodayResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /daily-reads/{id}/follow-read:
+    post:
+      summary: Submit a follow-read recording without scoring
+      operationId: postDailyReadFollowRead
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FollowReadRequest"
+      responses:
+        "200":
+          description: Follow-read acknowledgement
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FollowReadResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /drill/round:
+    get:
+      summary: Fetch due flash-drill cards
+      description: |
+        Returns up to `size` due phrase blocks (default 10, max 20).
+        new/training first, then automated. Per 48 §1.5.
+      operationId: getDrillRound
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: size
+          in: query
+          required: false
+          schema: { type: integer, default: 10, minimum: 1, maximum: 20 }
+      responses:
+        "200":
+          description: Drill round
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DrillRound"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /drill/judge:
+    post:
+      summary: Score one drill attempt and advance SM-2
+      description: |
+        Semantic judge with 1.5s timeout. Parse/timeout is a miss.
+        Fail → next_due_at now+1h. Pass streak under 3 → +24h training.
+        Pass streak≥3 → automated +7d. Automated pass → +30d. Per 48 §1.5.
+      operationId: postDrillJudge
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DrillJudgeRequest"
+      responses:
+        "200":
+          description: Judge result and updated schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DrillJudgeResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /drill/appeal:
+    post:
+      summary: Appeal a drill verdict the learner disagrees with
+      description: |
+        PRD E2's one-tap appeal, offered next to the ASR text before the verdict
+        is accepted. Puts back the schedule the attempt overwrote. Once per
+        attempt: a second appeal changes nothing and answers with the block's
+        current state. Per 48 §1.5.
+      operationId: appealDrillAttempt
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DrillAppealRequest"
+      responses:
+        "200":
+          description: Appeal outcome and the block's state afterwards
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DrillAppealResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /materials:
+    post:
+      summary: Create a material and enqueue phrase-block refine
+      operationId: createMaterial
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                kind:
+                  type: string
+                  enum: [paste, sentence, url]
+                  default: paste
+                content:
+                  type: string
+                  maxLength: 5000
+      responses:
+        "202":
+          description: Material queued for refine
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateMaterialResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /materials/{id}:
+    get:
+      summary: Poll material refine status
+      operationId: getMaterial
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Material including refine_status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Material"
+        "403":
+          description: Owned by another user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Missing or A4-deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /topic-cards:
+    get:
+      summary: List today's topic cards
+      operationId: listTopicCards
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Today's cards (possibly empty before generation)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopicCardList"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /topic-cards/{id}/checkin:
+    post:
+      summary: Check in a topic card
+      operationId: checkinTopicCard
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reflection:
+                  type: string
+                  maxLength: 500
+      responses:
+        "200":
+          description: Checkin recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopicCheckinResult"
+        "403":
+          description: Owned by another user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Already checked in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /topic-cards/stats:
+    get:
+      summary: Topic-card practice stats over a window
+      description: |
+        Counts self-reported check-ins and in-app hits together, and says so: a
+        real meeting cannot be observed by the server (86_ M9). Both halves are
+        reported apart so a conversion rate never mixes observation with
+        self-report.
+      operationId: getTopicCardStats
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Window summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopicPracticeStats"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /topic-cards/{id}/dismiss:
+    post:
+      summary: Dismiss a topic card with the reason it went unused
+      description: |
+        The reason distribution is what says where the last mile breaks:
+        no_partner → in-app simulated partners; not_confident → a lower first
+        step; no_time → shorter cards; not_relevant → topic generation (86_ M11).
+        Idempotent: a second dismissal answers `already_dismissed: true`.
+      operationId: dismissTopicCard
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  enum: [no_partner, not_confident, no_time, not_relevant]
+      responses:
+        "200":
+          description: Dismissal recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopicDismissResult"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /internal/v1/tts/synthesize:
+    post:
+      servers:
+        - url: /
+      summary: Synthesize speech with Volc streaming TTS and duplex fallback
+      description: |
+        Internal endpoint (X-Internal-Token). Primary provider is Volc HTTP/2
+        unidirectional TTS. After three consecutive HTTP 5xx responses, traffic
+        switches to the duplex TTS fallback and increments
+        tts_fallback_triggered_total{from="volc_streaming",to="volc_duplex"}
+        on GET /metrics.
+      operationId: synthesizeTTS
+      security:
+        - internalToken: []
+      parameters:
+        - name: voice_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Overrides JSON voice_id. D-2 catalog or a raw Volc speaker id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TTSSynthesizeRequest"
+      responses:
+        "200":
+          description: Concatenated audio chunks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TTSSynthesizeResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /internal/v1/voicegateway/hits:
+    post:
+      servers:
+        - url: /
+      summary: Record B7 phrase-block hits from the voice gateway
+      description: |
+        Internal endpoint (X-Internal-Token). UPSERTs phrase_block_uses for
+        (session_id, turn_id, block_id) and increments phrase_blocks.total_uses
+        only on first insert. Duplicate reports of the same hit do not double-count.
+      operationId: recordVoiceGatewayHits
+      security:
+        - internalToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoiceGatewayHitsRequest"
+      responses:
+        "200":
+          description: Number of hits written to the ledger (including UPSERT updates)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceGatewayHitsResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /internal/v1/sessions/{session_id}/recent-hits:
+    get:
+      servers:
+        - url: /
+      summary: Fetch recent B7 hits for LLM prompt injection
+      description: |
+        Internal endpoint (X-Internal-Token). Returns hits from the most recent
+        lookback_turns in the session, joined to phrase block intent_zh / chunk_en.
+        Soft-deleted blocks are omitted. ttl_at_ms is the newest used_at_ms + 60000.
+        min_score is accepted for 48_ §2.7 compatibility; recorded hits already
+        passed B7 detection and phrase_blocks has no score column.
+      operationId: getSessionRecentHits
+      security:
+        - internalToken: []
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: lookback_turns
+          in: query
+          required: false
+          schema: { type: integer, default: 8, minimum: 0 }
+        - name: min_score
+          in: query
+          required: false
+          schema: { type: number, format: float, default: 0.7 }
+      responses:
+        "200":
+          description: Recent hits and injection TTL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecentHitsResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /internal/v1/support/undelete-user:
+    post:
+      servers:
+        - url: /
+      summary: Restore a user within the 30-day A4 window
+      description: |
+        Internal endpoint (X-Internal-Token). Restores users, phrase_blocks,
+        practice_sessions, and ai_cost_logs; deletes tombstones; writes
+        audit_logs. Expired window or not-deleted account returns 422.
+        Per 48 §2.8.
+      operationId: undeleteUser
+      security:
+        - internalToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UndeleteUserRequest"
+      responses:
+        "200":
+          description: Restore counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UndeleteUserResponse"
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    internalToken:
+      type: apiKey
+      in: header
+      name: X-Internal-Token
+  schemas:
+    TokenResponse:
+      type: object
+      required: [user_id, is_guest, status, access_token, refresh_token, token_type, expires_in]
+      properties:
+        user_id: { type: string }
+        is_guest: { type: boolean }
+        status: { type: string }
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, enum: [Bearer] }
+        expires_in: { type: integer }
+    MergeResponse:
+      type: object
+      required: [user_id, is_guest, already_merged]
+      properties:
+        user_id: { type: string }
+        is_guest: { type: boolean }
+        merged_from_user_id:
+          type: string
+          nullable: true
+        already_merged: { type: boolean }
+    DeleteAccountDataRequest:
+      type: object
+      required: [confirmation_code]
+      properties:
+        confirmation_code:
+          type: string
+          description: Must be DELETE-MY-DATA
+    DeleteAccountDataResponse:
+      type: object
+      required: [cascaded, backup_purge_at, already_deleted]
+      properties:
+        cascaded:
+          type: object
+          additionalProperties: { type: integer }
+        backup_purge_at: { type: string, format: date-time }
+        already_deleted: { type: boolean }
+    ExportAccountDataRequest:
+      type: object
+      properties:
+        email_to: { type: string }
+    ExportAccountDataResponse:
+      type: object
+      required: [export_id, email_to, estimated_ready_at]
+      properties:
+        export_id: { type: string }
+        email_to: { type: string }
+        estimated_ready_at: { type: string, format: date-time }
+    DrillRound:
+      type: object
+      required: [size, cards]
+      properties:
+        size: { type: integer }
+        cards:
+          type: array
+          items:
+            $ref: "#/components/schemas/DrillCard"
+    DrillCard:
+      type: object
+      required: [block_id, intent_zh, expression_en, state]
+      properties:
+        block_id: { type: string }
+        intent_zh: { type: string }
+        expression_en: { type: string }
+        state: { type: string }
+    DrillJudgeRequest:
+      type: object
+      required: [block_id, asr_text]
+      properties:
+        block_id: { type: string }
+        asr_text: { type: string }
+        response_ms: { type: integer }
+        session_id: { type: string }
+    DrillJudgeResponse:
+      type: object
+      required: [pass, judge_reason, judged, success_streak, state, next_due_at, recorded]
+      properties:
+        pass: { type: boolean }
+        judge_reason: { type: string }
+        judged:
+          type: boolean
+          description: |
+            False when the judge could not run (timeout, parse failure, judge
+            unavailable). The schedule is then untouched and `retryable` is set:
+            a judge that did not run is not evidence that the learner was wrong.
+        retryable:
+          type: boolean
+          description: This attempt can simply be sent again.
+        success_streak: { type: integer }
+        state: { type: string }
+        next_due_at: { type: string, format: date-time }
+        recorded: { type: boolean }
+        record_id:
+          type: integer
+          format: int64
+          description: |
+            Names this attempt so POST /drill/appeal can point at it (PRD E2).
+            Zero when the ledger write failed after the schedule had moved.
+        promoted:
+          type: boolean
+          description: |
+            This is the attempt that turned the block green (PRD E4's 已自动化
+            change). The transition is already in `state`; this says it happened
+            *now*, which is what a celebration needs.
+        asr_text:
+          type: string
+          description: |
+            What the judge actually read, shown next to the verdict (PRD E2:
+            判定前展示 ASR 识别文本) so a learner who was misheard can see that
+            instead of guessing.
+    UndeleteUserRequest:
+      type: object
+      required: [user_id]
+      properties:
+        user_id: { type: string }
+        reason: { type: string }
+        actor: { type: string }
+    UndeleteUserResponse:
+      type: object
+      required: [user_id, restored]
+      properties:
+        user_id: { type: string }
+        restored:
+          type: object
+          additionalProperties: { type: integer }
+    CreateSessionResponse:
+      type: object
+      required: [session_id, wss_url, ticket, ticket_expires_in, ticket_expires_at, scene_type, status]
+      properties:
+        session_id: { type: string }
+        wss_url: { type: string }
+        ticket: { type: string }
+        ticket_expires_in: { type: integer }
+        ticket_expires_at: { type: string, format: date-time }
+        scene_type: { type: string }
+        status: { type: string }
+    SessionListPage:
+      type: object
+      required: [items, size]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionListItem"
+        next_cursor:
+          type: string
+        size: { type: integer }
+    SessionListItem:
+      type: object
+      required: [session_id, scene_type, status, started_at, duration_sec]
+      properties:
+        session_id: { type: string }
+        scene_type: { type: string }
+        status: { type: string }
+        started_at: { type: string, format: date-time }
+        duration_sec: { type: integer }
+        material_id: { type: string, nullable: true }
+    SessionDetail:
+      type: object
+      required: [session_id, scene_type, status, started_at, duration_sec, materials, utterances]
+      properties:
+        session_id: { type: string }
+        scene_type: { type: string }
+        status: { type: string }
+        started_at: { type: string, format: date-time }
+        duration_sec: { type: integer }
+        material_id: { type: string, nullable: true }
+        materials:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionMaterialRef"
+        utterances:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionUtterance"
+        review:
+          $ref: "#/components/schemas/SessionDetailReview"
+    SessionMaterialRef:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+    SessionUtterance:
+      type: object
+      required: [seq, speaker, text]
+      properties:
+        seq: { type: integer }
+        speaker: { type: string }
+        text: { type: string }
+    SessionDetailReview:
+      type: object
+      required: [score]
+      properties:
+        status:
+          type: string
+          enum: [pending, ready, failed]
+        score: { type: number, format: float }
+        dims:
+          $ref: "#/components/schemas/ReviewEvalDims"
+        suggestions:
+          type: array
+          items: { type: string }
+    ReviewPollResponse:
+      type: object
+      required: [session_id, status]
+      properties:
+        session_id: { type: string }
+        status:
+          type: string
+          enum: [pending, ready, failed]
+        review:
+          $ref: "#/components/schemas/ReviewReadyPayload"
+          description: Present when status is ready
+        eval:
+          $ref: "#/components/schemas/ReviewEvalSummary"
+          description: B18 three-dimension eval when per-utterance scoring is complete
+    ReviewEvalSummary:
+      type: object
+      required: [score, dims, suggestions, utterance_count, complete]
+      properties:
+        score: { type: number, format: float }
+        dims:
+          $ref: "#/components/schemas/ReviewEvalDims"
+        suggestions:
+          type: array
+          items: { type: string }
+        utterance_count: { type: integer }
+        complete: { type: boolean }
+    ReviewEvalDims:
+      type: object
+      required: [grammar, fluency, vocabulary]
+      properties:
+        grammar: { type: number, format: float }
+        fluency: { type: number, format: float }
+        vocabulary: { type: number, format: float }
+    ReviewReadyPayload:
+      type: object
+      required: [generator, status, transcript, overview, evaluation, dual_column, refine_cards, review, refine]
+      properties:
+        generator:
+          type: string
+        status:
+          type: string
+          enum: [ready]
+        duration_sec:
+          type: integer
+        transcript:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptTurn"
+        overview:
+          type: object
+          required: [goal_achievement, issue_count, suggestion_count, comparison_count]
+          properties:
+            goal_achievement:
+              $ref: "#/components/schemas/GoalAchievement"
+            issue_count:
+              type: integer
+            suggestion_count:
+              type: integer
+            comparison_count:
+              type: integer
+        evaluation:
+          type: array
+          description: Three-layer presentation slices for goal, issues, and suggestions
+          items:
+            $ref: "#/components/schemas/EvaluationLayer"
+        dual_column:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComparisonRow"
+        refine_cards:
+          type: array
+          items:
+            $ref: "#/components/schemas/RefineCard"
+        review:
+          $ref: "#/components/schemas/ReviewDoc"
+        refine:
+          $ref: "#/components/schemas/RefineDoc"
+    TranscriptTurn:
+      type: object
+      required: [seq, speaker, text]
+      properties:
+        seq: { type: integer }
+        speaker:
+          type: string
+          enum: [user, ai]
+        text: { type: string }
+    GoalAchievement:
+      type: object
+      required: [met, note]
+      properties:
+        met: { type: boolean }
+        note: { type: string }
+    ReviewIssue:
+      type: object
+      required: [type, original_quote, hint]
+      properties:
+        type:
+          type: string
+          enum: [grammar, idiomatic, missing_info]
+        original_quote:
+          type: string
+        hint:
+          type: string
+    SuggestionItem:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+    ComparisonRow:
+      type: object
+      required: [user, better]
+      properties:
+        user:
+          type: string
+        better:
+          type: string
+    RefineCard:
+      type: object
+      required: [intent_zh, expression_en, anchor_user_said, scene_tag, function_tag]
+      properties:
+        intent_zh:
+          type: string
+        expression_en:
+          type: string
+        anchor_user_said:
+          type: string
+        scene_tag:
+          type: string
+          enum: [standup, review, 1on1, interview, casual]
+        function_tag:
+          type: string
+          enum: [object, clarify, report, propose, agree, disagree, ask, summarize, defer, commit]
+    RefineDoc:
+      type: object
+      required: [blocks]
+      properties:
+        blocks:
+          type: array
+          items:
+            $ref: "#/components/schemas/RefineCard"
+    ReviewDoc:
+      type: object
+      required: [goal_achievement, issues, suggestions, comparisons]
+      properties:
+        goal_achievement:
+          $ref: "#/components/schemas/GoalAchievement"
+        issues:
+          type: array
+          maxItems: 5
+          items:
+            $ref: "#/components/schemas/ReviewIssue"
+        suggestions:
+          type: array
+          maxItems: 3
+          items:
+            $ref: "#/components/schemas/SuggestionItem"
+        comparisons:
+          type: array
+          minItems: 0
+          items:
+            $ref: "#/components/schemas/ComparisonRow"
+    EvaluationLayer:
+      type: object
+      required: [layer, title, content]
+      properties:
+        layer:
+          type: string
+          enum: [goal, issues, suggestions]
+        title:
+          type: string
+        content:
+          description: Presentation payload for the layer
+          oneOf:
+            - $ref: "#/components/schemas/GoalAchievement"
+            - type: array
+              items:
+                $ref: "#/components/schemas/ReviewIssue"
+            - type: array
+              items:
+                $ref: "#/components/schemas/SuggestionItem"
+    PostMessageRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          maxLength: 4096
+        channel:
+          type: string
+          description: Must be "text" for degrade path; omit or non-text yields CONFLICT while voice is preferred
+    PostMessageResponse:
+      type: object
+      required: [session_id, reply, channel, generator]
+      properties:
+        session_id: { type: string }
+        reply: { type: string }
+        channel:
+          type: string
+          enum: [text]
+        generator: { type: string }
+    PhraseBlock:
+      type: object
+      required: [id, intent_zh, expression_en, expression_version, anchor_user_said, scene_tag, function_tag, state, success_streak, next_due_at, ease_factor, real_use_count, is_favorite, created_at, updated_at]
+      properties:
+        id: { type: string }
+        intent_zh: { type: string }
+        expression_en: { type: string }
+        expression_version: { type: integer }
+        anchor_user_said: { type: string }
+        scene_tag:
+          type: string
+          enum: [standup, review, 1on1, interview, casual]
+        function_tag:
+          type: string
+          enum: [object, clarify, report, propose, agree, disagree, ask, summarize, defer, commit]
+        state:
+          type: string
+          enum: [new, training, automated]
+        success_streak: { type: integer }
+        next_due_at: { type: string, format: date-time }
+        ease_factor: { type: number }
+        real_use_count: { type: integer }
+        is_favorite: { type: boolean }
+        pinned_at:
+          type: string
+          format: date-time
+          nullable: true
+        source_session_id:
+          type: string
+          nullable: true
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ListPhraseBlocksResponse:
+      type: object
+      required: [items, cursor_reset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PhraseBlock"
+        next_cursor:
+          type: string
+        cursor_reset:
+          type: boolean
+    UpdatePhraseBlockRequest:
+      type: object
+      required: [intent_zh, expression_en, anchor_user_said, scene_tag, function_tag]
+      properties:
+        intent_zh: { type: string }
+        expression_en: { type: string }
+        anchor_user_said: { type: string }
+        scene_tag:
+          type: string
+          enum: [standup, review, 1on1, interview, casual]
+        function_tag:
+          type: string
+          enum: [object, clarify, report, propose, agree, disagree, ask, summarize, defer, commit]
+    FavoritePhraseBlockRequest:
+      type: object
+      required: [is_favorite, pinned]
+      properties:
+        is_favorite: { type: boolean }
+        pinned: { type: boolean }
+    PatchPinRequest:
+      type: object
+      required: [pinned]
+      properties:
+        pinned: { type: boolean }
+    PatchFavoriteRequest:
+      type: object
+      required: [favorite]
+      properties:
+        favorite: { type: boolean }
+    BatchAcceptBlocksRequest:
+      type: object
+      required: [source_session_id, blocks]
+      properties:
+        source_session_id: { type: string }
+        blocks:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [intent_zh, expression_en, anchor_user_said, scene_tag, function_tag]
+            properties:
+              intent_zh: { type: string }
+              expression_en: { type: string }
+              anchor_user_said: { type: string }
+              scene_tag:
+                type: string
+                enum: [standup, review, 1on1, interview, casual]
+              function_tag:
+                type: string
+                enum: [object, clarify, report, propose, agree, disagree, ask, summarize, defer, commit]
+    BatchAcceptBlocksResponse:
+      type: object
+      required: [accepted_count, merged_count, items]
+      properties:
+        accepted_count: { type: integer }
+        merged_count:
+          type: integer
+          description: |
+            Incoming blocks that matched an expression the learner already owned:
+            they were not inserted, and they come back inside `items` as the
+            existing block (86_ M5).
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PhraseBlock"
+    DailyReadTodayResponse:
+      type: object
+      required: [gen_date, status]
+      properties:
+        gen_date:
+          type: string
+          format: date
+        status:
+          type: string
+          enum: [pending, ready, failed]
+        daily_read:
+          $ref: "#/components/schemas/DailyRead"
+    DailyRead:
+      type: object
+      required: [id, title, body, generator]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        body: { type: string }
+        audio_url:
+          type: string
+          nullable: true
+        generator: { type: string }
+        used_block_ids:
+          type: array
+          items: { type: string }
+        source_refs:
+          type: object
+          additionalProperties: true
+        read_score:
+          type: number
+          nullable: true
+    FollowReadRequest:
+      type: object
+      properties:
+        audio_url:
+          type: string
+          nullable: true
+    FollowReadResponse:
+      type: object
+      required: [daily_read_id, recorded, read_score, generator]
+      properties:
+        daily_read_id: { type: string }
+        recorded: { type: boolean }
+        read_score:
+          type: number
+          nullable: true
+        generator: { type: string }
+    TTSSynthesizeRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+        voice_id:
+          type: string
+          description: D-2 id (zh_male_tech_01, en_female_professional, en_male_narrator, en_female_clear) or a raw Volc speaker
+    TTSSynthesizeResponse:
+      type: object
+      required: [voice_id, chunks, audio_base64, used_fallback]
+      properties:
+        voice_id: { type: string }
+        chunks: { type: integer }
+        audio_base64: { type: string }
+        used_fallback:
+          type: boolean
+          description: true after Manager switched from volc_streaming to volc_duplex
+    VoiceGatewayHitsRequest:
+      type: object
+      required: [user_id, session_id, turn_id, hits]
+      properties:
+        user_id: { type: string }
+        session_id: { type: string }
+        turn_id: { type: string }
+        hits:
+          type: array
+          items:
+            $ref: "#/components/schemas/VoiceGatewayHit"
+    VoiceGatewayHit:
+      type: object
+      required: [block_id, detected_at_ms]
+      properties:
+        block_id: { type: string }
+        detected_at_ms: { type: integer, format: int64 }
+        turn_id:
+          type: string
+          description: Optional per-hit turn; defaults to the request turn_id
+    VoiceGatewayHitsResponse:
+      type: object
+      required: [recorded_count]
+      properties:
+        recorded_count: { type: integer }
+    RecentHitsResponse:
+      type: object
+      required: [hits, ttl_at_ms]
+      properties:
+        hits:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecentHit"
+        ttl_at_ms:
+          type: integer
+          format: int64
+          description: Newest hit used_at_ms plus 60000, or 0 when hits is empty
+    RecentHit:
+      type: object
+      required: [block_id, turn_id, used_at_ms, intent_zh, chunk_en]
+      properties:
+        block_id: { type: string }
+        turn_id: { type: string }
+        used_at_ms: { type: integer, format: int64 }
+        intent_zh: { type: string }
+        chunk_en:
+          type: string
+          description: Phrase block expression_en (48_ chunk_en)
+    CreateMaterialResponse:
+      type: object
+      required: [material_id, refine_status]
+      properties:
+        material_id: { type: string }
+        refine_status:
+          type: string
+          enum: [queued, processing, ready, failed]
+    Material:
+      type: object
+      required: [id, kind, content, refine_status, block_count, created_at, updated_at]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          enum: [paste, sentence, url]
+        content: { type: string }
+        refine_status:
+          type: string
+          enum: [queued, processing, ready, failed]
+        block_count: { type: integer }
+        error_code: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    TopicCardList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopicCard"
+    TopicCard:
+      type: object
+      required: [id, for_date, title, prompt_en, prompt_zh, card_type, seed_tags, block_ids, valid_until, created_at, updated_at]
+      properties:
+        id: { type: string }
+        for_date: { type: string, format: date-time }
+        title: { type: string }
+        prompt_en: { type: string }
+        prompt_zh: { type: string }
+        card_type:
+          type: string
+          enum: [warmup, practice, stretch]
+        seed_tags:
+          type: array
+          items: { type: string }
+        block_ids:
+          type: array
+          items: { type: string }
+          description: |
+            The 可调用话术块清单 (PRD §7.8 H1) as ids: the learner's own blocks
+            this topic can put to work.
+        blocks:
+          type: array
+          description: The same list resolved for display.
+          items:
+            type: object
+            required: [id, expression_en, intent_zh]
+            properties:
+              id: { type: string }
+              expression_en: { type: string }
+              intent_zh: { type: string }
+        source_note:
+          type: string
+          description: |
+            PRD H2's provenance line — which of the learner's materials and tags
+            this card came from. A card without one was one the server could not
+            ground.
+        valid_until: { type: string, format: date-time }
+        checked_in_at: { type: string, format: date-time }
+        dismissed_at:
+          type: string
+          format: date-time
+          description: |
+            Set when the learner reported not getting to use this card (86_ M11).
+            A dismissal carries no penalty.
+        dismiss_reason:
+          type: string
+          enum: [no_partner, not_confident, no_time, not_relevant]
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    TopicCheckinResult:
+      type: object
+      required: [checkin_id, streak_days, recorded_use]
+      properties:
+        checkin_id: { type: string }
+        streak_days: { type: integer }
+        recorded_use:
+          type: integer
+          description: |
+            How many of the card's blocks were credited as used in a real
+            conversation (86_ M10). Zero means the learner ticked none or the
+            ledger was not wired — never that the checkin failed.
+        ignored_block_ids:
+          type: array
+          items: { type: string }
+          description: |
+            Ids the client sent that this card never offered. Reported rather
+            than silently dropped: a client sending unknown ids has a bug worth
+            seeing.
+    DrillAppealRequest:
+      type: object
+      required: [record_id]
+      properties:
+        record_id: { type: integer, format: int64 }
+    DrillAppealResponse:
+      type: object
+      required: [record_id, block_id, restored, already_appealed, state, success_streak, next_due_at]
+      properties:
+        record_id: { type: integer, format: int64 }
+        block_id: { type: string }
+        restored:
+          type: boolean
+          description: The schedule the attempt overwrote was put back.
+        already_appealed:
+          type: boolean
+          description: This attempt was appealed before; nothing changed.
+        state:
+          type: string
+          enum: [new, training, automated]
+        success_streak: { type: integer }
+        next_due_at: { type: string, format: date-time }
+        note: { type: string }
+    RecommendationListResponse:
+      type: object
+      required: [items]
+      properties:
+        scene_tag: { type: string }
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Recommendation"
+    Recommendation:
+      allOf:
+        - $ref: "#/components/schemas/PhraseBlock"
+        - type: object
+          required: [reason, stale]
+          properties:
+            reason: { type: string }
+            stale:
+              type: boolean
+              description: A green block past its review window.
+    BlockFeedbackResponse:
+      type: object
+      required: [block_id, reason, recorded]
+      properties:
+        block_id: { type: string }
+        reason:
+          type: string
+          enum: [not_idiomatic, not_useful, wrong_meaning]
+        recorded:
+          type: boolean
+          description: False when this reason was already reported for this block.
+    CorpusFeedbackSummary:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [reason, count]
+            properties:
+              reason: { type: string }
+              count: { type: integer }
+    TopicPracticeStats:
+      type: object
+      required: [window_days, checkins, cards_served, blocks_total, blocks_used, green_blocks, green_used, conversion_rate, checkin_rate, real_uses_hit, real_uses_checkin, dismiss_rate]
+      properties:
+        window_days: { type: integer }
+        checkins: { type: integer }
+        cards_served: { type: integer }
+        blocks_total: { type: integer }
+        blocks_used: { type: integer }
+        green_blocks: { type: integer }
+        green_used: { type: integer }
+        conversion_rate: { type: number }
+        checkin_rate: { type: number }
+        real_uses_hit: { type: integer }
+        real_uses_checkin: { type: integer }
+        dismiss_reasons:
+          type: object
+          additionalProperties: { type: integer }
+        dismiss_rate: { type: number }
+    TopicDismissResult:
+      type: object
+      required: [card_id, reason, already_dismissed]
+      properties:
+        card_id: { type: string }
+        reason:
+          type: string
+          enum: [no_partner, not_confident, no_time, not_relevant]
+        already_dismissed:
+          type: boolean
+          description: False the first time this card was dismissed.
+    Error:
+      type: object
+      required: [code, message, request_id]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        request_id: { type: string }
