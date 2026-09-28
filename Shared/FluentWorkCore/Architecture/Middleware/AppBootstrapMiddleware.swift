@@ -28,22 +28,20 @@ public enum AppTaskID {
     }
 }
 
-public func makeAppMiddlewares(container: Container? = nil) -> [Middleware<AppState, AppAction>] {
-    let resolvedContainer = container ?? Container.shared
+public func makeAppMiddlewares(container: Container) -> [Middleware<AppState, AppAction>] {
     return [
-        corpusMiddleware(container: resolvedContainer),
-        reviewMiddleware(container: resolvedContainer),
-        dailyReadMiddleware(container: resolvedContainer),
-        dailyReadAudioObserver(container: resolvedContainer),
-        sessionHistoryMiddleware(container: resolvedContainer),
-        speechSessionMiddleware(container: resolvedContainer),
-        appBootstrapMiddleware(container: resolvedContainer),
-        appNetworkMonitorMiddleware(container: resolvedContainer),
+        corpusMiddleware(container: container),
+        reviewMiddleware(container: container),
+        dailyReadMiddleware(container: container),
+        dailyReadAudioObserver(container: container),
+        sessionHistoryMiddleware(container: container),
+        speechSessionMiddleware(container: container),
+        appBootstrapMiddleware(container: container),
+        appNetworkMonitorMiddleware(container: container),
     ]
 }
 
-public func appBootstrapMiddleware(container: Container? = nil) -> Middleware<AppState, AppAction> {
-    let resolvedContainer = container ?? Container.shared
+public func appBootstrapMiddleware(container: Container) -> Middleware<AppState, AppAction> {
     let loadGate = BootstrapLoadGate()
 
     return { store, action, next in
@@ -57,7 +55,7 @@ public func appBootstrapMiddleware(container: Container? = nil) -> Middleware<Ap
             return next(action)
         }
 
-        let bootstrapClient = resolvedContainer.bootstrapClient()
+        let bootstrapClient = container.bootstrapClient()
         let base = next(action)
 
         return .merge(
@@ -67,7 +65,7 @@ public func appBootstrapMiddleware(container: Container? = nil) -> Middleware<Ap
                 do {
                     let result = try await bootstrapClient.loadBootstrap()
                     guard !Task.isCancelled else { return nil }
-                    logDeviceIdentity(result.authInfo, tracker: resolvedContainer.tracker())
+                    logDeviceIdentity(result.authInfo, tracker: container.tracker())
                     return .lifecycle(.bootstrapSucceeded(
                         snapshot: result.snapshot,
                         authInfo: result.authInfo
@@ -133,15 +131,13 @@ internal final class BootstrapLoadGate: Sendable {
     }
 }
 
-public func appNetworkMonitorMiddleware(container: Container? = nil) -> Middleware<AppState, AppAction> {
-    let resolvedContainer = container ?? Container.shared
-
+public func appNetworkMonitorMiddleware(container: Container) -> Middleware<AppState, AppAction> {
     return { store, action, next in
         guard case .lifecycle(.appLaunched) = action else {
             return next(action)
         }
 
-        let monitor = resolvedContainer.networkMonitor()
+        let monitor = container.networkMonitor()
         let initial = monitor.currentSnapshot()
         let base = next(action)
         let dispatchBox = MainActorDispatchBox(dispatch: { store.dispatch($0) })
@@ -185,12 +181,11 @@ private func appBootstrapErrorMessage(_ error: any Error) -> String {
     return "Bootstrap failed. Please try again."
 }
 
-public func reviewMiddleware(container: Container? = nil) -> Middleware<AppState, AppAction> {
-    let resolvedContainer = container ?? Container.shared
-    let speechClient = resolvedContainer.speechSessionClient()
+public func reviewMiddleware(container: Container) -> Middleware<AppState, AppAction> {
+    let speechClient = container.speechSessionClient()
 
     return { store, action, next in
-        let corpusClient = resolvedContainer.corpusClient()
+        let corpusClient = container.corpusClient()
 
         switch action {
         case let .review(.appear(sessionID)):
@@ -298,14 +293,13 @@ private func pollReviewUntilReady(
     return nil
 }
 
-public func corpusMiddleware(container: Container? = nil) -> Middleware<AppState, AppAction> {
-    let resolvedContainer = container ?? Container.shared
-    let corpusClient = resolvedContainer.corpusClient()
-    let corpusCacheStore = resolvedContainer.corpusCacheStore()
-    let corpusOutboxStore = resolvedContainer.corpusOutboxStore()
-    let corpusSyncMetadataStore = resolvedContainer.corpusSyncMetadataStore()
-    let idGenerator = resolvedContainer.idGenerator()
-    let clock = resolvedContainer.clock()
+public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAction> {
+    let corpusClient = container.corpusClient()
+    let corpusCacheStore = container.corpusCacheStore()
+    let corpusOutboxStore = container.corpusOutboxStore()
+    let corpusSyncMetadataStore = container.corpusSyncMetadataStore()
+    let idGenerator = container.idGenerator()
+    let clock = container.clock()
 
     return { store, action, next in
         switch action {

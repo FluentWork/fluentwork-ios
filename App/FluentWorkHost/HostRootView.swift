@@ -888,5 +888,5 @@ struct HostRootView: View {
 }
 
 #Preview {
-    HostRootView(store: AppStoreFactory.make())
+    HostRootView(store: AppStoreFactory.makeShared())
 }

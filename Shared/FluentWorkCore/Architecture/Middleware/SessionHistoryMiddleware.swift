@@ -12,9 +12,8 @@ import TGReduxKit
 /// second source of truth for something the user never edits (`79_` §设计 1).
 /// Copies of corpus live in that file because corpus *is* edited offline; this
 /// one is not, so it does not get the machinery.
-public func sessionHistoryMiddleware(container: Container? = nil) -> Middleware<AppState, AppAction> {
-    let resolvedContainer = container ?? Container.shared
-    let client = resolvedContainer.sessionHistoryClient()
+public func sessionHistoryMiddleware(container: Container) -> Middleware<AppState, AppAction> {
+    let client = container.sessionHistoryClient()
 
     return { store, action, next in
         guard case .sessionHistory(let historyAction) = action else {

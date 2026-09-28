@@ -18,16 +18,14 @@ private let dailyReadMaxPollAttempts = 20
 ///
 /// V1.1 guard: this middleware never reads or forwards `read_score` — the I10 hard
 /// constraint is that follow-read never displays scoring in the MVP.
-public func dailyReadMiddleware(container: Container? = nil) -> Middleware<AppState, AppAction> {
-  let resolvedContainer = container ?? Container.shared
-
+public func dailyReadMiddleware(container: Container) -> Middleware<AppState, AppAction> {
   return { store, action, next in
     guard case .dailyRead(let dailyReadAction) = action else {
       return next(action)
     }
 
-    let client = resolvedContainer.dailyReadClient()
-    let audioPlayer = resolvedContainer.dailyReadAudioPlayer()
+    let client = container.dailyReadClient()
+    let audioPlayer = container.dailyReadAudioPlayer()
 
     switch dailyReadAction {
     case .loadTriggered:
@@ -118,9 +116,8 @@ public func dailyReadMiddleware(container: Container? = nil) -> Middleware<AppSt
 /// action that flows through it). This keeps the player latched to the store
 /// for the lifetime of the process and avoids depending on a single-shot
 /// trigger like `.appLaunched`.
-public func dailyReadAudioObserver(container: Container? = nil) -> Middleware<AppState, AppAction> {
-  let resolvedContainer = container ?? Container.shared
-  let audioPlayer = resolvedContainer.dailyReadAudioPlayer()
+public func dailyReadAudioObserver(container: Container) -> Middleware<AppState, AppAction> {
+  let audioPlayer = container.dailyReadAudioPlayer()
   let startedBox = ObserverStartedBox()
 
   return { store, action, next in

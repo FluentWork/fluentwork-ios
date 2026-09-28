@@ -18,7 +18,8 @@
 | `F2` 测试支撑收敛 | ✅ **已完成** | `Tests/FluentWorkCoreTests/Support/Await.swift`；`waitUntil` **8 → 1 份**、错误类型 **16 → 1 份**（只余 `AwaitTimeout`）、`waitForBootstrap` **2 → 1 份且不再静默成功**、`waitForSpeakingRoomPhase` 内联。**664 tests / 30 suites 全绿**；变异（超时错误丢掉调用点与预算）⇒ 3 条断言红 |
 | `F3` REST 契约守卫（**端点面**） | ✅ **已完成** | 契约镜像进仓（`Resources/Schemas/openapi-v1.yaml`，由 `Scripts/sync-shared-schemas.sh` 从 backend 同步）+ `Tests/.../Networking/OpenAPIContractTests.swift` 三条判据（代码↔对照表↔契约 三方一致 + 对照表覆盖源码每个 case）。变异 4 条全咬 |
 | `F3-b` REST 契约守卫（**字段面**） | ✅ **已完成** | `Tests/.../Networking/OpenAPIFieldContractTests.swift`：20 个模型的手写映射（含两处**名字不一致**：`DrillVerdict`→`DrillJudgeResponse`、`DrillAppealOutcome`→`DrillAppealResponse`，以及一处**内联响应**：`DeleteCorpusBlockResponse`→`DELETE /corpus/blocks/{id}`）+ 三条判据。变异 3 条全咬，另外**首次运行就咬掉两条说谎的豁免条目** |
-| `F4`–`F9` | ⏳ 未开始 | 顺位：F4（DI 收紧）… |
+| `F4` DI 收紧 | ✅ **已完成** | 10 处 `?? Container.shared` **→ 0**；9 个 middleware 工厂 + `AppStoreFactory.make` 的 container 改成必传；新增 `AppStoreFactory.makeShared()` 作为**唯一有名字的组合根入口**；`Tests/.../Architecture/DependencyInjectionGuardTests.swift` 三条判据（生产代码零回落 / `Container.shared` 只在白名单 / **白名单无过期条目**）。变异 3 条全咬，且**白名单双向判据在真实修复过程中天然咬了一次**（第一版 `makeShared` 用了 `.shared` 简写） |
+| `F5`–`F9` | ⏳ 未开始 | 顺位：F5（并发口径）→ F6 → F7 → F8 → F9 |
 
 
 ---

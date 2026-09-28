@@ -5,7 +5,7 @@ import SwiftUI
 @MainActor
 struct FluentWorkHostApp: App {
     @Environment(\.scenePhase) private var scenePhase
-    @State private var store = AppStoreFactory.make()
+    @State private var store = AppStoreFactory.makeShared()
 
     var body: some Scene {
         WindowGroup {

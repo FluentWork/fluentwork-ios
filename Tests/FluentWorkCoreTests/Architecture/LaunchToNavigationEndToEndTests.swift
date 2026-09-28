@@ -160,7 +160,9 @@ private func makeIsolatedLaunchContainer() -> Container {
             )
         )
     )
-    let store = AppStoreFactory.make(initialState: initial)
+    let container = Container()
+    container.reset()
+    let store = AppStoreFactory.make(container: container, initialState: initial)
 
     store.dispatch(.speakingRoom(.session(.endTap)))
     try await waitUntil(label: "说的房间进入 .ended") {
@@ -183,7 +185,9 @@ private func makeIsolatedLaunchContainer() -> Container {
             )
         )
     )
-    let store = AppStoreFactory.make(initialState: initial)
+    let container = Container()
+    container.reset()
+    let store = AppStoreFactory.make(container: container, initialState: initial)
 
     store.dispatch(.navigation(.workbench(.dismiss)))
 

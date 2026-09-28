@@ -53,8 +53,7 @@ private let recordingAbortTimeout: Duration = .seconds(60)
 /// Owns SpeechSessionMachine invocation + SideEffect interpretation.
 ///
 /// Flow: `.speakingRoom(.session(event))` → pure reduce → `.applySession` + Effects.
-public func speechSessionMiddleware(container: Container? = nil) -> Middleware<AppState, AppAction> {
-    let resolvedContainer = container ?? Container.shared
+public func speechSessionMiddleware(container: Container) -> Middleware<AppState, AppAction> {
     // Shared between the session event handler (writer, runs on @MainActor
     // via the middleware call) and the audio engine loop (reader, runs in
     // a detached `.task` block). Keeping the count here means the audio
@@ -63,8 +62,8 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
     let turnCounter = TurnCountBox()
     let phaseBox = SessionPhaseBox()
     let timings = SpeechSessionTimingsRecorder(
-        tracker: resolvedContainer.tracker(),
-        clock: resolvedContainer.clock().now
+        tracker: container.tracker(),
+        clock: container.clock().now
     )
     // B15: turn-level timeout tracking — set when we enter .processing, cleared
     // when ai.turn.end arrives or the session ends. Lives here so both the
@@ -76,8 +75,8 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
     // `play(pcm:)` 上，换一个对象去播会静默绕过它。（barge-in 的丢弃只剩传输层
     // 一处，引擎侧那道按序列号的水印已删除。）
     let ttsCoordinator = TTSPlaybackCoordinator(
-        decoder: resolvedContainer.audioFrameDecoder(),
-        sink: resolvedContainer.audioEngine()
+        decoder: container.audioFrameDecoder(),
+        sink: container.audioEngine()
     )
     let ttsTrace = TTSStreamTrace()
     // One reader per middleware instance (= per store), for its whole life.
@@ -91,19 +90,19 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
     return { store, action, next in
         if case .speakingRoom(.manualSpeechBegin) = action {
             return .fireAndForget {
-                await resolvedContainer.audioEngine().beginManualSpeech()
+                await container.audioEngine().beginManualSpeech()
             }
         }
         if case .speakingRoom(.manualSpeechEnd) = action {
             return .fireAndForget {
-                await resolvedContainer.audioEngine().endManualSpeech()
+                await container.audioEngine().endManualSpeech()
             }
         }
 
         if case .speakingRoom(.rescueHintArmed) = action {
             return .merge([
                 next(action),
-                scheduleRescueHintTask(timeouts: resolvedContainer.processingTimeouts())
+                scheduleRescueHintTask(timeouts: container.processingTimeouts())
             ])
         }
 
@@ -111,7 +110,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
             return .merge([
                 next(action),
                 .fireAndForget {
-                    await resolvedContainer.speechSessionClient().sendRescueRequest()
+                    await container.speechSessionClient().sendRescueRequest()
                 }
             ])
         }
@@ -126,7 +125,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
         if case .speakingRoom(.session(.sessionStartTap)) = action, eventPumpsStarted.take() {
             pumpEffects.append(
                 transportEventPump(
-                    container: resolvedContainer,
+                    container: container,
                     dispatch: { store.dispatch($0) },
                     timings: timings,
                     turnTimeoutTracking: turnTimeoutTracking,
@@ -141,7 +140,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
             // 「连接中」, the engine's leaves 「开始说话」 doing nothing.
             pumpEffects.append(
                 audioEventPump(
-                    container: resolvedContainer,
+                    container: container,
                     dispatch: { store.dispatch($0) },
                     turnCounter: turnCounter,
                     phaseBox: phaseBox,
@@ -186,7 +185,7 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
         let interpreted = effects.map {
             interpretSpeechSessionSideEffect(
                 $0,
-                container: resolvedContainer,
+                container: container,
                 dispatch: { store.dispatch($0) },
                 pendingTurnID: pendingTurnID(for: event, currentCount: preEventCount),
                 turnCounter: turnCounter,
@@ -220,8 +219,8 @@ public func speechSessionMiddleware(container: Container? = nil) -> Middleware<A
             turnTimeoutTracking: turnTimeoutTracking,
             speechCaptureGate: speechCaptureGate,
             evaluationArrival: evaluationArrival,
-            tracker: resolvedContainer.tracker(),
-            timeouts: resolvedContainer.processingTimeouts()
+            tracker: container.tracker(),
+            timeouts: container.processingTimeouts()
         )
         return .merge([apply] + interpreted + timeoutEffects + pumpEffects)
     }
