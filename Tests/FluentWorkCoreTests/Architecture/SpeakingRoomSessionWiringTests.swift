@@ -1450,32 +1450,6 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(await speechClient.snapshotEndCalls() == 1)
 }
 
-@MainActor
-private func waitUntil(
-    timeoutNanoseconds: UInt64,
-    pollIntervalNanoseconds: UInt64 = 10_000_000,
-    label: String = "未命名等待",
-    condition: @escaping @MainActor () async -> Bool
-) async throws {
-    let start = DispatchTime.now().uptimeNanoseconds
-    while !(await condition()) {
-        if DispatchTime.now().uptimeNanoseconds - start >= timeoutNanoseconds {
-            throw TimeoutError(
-                label: label,
-                milliseconds: Int(timeoutNanoseconds / 1_000_000)
-            )
-        }
-        try await Task.sleep(nanoseconds: pollIntervalNanoseconds)
-    }
-}
-
-private struct TimeoutError: Error, CustomStringConvertible {
-    let label: String
-    let milliseconds: Int
-
-    var description: String { "\(label) —— 超时（预算 \(milliseconds)ms）" }
-}
-
 /// B8：用户自己点出来的那一格梯子。
 ///
 /// 门是客户端自己的钟，起摆的时刻是 `ai.turn.end` —— 网关的静默检测器也是那一刻

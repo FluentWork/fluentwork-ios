@@ -291,20 +291,3 @@ private func makeDailyRead() -> DailyRead {
     readScore: nil
   )
 }
-
-@MainActor
-private func waitUntil(
-  timeoutNanoseconds: UInt64,
-  pollIntervalNanoseconds: UInt64 = 20_000_000,
-  condition: @escaping @MainActor () -> Bool
-) async throws {
-  let start = DispatchTime.now().uptimeNanoseconds
-  while !condition() {
-    if DispatchTime.now().uptimeNanoseconds - start >= timeoutNanoseconds {
-      throw TimeoutError()
-    }
-    try await Task.sleep(nanoseconds: pollIntervalNanoseconds)
-  }
-}
-
-private struct TimeoutError: Error {}

@@ -273,23 +273,6 @@ private func makeDailyRead() -> DailyRead {
   )
 }
 
-@MainActor
-private func waitUntil(
-  timeoutNanoseconds: UInt64,
-  pollIntervalNanoseconds: UInt64 = 20_000_000,
-  condition: @escaping @MainActor () -> Bool
-) async throws {
-  let start = DispatchTime.now().uptimeNanoseconds
-  while !condition() {
-    if DispatchTime.now().uptimeNanoseconds - start >= timeoutNanoseconds {
-      throw TimeoutError()
-    }
-    try await Task.sleep(nanoseconds: pollIntervalNanoseconds)
-  }
-}
-
-private struct TimeoutError: Error {}
-
 /// First action through `dailyReadAudioObserver` must start exactly one task.
 @Test func observerStartedBoxConcurrentTryMarkStartedSucceedsOnce() async {
   let box = ObserverStartedBox()

@@ -369,20 +369,3 @@ private func makeBatchAcceptResponse(acceptedCount: Int) throws -> BatchAcceptBl
     )
     return try JSONDecoder().decode(BatchAcceptBlocksResponse.self, from: payload)
 }
-
-@MainActor
-private func waitUntil(
-    timeoutNanoseconds: UInt64,
-    pollIntervalNanoseconds: UInt64 = 10_000_000,
-    condition: @escaping @MainActor () -> Bool
-) async throws {
-    let start = DispatchTime.now().uptimeNanoseconds
-    while !condition() {
-        if DispatchTime.now().uptimeNanoseconds - start >= timeoutNanoseconds {
-            throw TimeoutError()
-        }
-        try await Task.sleep(nanoseconds: pollIntervalNanoseconds)
-    }
-}
-
-private struct TimeoutError: Error {}

@@ -24,41 +24,6 @@ private func makeIsolatedLaunchContainer() -> Container {
     return container
 }
 
-@MainActor
-private func waitForBootstrap(
-    _ store: Store<AppState, AppAction>,
-    timeoutNanoseconds: UInt64 = 2_000_000_000
-) async {
-    let step: UInt64 = 20_000_000
-    var waited: UInt64 = 0
-    while waited < timeoutNanoseconds {
-        switch store.state.bootstrapStatus {
-        case .ready, .failed:
-            return
-        case .idle, .loading:
-            try? await Task.sleep(nanoseconds: step)
-            waited += step
-        }
-    }
-}
-
-@MainActor
-private func waitForSpeakingRoomPhase(
-    _ store: Store<AppState, AppAction>,
-    phase: SpeechSessionPhase,
-    timeoutNanoseconds: UInt64 = 500_000_000
-) async {
-    let step: UInt64 = 20_000_000
-    var waited: UInt64 = 0
-    while waited < timeoutNanoseconds {
-        if store.state.speakingRoom.phase == phase {
-            return
-        }
-        try? await Task.sleep(nanoseconds: step)
-        waited += step
-    }
-}
-
 @Test func appRouteBridgesPluginEntryRoutes() {
     #expect(AppRoute.speakingRoom(sessionID: nil).entryRoute == "/speaking-room")
     #expect(AppRoute.review(sessionID: "r1").entryRoute == "/review")
@@ -107,12 +72,12 @@ private func waitForSpeakingRoomPhase(
 
 /// Store-level end-to-end: launch → resolver bootstrap → flag/plugin projection → navigate.
 @MainActor
-@Test func launchBootstrapsFlagsThenPresentsSpeakingRoom() async {
+@Test func launchBootstrapsFlagsThenPresentsSpeakingRoom() async throws {
     let container = makeIsolatedLaunchContainer()
     let store = AppStoreFactory.make(container: container)
 
     store.dispatch(.lifecycle(.appLaunched))
-    await waitForBootstrap(store)
+    try await waitForBootstrap(store)
 
     #expect(
         store.state.bootstrapStatus == .ready,
@@ -154,12 +119,12 @@ private func waitForSpeakingRoomPhase(
 }
 
 @MainActor
-@Test func launchThenSwitchTabKeepsIndependentStacks() async {
+@Test func launchThenSwitchTabKeepsIndependentStacks() async throws {
     let container = makeIsolatedLaunchContainer()
     let store = AppStoreFactory.make(container: container)
 
     store.dispatch(.lifecycle(.appLaunched))
-    await waitForBootstrap(store)
+    try await waitForBootstrap(store)
 
     #expect(
         store.state.bootstrapStatus == .ready,
@@ -181,7 +146,7 @@ private func waitForSpeakingRoomPhase(
 }
 
 @MainActor
-@Test func speakingRoomModalCanEndSessionThenDismiss() async {
+@Test func speakingRoomModalCanEndSessionThenDismiss() async throws {
     let initial = AppState(
         speakingRoom: SpeakingRoomState(
             phase: .recording,
@@ -198,7 +163,9 @@ private func waitForSpeakingRoomPhase(
     let store = AppStoreFactory.make(initialState: initial)
 
     store.dispatch(.speakingRoom(.session(.endTap)))
-    await waitForSpeakingRoomPhase(store, phase: .ended)
+    try await waitUntil(label: "说的房间进入 .ended") {
+        store.state.speakingRoom.phase == .ended
+    }
     #expect(store.state.speakingRoom.phase == .ended)
 
     store.dispatch(.navigation(.workbench(.dismiss)))

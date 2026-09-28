@@ -138,20 +138,3 @@ private func waitForPhase(
         store.state.speakingRoom.phase == phase
     }
 }
-
-@MainActor
-private func waitUntil(
-    timeoutNanoseconds: UInt64,
-    pollIntervalNanoseconds: UInt64 = 10_000_000,
-    condition: @escaping @MainActor () async -> Bool
-) async throws {
-    let start = DispatchTime.now().uptimeNanoseconds
-    while !(await condition()) {
-        if DispatchTime.now().uptimeNanoseconds - start >= timeoutNanoseconds {
-            throw TimeoutError()
-        }
-        try await Task.sleep(nanoseconds: pollIntervalNanoseconds)
-    }
-}
-
-private struct TimeoutError: Error {}

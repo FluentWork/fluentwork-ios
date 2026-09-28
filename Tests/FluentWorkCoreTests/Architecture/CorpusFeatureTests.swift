@@ -670,23 +670,6 @@ import TGReduxKitTesting
     try store.assert(equals: expected)
 }
 
-@MainActor
-private func waitUntil(
-    timeoutNanoseconds: UInt64,
-    pollIntervalNanoseconds: UInt64 = 10_000_000,
-    condition: @escaping @MainActor () -> Bool
-) async throws {
-    let start = DispatchTime.now().uptimeNanoseconds
-    while !condition() {
-        if DispatchTime.now().uptimeNanoseconds - start >= timeoutNanoseconds {
-            throw TimeoutError()
-        }
-        try await Task.sleep(nanoseconds: pollIntervalNanoseconds)
-    }
-}
-
-private struct TimeoutError: Error {}
-
 private func makePhraseBlock(
     id: String,
     intentZH: String = "表达感谢",

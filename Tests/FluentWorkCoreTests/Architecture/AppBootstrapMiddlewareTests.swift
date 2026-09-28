@@ -49,7 +49,7 @@ private func makeIsolatedContainer(
 /// loud, because "where do I read the device id" is a question every device run
 /// asks and the answer used to be "from the Keychain".
 @MainActor
-@Test func appLaunchLogsTheDeviceIdentity() async {
+@Test func appLaunchLogsTheDeviceIdentity() async throws {
     let tracker = CapturingTracker()
     let container = makeIsolatedContainer(
         bootstrapClient: MockBootstrapClient(
@@ -64,7 +64,7 @@ private func makeIsolatedContainer(
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.lifecycle(.appLaunched))
-    await waitForBootstrap(store)
+    try await waitForBootstrap(store)
 
     let identity = tracker.events.first { $0.name == "device_identity" }
     #expect(identity?.properties["device_id"] == "DA87E7D4-TESTDEVICE")
@@ -73,25 +73,7 @@ private func makeIsolatedContainer(
 }
 
 @MainActor
-private func waitForBootstrap(
-    _ store: Store<AppState, AppAction>,
-    timeoutNanoseconds: UInt64 = 2_000_000_000
-) async {
-    let step: UInt64 = 20_000_000
-    var waited: UInt64 = 0
-    while waited < timeoutNanoseconds {
-        switch store.state.bootstrapStatus {
-        case .ready, .failed:
-            return
-        case .idle, .loading:
-            try? await Task.sleep(nanoseconds: step)
-            waited += step
-        }
-    }
-}
-
-@MainActor
-@Test func appLaunchMiddlewareUsesInjectedBootstrapClient() async {
+@Test func appLaunchMiddlewareUsesInjectedBootstrapClient() async throws {
     let container = makeIsolatedContainer(
         bootstrapClient: MockBootstrapClient(
             snapshot: BootstrapSnapshot(
@@ -108,7 +90,7 @@ private func waitForBootstrap(
     let workspace = store.workspaceScope()
 
     store.dispatch(.lifecycle(.appLaunched))
-    await waitForBootstrap(store)
+    try await waitForBootstrap(store)
 
     #expect(store.state.bootstrapStatus == .ready)
     #expect(featureFlags.state.isRemoteLoaded)
@@ -124,12 +106,12 @@ private func waitForBootstrap(
 }
 
 @MainActor
-@Test func appLaunchMiddlewareSurfacesBootstrapFailure() async {
+@Test func appLaunchMiddlewareSurfacesBootstrapFailure() async throws {
     let container = makeIsolatedContainer(bootstrapClient: FailingBootstrapClient())
     let store = AppStoreFactory.make(container: container)
 
     store.dispatch(.lifecycle(.appLaunched))
-    await waitForBootstrap(store)
+    try await waitForBootstrap(store)
 
     #expect(store.state.bootstrapStatus == .failed)
     #expect(store.state.lastErrorMessage == "bootstrap failed for test")
