@@ -47,6 +47,15 @@ public enum FluentWorkAPI: FluentWorkTargetType {
   )
   case getDailyReadToday(accessToken: String)
   case postDailyReadFollowRead(accessToken: String, dailyReadID: String, audioURL: String?)
+  case drillRound(accessToken: String, size: Int)
+  case drillJudge(
+    accessToken: String,
+    blockID: String,
+    asrText: String,
+    responseMS: Int,
+    sessionID: String?
+  )
+  case drillAppeal(accessToken: String, recordID: Int64)
 
   public var baseURL: URL {
     // Overridden by SessionAPIClient via AbsoluteURL target wrapper — unused.
@@ -84,13 +93,19 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       return "/daily-reads/today"
     case .postDailyReadFollowRead(_, let dailyReadID, _):
       return "/daily-reads/\(dailyReadID)/follow-read"
+    case .drillRound:
+      return "/drill/round"
+    case .drillJudge:
+      return "/drill/judge"
+    case .drillAppeal:
+      return "/drill/appeal"
     }
   }
 
   public var method: Moya.Method {
     switch self {
     case .getDailyReadToday, .getSessionReview, .listCorpusBlocks, .listSessions,
-      .getSessionDetail:
+      .getSessionDetail, .drillRound:
       return .get
     case .deleteCorpusBlock:
       return .delete
@@ -103,7 +118,9 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       .sendSessionMessage,
       .batchAcceptCorpusBlocks,
       .favoriteCorpusBlock,
-      .postDailyReadFollowRead:
+      .postDailyReadFollowRead,
+      .drillJudge,
+      .drillAppeal:
       return .post
     }
   }
@@ -210,6 +227,23 @@ public enum FluentWorkAPI: FluentWorkTargetType {
         return .requestJSONEncodable(["audio_url": audioURL])
       }
       return .requestJSONEncodable(EmptyRequest())
+    case .drillRound(_, let size):
+      return .requestParameters(parameters: ["size": size], encoding: URLEncoding.queryString)
+    case .drillJudge(_, let blockID, let asrText, let responseMS, let sessionID):
+      var parameters: [String: Any] = [
+        "block_id": blockID,
+        "asr_text": asrText,
+        "response_ms": responseMS,
+      ]
+      if let sessionID, !sessionID.isEmpty {
+        parameters["session_id"] = sessionID
+      }
+      return .requestParameters(parameters: parameters, encoding: JSONEncoding.default)
+    case .drillAppeal(_, let recordID):
+      return .requestParameters(
+        parameters: ["record_id": recordID],
+        encoding: JSONEncoding.default
+      )
     }
   }
 
@@ -237,7 +271,10 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       .deleteCorpusBlock(let token, _),
       .favoriteCorpusBlock(let token, _, _, _),
       .getDailyReadToday(let token),
-      .postDailyReadFollowRead(let token, _, _):
+      .postDailyReadFollowRead(let token, _, _),
+      .drillRound(let token, _),
+      .drillJudge(let token, _, _, _, _),
+      .drillAppeal(let token, _):
       return token
     }
   }
