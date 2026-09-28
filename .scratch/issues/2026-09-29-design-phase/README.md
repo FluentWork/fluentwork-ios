@@ -20,7 +20,8 @@
 | `F3-b` REST 契约守卫（**字段面**） | ✅ **已完成** | `Tests/.../Networking/OpenAPIFieldContractTests.swift`：20 个模型的手写映射（含两处**名字不一致**：`DrillVerdict`→`DrillJudgeResponse`、`DrillAppealOutcome`→`DrillAppealResponse`，以及一处**内联响应**：`DeleteCorpusBlockResponse`→`DELETE /corpus/blocks/{id}`）+ 三条判据。变异 3 条全咬，另外**首次运行就咬掉两条说谎的豁免条目** |
 | `F4` DI 收紧 | ✅ **已完成** | 10 处 `?? Container.shared` **→ 0**；9 个 middleware 工厂 + `AppStoreFactory.make` 的 container 改成必传；新增 `AppStoreFactory.makeShared()` 作为**唯一有名字的组合根入口**；`Tests/.../Architecture/DependencyInjectionGuardTests.swift` 三条判据（生产代码零回落 / `Container.shared` 只在白名单 / **白名单无过期条目**）。变异 3 条全咬，且**白名单双向判据在真实修复过程中天然咬了一次**（第一版 `makeShared` 用了 `.shared` 简写） |
 | `F8` CI 结构断言 | ✅ **已完成** | `ios-ci.yml` 断言的 `Modules/Services/Resources` **本仓从来没有过** ⇒ 每次推送必红；改成真实骨架（`App/Shared/Tests/Scripts` + `Package.swift` + `project.yml` + `Scripts/gate.sh` 可执行）。**实测对照**：拿 HEAD 的旧版 shell 跑 → `EXIT=1`，新版 → `EXIT=0`。另加 `Tests/.../Repository/RepositoryLayoutTests.swift`：CI 里每条 `test -d/-f/-x` 必须指到真实路径（棘轮下限 9） |
-| `F5`–`F7`、`F9` | ⏳ 未开始 | 顺位：F5（并发口径）→ F6 → F7 → F9 |
+| `F5` 并发口径 | ✅ **已完成** | `AGENTS.md` 新增 `## Concurrency Isolation`（Local Rule 8）：四行表按「这份状态需要怎么被访问」选策略，**封闭清单** + 三条禁用写法。新增 `Tests/.../Architecture/ConcurrencyPolicyTests.swift`（`NSLock`/`NSRecursiveLock`/`DispatchSemaphore` 零容忍；`DispatchQueue` 6 个文件登记 + 双向过期检测）+ `Support/RepositoryScan.swift`（扫描工具收敛，避免重造 F2 消掉的重复）。变异 3 条全咬。**顺带修掉 `AGENTS.md` 里已过期的 Known Drift #3**（CI 那条已修，换成 F8-b） |
+| `F6`、`F7`、`F9` | ⏳ 未开始 | 顺位：F6（`AVAudioSession` 所有权，需真机）→ F7（设计资产）→ F9（离线缓存） |
 
 
 ---

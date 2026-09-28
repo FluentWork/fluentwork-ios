@@ -49,6 +49,9 @@ specific to this repository.
    path listed under High-Risk Paths is explained with a diagram in the commit body, not
    with prose and not with a comment. A comment may state a rule someone would otherwise
    break; it may not carry the shape of a flow. When the flow changes, redraw it.
+8. **Concurrency isolation is a closed table.** Pick from `## Concurrency Isolation`
+   below by what the state has to do, not by taste. A strategy that is not in the table is
+   a defect, not a preference — and `ConcurrencyPolicyTests` enforces that.
 
 ## Required Behaviors
 
@@ -62,6 +65,38 @@ specific to this repository.
    `fluentwork-meta/agents/shared/defect-fix-discipline.md`. A green suite after the
    fix is not evidence the guard works; break the implementation and confirm the
    *expected* test goes red.
+
+## Concurrency Isolation
+
+Pick by **what the state has to do**, not by taste. Measured 2026-09-29 over `Shared` +
+`App`: 15 `actor` declarations, 23 `@MainActor` sites, 14 `OSAllocatedUnfairLock`, and
+`NSLock` only in a test.
+
+| The state… | Use | Why that one | Existing examples |
+|---|---|---|---|
+| does IO across `await`, or is a long-lived subsystem with its own invariants | `actor` | suspension is the boundary; an async API is the point | `Storage/*`, `LiveAudioEngine`, `URLSessionSocketTransport`, `TokenRefreshCoordinator`, `AuthenticatedNetworkClient` |
+| is view / store state | `@MainActor` | it is only ever read from the main actor anyway | `AppStore`, `HostRootView`, `AppRootTabView` |
+| is one or two fields that must be read **and written from a sync context** | `OSAllocatedUnfairLock` in a `final class: @unchecked Sendable` | `actor`'s `get`/`set` are `async`; reaching one from a sync `Middleware` closure forces a `Task { }`, and that is where the shape starts to bend | `TurnCountBox`, `SessionPhaseBox`, `OnceFlag`, `SpeechCaptureGate`, `SpeechSessionTimingsRecorder` |
+| has to hand a queue to a **system API** | `DispatchQueue` | `NWPathMonitor` and notification observers demand one | `NWPathMonitor`'s queue in `NetworkMonitor` |
+
+The list is closed. Not for new code:
+
+- **`NSLock` / `NSRecursiveLock` / `DispatchSemaphore`.** `OSAllocatedUnfairLock` (iOS 16+)
+  is the replacement, is already what the sync boxes use, and scopes the critical section
+  with `withLock`. Production code has zero.
+- **`DispatchQueue(label:)` + `.sync` used as a lock.** Same job as the lock, weaker
+  guarantee, and it is exactly what `SecureStorage` was moved off. Files that still do it
+  predate the rule and are listed in the guard.
+- **`private actor` as a state box.** Row 3. `ActiveSessionBox`, `HeartbeatTaskBox` and
+  `SessionTransitionGate` in `DefaultSpeechSessionClient` predate the rule.
+
+`Tests/.../Architecture/ConcurrencyPolicyTests.swift` makes "closed" literal, for the two
+halves that are machine-checkable: `NSLock` / `NSRecursiveLock` / `DispatchSemaphore` are
+**zero-tolerance** in production (no allow-list — the replacement already exists and is
+already in use), and every production file that uses `DispatchQueue` must be registered
+there with a stated purpose. Adding a file to that list is a deliberate act; that act is
+the whole point. The `private actor` half is **not** machine-checked and is not pretended
+to be — it is prose plus three named instances.
 
 ## High-Risk Paths
 
@@ -90,9 +125,10 @@ These are measured, not suspected. Fix or work around them deliberately.
    from the `POST /sessions` response (`wss_url`), not from `AppEnvironment`.
    `AppEnvironment` only governs the HTTP base URL, so a wrong host there produces
    working HTTP and an instantly-failing WebSocket.
-3. **CI `repo-structure-check` asserts directories that do not exist.** `ios-ci.yml`
-   requires `Modules`, `Services`, `Resources`; the repository has `App`, `Shared`,
-   `Tests`, `Scripts`. That job fails on every push regardless of the diff.
+3. **`project.yml` and `Package.swift` can disagree, and nothing checks.** CI does not run
+   `xcodegen`, and the landing gate builds the **committed** `.xcodeproj` — so renaming a
+   target directory, a product, or `App/FluentWorkHost` breaks the host app in a way no
+   automated step reports until someone regenerates the project by hand. `F8-b`.
 
 ## CI Boundary
 

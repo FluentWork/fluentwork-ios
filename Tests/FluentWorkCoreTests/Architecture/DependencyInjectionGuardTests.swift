@@ -49,11 +49,7 @@ import Testing
     ]
 
     @Test func noSilentSingletonFallbackInProductionCode() throws {
-        let findings = try scan { relativePath, text in
-            Self.codeLines(of: text)
-                .filter { $0.text.contains("?? Container.shared") }
-                .map { "\(relativePath):\($0.number)" }
-        }
+        let findings = try RepositoryScan.occurrences(of: "?? Container.shared")
 
         #expect(
             findings.isEmpty,
@@ -66,11 +62,11 @@ import Testing
     }
 
     @Test func theSharedContainerIsOnlyTouchedWhereItIsDeclaredAsSuch() throws {
-        let offenders = try scan { relativePath, text in
-            guard Self.allowedSharedReferrers[relativePath] == nil else { return [] }
-            return Self.codeLines(of: text)
+        let offenders = try RepositoryScan.productionSources().flatMap { source in
+            guard Self.allowedSharedReferrers[source.relativePath] == nil else { return [String]() }
+            return RepositoryScan.codeLines(of: source.text)
                 .filter { $0.text.contains("Container.shared") }
-                .map { "\(relativePath):\($0.number)" }
+                .map { "\(source.relativePath):\($0.number)" }
         }
 
         #expect(
@@ -88,7 +84,7 @@ import Testing
     /// 没有这条，白名单会随时间变成「免检名单」—— 文件改名或改回注入以后，
     /// 剩下一条永远为真的豁免，而**没有任何外部信号**提示它已失效。
     @Test func theAllowListHasNoStaleEntries() throws {
-        let root = Self.repositoryRoot
+        let root = RepositoryScan.repositoryRoot
         var liveReferences: Set<String> = []
         var missingFiles: [String] = []
 
@@ -99,7 +95,7 @@ import Testing
                 continue
             }
             let text = try String(contentsOf: url, encoding: .utf8)
-            if Self.codeLines(of: text).contains(where: { $0.text.contains("Container.shared") }) {
+            if RepositoryScan.codeLines(of: text).contains(where: { $0.text.contains("Container.shared") }) {
                 liveReferences.insert(relativePath)
             }
         }
@@ -117,54 +113,5 @@ import Testing
             \(stale.joined(separator: "\n"))
             """
         )
-    }
-
-    // MARK: - 扫描
-
-    /// 遍历生产代码（`Shared` + `App`），对每个文件跑 `find`。
-    private func scan(_ find: (String, String) throws -> [String]) throws -> [String] {
-        let root = Self.repositoryRoot
-        var scanned = 0
-        var findings: [String] = []
-
-        for top in ["Shared", "App"] {
-            let base = root.appending(path: top)
-            guard let walker = FileManager.default.enumerator(at: base, includingPropertiesForKeys: nil)
-            else { continue }
-            for case let url as URL in walker where url.pathExtension == "swift" {
-                let relativePath = url.path.replacingOccurrences(of: root.path + "/", with: "")
-                scanned += 1
-                findings += try find(relativePath, String(contentsOf: url, encoding: .utf8))
-            }
-        }
-
-        #expect(
-            scanned > 100,
-            "只扫到 \(scanned) 个 Swift 文件 —— 守卫在看空气（路径或目录结构变了）"
-        )
-        return findings.sorted()
-    }
-
-    /// 去掉整行注释后的代码行（带行号）。
-    ///
-    /// 只剔除**以 `//` 开头**的行，不做行内注释剥离 —— 后者要处理字符串里的 `//`
-    /// （URL 就是），截错了会变成漏报。整行规则对当前代码成立，且不可能漏。
-    private static func codeLines(of text: String) -> [(number: Int, text: String)] {
-        text.split(separator: "\n", omittingEmptySubsequences: false)
-            .enumerated()
-            .compactMap { index, line -> (number: Int, text: String)? in
-                let value = String(line)
-                return value.trimmingCharacters(in: .whitespaces).hasPrefix("//")
-                    ? nil
-                    : (number: index + 1, text: value)
-            }
-    }
-
-    private static var repositoryRoot: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
     }
 }
