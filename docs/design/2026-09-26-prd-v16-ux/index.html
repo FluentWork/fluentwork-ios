@@ -1,0 +1,3162 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FluentWork UI/UX 设计文档 V2.0 · 对应 PRD V1.6</title>
+<meta name="description" content="FluentWork（面向中国程序员的职场英语情景演练 iOS App）UI/UX 设计文档：设计系统、信息架构、12 屏高保真稿，以及 PRD V1.6 五项变更的界面形态。" />
+<style>
+/* ==========================================================================
+   0 · OD-LAYOUT-PRIMITIVES v1 — structure only. Must stay first so product
+   CSS (outside the layer) always wins.
+   ========================================================================== */
+@layer od-layout {
+  :where(.od-stack,.od-row,.od-row-top,.od-cluster,.od-grid,.od-field,.od-stat,.od-cell,.od-tile) > :where(*) { min-width: 0; }
+
+  .od-stack   { display: flex; flex-direction: column; gap: var(--od-gap, 8px); }
+  .od-row     { display: flex; align-items: center; gap: var(--od-gap, 8px); }
+  .od-row-top { display: flex; align-items: flex-start; gap: var(--od-gap, 8px); }
+  .od-cluster { display: flex; flex-wrap: wrap; align-items: center; gap: var(--od-gap, 8px); }
+  .od-fill    { flex: 1 1 0; min-width: 0; }
+  .od-fixed   { flex: none; }
+  .od-grid    { display: grid; gap: var(--od-gap, 12px); grid-template-columns: repeat(var(--od-cols, 3), minmax(0, 1fr)); }
+
+  .od-stat, .od-field, .od-cell { display: grid; gap: var(--od-gap, 2px); }
+  :where(.od-stat,.od-field,.od-cell) > :where(*) { display: block; }
+  .od-tile { display: grid; grid-template-rows: auto 1fr; }
+  :where(.od-tile) > :where(*) { display: block; }
+
+  .od-media { display: block; width: 100%; height: auto; aspect-ratio: var(--od-ratio, auto); }
+  .od-media-cover { object-fit: cover; }
+
+  .od-truncate { display: block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .od-clamp-2, .od-clamp-3 { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .od-clamp-2 { -webkit-line-clamp: 2; }
+  .od-clamp-3 { -webkit-line-clamp: 3; }
+  .od-lines-2 { min-height: calc(2 * 1.4em); }
+  .od-nowrap  { white-space: nowrap; }
+  .od-keep    { word-break: keep-all; overflow-wrap: anywhere; }
+
+  .od-screen { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; }
+  .od-scroll { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+
+  .od-rail { display: flex; gap: var(--od-gap, 8px); overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none;
+             padding-inline: var(--od-rail-pad, 16px); scroll-padding-inline: var(--od-rail-pad, 16px); }
+  .od-rail::-webkit-scrollbar { display: none; }
+  :where(.od-rail) > :where(*) { flex: none; scroll-snap-align: start; }
+  :where(.od-rail) > :where(:last-child) { margin-inline-end: var(--od-rail-pad, 16px); }
+
+  .od-spacer { flex: none; visibility: hidden; pointer-events: none; }
+  .od-touch  { min-width: 44px; min-height: 44px; }
+}
+
+/* ==========================================================================
+   1 · FluentWork design tokens — continued from《21_FluentWork界面设计文档》
+   V1.2. Dark-first. Units are iOS pt at 1:1 with CSS px (393×852 logical).
+   ========================================================================== */
+:root {
+  --fw-bg:          #1A2226;
+  --fw-bg-elev:     #232E33;
+  --fw-bg-sunken:   #141A1D;
+  --fw-bg-stage:    #10161A;
+  --fw-brand:       #4A7C82;
+  --fw-brand-strong:#35646A;
+  --fw-accent:      #7FB3B8;
+  --fw-text:        #E8EDEF;
+  --fw-text-2:      #9AABAF;
+  --fw-success:     #6A9E7E;
+  --fw-training:    #C9A45C;
+  --fw-improve:     #C97B5C;
+  --fw-line:        rgba(232,237,239,.10);
+  --fw-line-strong: rgba(232,237,239,.20);
+  --fw-wash:        rgba(127,179,184,.12);
+
+  --fw-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+             "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --fw-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  --fw-s1: 4px; --fw-s2: 8px; --fw-s3: 12px;
+  --fw-s4: 16px; --fw-s6: 24px; --fw-s8: 32px;
+
+  --fw-r-card: 12px; --fw-r-bubble: 16px; --fw-r-btn: 24px;
+
+  --fw-d-micro: 180ms; --fw-d-trans: 280ms;
+  --fw-ease: cubic-bezier(.22,.61,.36,1);
+
+  --doc-max: 1180px;
+}
+
+/* ==========================================================================
+   2 · Document chrome
+   ========================================================================== */
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  background: var(--fw-bg-sunken);
+  color: var(--fw-text);
+  font-family: var(--fw-font);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--fw-accent); }
+:focus-visible { outline: 2px solid var(--fw-accent); outline-offset: 2px; border-radius: 4px; }
+
+.doc-shell { display: grid; grid-template-columns: 252px minmax(0, 1fr); align-items: start; }
+
+/* ---- Sidebar nav (sticky application chrome; content reserves its column) ---- */
+.doc-nav {
+  position: sticky; top: 0; align-self: start;
+  height: 100dvh; overflow-y: auto;
+  padding: 28px 20px 40px;
+  border-right: 1px solid var(--fw-line);
+  background: var(--fw-bg-sunken);
+  scrollbar-width: thin;
+}
+.doc-nav::-webkit-scrollbar { width: 6px; }
+.doc-nav::-webkit-scrollbar-thumb { background: var(--fw-line-strong); border-radius: 3px; }
+
+.doc-brand { display: grid; gap: 2px; margin-bottom: 24px; }
+.doc-brand b { font-size: 17px; font-weight: 700; letter-spacing: -.02em; }
+.doc-brand span { font-size: 12px; color: var(--fw-text-2); letter-spacing: .02em; }
+
+.doc-nav ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+.doc-nav a {
+  display: grid; grid-template-columns: 26px minmax(0,1fr); align-items: baseline;
+  padding: 8px 10px; border-radius: 8px;
+  color: var(--fw-text-2); text-decoration: none; font-size: 13.5px; line-height: 1.35;
+  transition: background var(--fw-d-micro) var(--fw-ease), color var(--fw-d-micro) var(--fw-ease);
+}
+.doc-nav a i { font-style: normal; font-size: 11px; font-variant-numeric: tabular-nums; color: rgba(154,171,175,.55); }
+.doc-nav a:hover { background: rgba(232,237,239,.05); color: var(--fw-text); }
+.doc-nav a.is-active { background: var(--fw-wash); color: var(--fw-accent); font-weight: 600; }
+.doc-nav a.is-active i { color: var(--fw-accent); }
+.doc-nav .nav-foot { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--fw-line); font-size: 11.5px; color: rgba(154,171,175,.7); line-height: 1.55; }
+
+/* ---- Main column ---- */
+.doc-main { min-width: 0; }
+.doc-wrap { max-width: var(--doc-max); padding: 0 40px 120px; }
+
+.doc-hero { padding: 72px 0 48px; border-bottom: 1px solid var(--fw-line); }
+.doc-eyebrow { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--fw-accent); font-weight: 600; margin: 0 0 16px; }
+.doc-hero h1 { margin: 0; font-size: clamp(34px, 5vw, 54px); line-height: 1.08; letter-spacing: -.035em; font-weight: 700; }
+.doc-hero .lede { margin: 20px 0 0; max-width: 62ch; font-size: 17px; color: var(--fw-text-2); line-height: 1.65; }
+.doc-meta { margin-top: 32px; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px; background: var(--fw-line); border: 1px solid var(--fw-line); border-radius: var(--fw-r-card); overflow: hidden; }
+.doc-meta div { background: var(--fw-bg); padding: 14px 16px; display: grid; gap: 3px; }
+.doc-meta dt { font-size: 11.5px; color: var(--fw-text-2); letter-spacing: .04em; }
+.doc-meta dd { margin: 0; font-size: 14px; font-weight: 600; }
+
+.doc-sec { padding-top: 68px; scroll-margin-top: 20px; }
+.doc-sec > h2 { margin: 0 0 8px; font-size: clamp(24px, 3vw, 31px); letter-spacing: -.025em; font-weight: 700; display: grid; grid-template-columns: auto minmax(0,1fr); gap: 14px; align-items: baseline; }
+.doc-sec > h2 em { font-style: normal; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--fw-accent); letter-spacing: .06em; font-weight: 600; }
+.doc-sec > .sec-lede { margin: 0 0 28px; max-width: 68ch; color: var(--fw-text-2); font-size: 15.5px; }
+.doc-sub { margin: 44px 0 16px; font-size: 18px; font-weight: 650; letter-spacing: -.015em; display: flex; align-items: baseline; gap: 10px; }
+.doc-sub small { font-weight: 400; font-size: 13px; color: var(--fw-text-2); letter-spacing: 0; }
+.doc-p { margin: 0 0 16px; max-width: 70ch; color: var(--fw-text-2); }
+.doc-p strong { color: var(--fw-text); font-weight: 600; }
+
+/* ---- Shared doc components ---- */
+.card { background: var(--fw-bg); border: 1px solid var(--fw-line); border-radius: var(--fw-r-card); padding: 20px; }
+.note { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 12px; padding: 14px 16px; border-radius: var(--fw-r-card); background: var(--fw-wash); border: 1px solid rgba(127,179,184,.22); font-size: 14px; line-height: 1.6; }
+.note.warn { background: rgba(201,164,92,.10); border-color: rgba(201,164,92,.26); }
+.note b { font-weight: 650; }
+.note svg { width: 18px; height: 18px; margin-top: 2px; color: var(--fw-accent); }
+.note.warn svg { color: var(--fw-training); }
+
+.tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
+.tbl th, .tbl td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--fw-line); vertical-align: top; }
+.tbl th { font-size: 12px; letter-spacing: .05em; color: var(--fw-text-2); font-weight: 600; background: var(--fw-bg); }
+.tbl td:first-child { color: var(--fw-text); font-weight: 600; white-space: nowrap; }
+.tbl tbody tr:last-child td { border-bottom: 0; }
+.tbl-wrap { border: 1px solid var(--fw-line); border-radius: var(--fw-r-card); overflow: hidden; }
+.tbl-wrap .tbl tbody tr:nth-child(odd) td { background: rgba(35,46,51,.4); }
+.mono { font-family: var(--fw-mono); font-size: .92em; }
+
+.pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; letter-spacing: .01em; white-space: nowrap; }
+.pill.new { background: rgba(127,179,184,.16); color: var(--fw-accent); }
+.pill.p0 { background: rgba(106,158,126,.16); color: var(--fw-success); }
+.pill.v11 { background: rgba(154,171,175,.14); color: var(--fw-text-2); }
+
+/* ==========================================================================
+   3 · Principle cards
+   ========================================================================== */
+.prin { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.prin article { background: var(--fw-bg); border: 1px solid var(--fw-line); border-radius: var(--fw-r-card); padding: 20px 20px 18px; display: grid; gap: 8px; align-content: start; }
+.prin .no { font-size: 12px; font-weight: 700; letter-spacing: .1em; color: var(--fw-accent); font-variant-numeric: tabular-nums; }
+.prin h3 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.015em; }
+.prin p { margin: 0; font-size: 14px; color: var(--fw-text-2); line-height: 1.62; }
+.prin .land { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--fw-line); font-size: 13px; color: var(--fw-text-2); }
+.prin .land b { color: var(--fw-text); font-weight: 600; }
+
+/* ==========================================================================
+   4 · Design-system specimens
+   ========================================================================== */
+.sw-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); }
+.sw { border: 1px solid var(--fw-line); border-radius: 10px; overflow: hidden; background: var(--fw-bg); }
+.sw .chip { height: 66px; display: flex; align-items: flex-end; padding: 9px 11px; font-size: 11.5px; font-family: var(--fw-mono); }
+.sw .meta { padding: 10px 11px 12px; display: grid; gap: 2px; }
+.sw .meta b { font-size: 13px; font-weight: 650; }
+.sw .meta span { font-size: 11.5px; color: var(--fw-text-2); line-height: 1.45; }
+.sw .ratio { font-family: var(--fw-mono); font-size: 11px; color: var(--fw-success); }
+
+.type-spec { display: grid; gap: 0; border: 1px solid var(--fw-line); border-radius: var(--fw-r-card); overflow: hidden; }
+.type-spec > div { display: grid; grid-template-columns: 128px minmax(0,1fr) 148px; gap: 16px; align-items: baseline; padding: 16px 18px; border-bottom: 1px solid var(--fw-line); }
+.type-spec > div:last-child { border-bottom: 0; }
+.type-spec .k { font-size: 12px; color: var(--fw-text-2); letter-spacing: .04em; }
+.type-spec .v { color: var(--fw-text); }
+.type-spec .m { font-family: var(--fw-mono); font-size: 11.5px; color: var(--fw-text-2); text-align: right; }
+.t-page { font-size: 20px; font-weight: 700; letter-spacing: -.02em; }
+.t-card { font-size: 16px; font-weight: 700; }
+.t-body { font-size: 15px; line-height: 1.5; }
+.t-aux  { font-size: 13px; color: var(--fw-text-2); }
+.t-mono { font-family: var(--fw-mono); font-size: 15px; }
+.t-en   { font-weight: 700; color: var(--fw-accent); }
+
+.space-scale { display: grid; gap: 10px; }
+.space-scale .row { display: grid; grid-template-columns: 66px minmax(0,1fr) 74px; gap: 14px; align-items: center; font-size: 13px; }
+.space-scale .bar { height: 14px; border-radius: 3px; background: var(--fw-brand); }
+.space-scale .use { font-size: 12px; color: var(--fw-text-2); }
+
+.radius-row { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-end; }
+.radius-row figure { margin: 0; display: grid; gap: 9px; justify-items: center; }
+.radius-row .box { width: 96px; height: 62px; background: var(--fw-bg-elev); border: 1px solid var(--fw-line-strong); }
+.radius-row figcaption { font-size: 12px; color: var(--fw-text-2); text-align: center; line-height: 1.45; }
+.radius-row figcaption b { display: block; color: var(--fw-text); font-weight: 600; }
+
+.icon-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); }
+.icon-grid div { display: grid; gap: 7px; justify-items: center; padding: 14px 6px 11px; border: 1px solid var(--fw-line); border-radius: 10px; background: var(--fw-bg); }
+.icon-grid svg { width: 24px; height: 24px; color: var(--fw-text); }
+.icon-grid span { font-size: 10.5px; color: var(--fw-text-2); font-family: var(--fw-mono); text-align: center; }
+
+/* ---- Live component specimens ---- */
+.spec-row { display: grid; gap: 22px; grid-template-columns: repeat(auto-fit, minmax(268px, 1fr)); }
+.spec { background: var(--fw-bg-elev); border-radius: var(--fw-r-card); padding: 18px; display: grid; gap: 14px; align-content: start; }
+.spec h4 { margin: 0; font-size: 12px; letter-spacing: .06em; color: var(--fw-text-2); font-weight: 600; text-transform: uppercase; }
+.spec .stage { display: grid; gap: 12px; place-items: center; padding: 6px 0 2px; }
+.spec ul { margin: 0; padding-left: 17px; font-size: 12.5px; color: var(--fw-text-2); line-height: 1.6; }
+
+/* ==========================================================================
+   5 · iPhone handset shell — derived from .od-frames/iphone.html, dark-adapted
+   (screen ground + system glyphs follow the app's dark theme).
+   ========================================================================== */
+.phone-stage {
+  --phone-screen-width: 393px;
+  --phone-screen-height: 852px;
+  --phone-bezel: 12px;
+  --phone-outer-radius: 60px;
+  --phone-screen-radius: 48px;
+  --phone-safe-top: 59px;
+  --phone-safe-bottom: 34px;
+  --phone-system-fg: #E8EDEF;
+  --phone-screen-bg: #1A2226;
+  display: grid; justify-items: center;
+  padding: 26px 18px;
+  border-radius: 22px;
+  background:
+    radial-gradient(120% 62% at 50% 6%, rgba(127,179,184,.10), transparent 62%),
+    var(--fw-bg-stage);
+  border: 1px solid var(--fw-line);
+}
+
+.phone-frame {
+  position: relative;
+  width: calc(var(--phone-screen-width) + var(--phone-bezel) * 2);
+  height: calc(var(--phone-screen-height) + var(--phone-bezel) * 2);
+  padding: var(--phone-bezel);
+  border-radius: var(--phone-outer-radius);
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.18), transparent 17%),
+    linear-gradient(160deg, #3a3a3d 0%, #1d1d20 47%, #09090b 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,.13),
+    inset 0 0 0 2px rgba(0,0,0,.9),
+    0 34px 70px -20px rgba(0,0,0,.55),
+    0 12px 28px -12px rgba(0,0,0,.36);
+  isolation: isolate;
+}
+.phone-frame::before,
+.phone-frame::after {
+  content: ""; position: absolute; z-index: -1; top: 102px; bottom: 102px; width: 3px; border-radius: 3px;
+  background: linear-gradient(to bottom, transparent, rgba(255,255,255,.13) 12%, transparent 22%, transparent 78%, rgba(255,255,255,.08) 90%, transparent);
+}
+.phone-frame::before { left: -1px; }
+.phone-frame::after  { right: -1px; }
+
+.hardware-button { position: absolute; width: 4px; border-radius: 3px; background: linear-gradient(90deg, #050506, #242428 58%, #08080a); box-shadow: inset 0 1px rgba(255,255,255,.08); }
+.hardware-button.silent      { left: -3px; top: 175px; height: 34px; }
+.hardware-button.volume-up   { left: -3px; top: 225px; height: 62px; }
+.hardware-button.volume-down { left: -3px; top: 299px; height: 62px; }
+.hardware-button.power       { right: -3px; top: 252px; height: 104px; }
+
+.phone-screen {
+  position: relative;
+  width: var(--phone-screen-width);
+  height: var(--phone-screen-height);
+  overflow: hidden;
+  border-radius: var(--phone-screen-radius);
+  background: var(--phone-screen-bg);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+}
+.phone-content {
+  position: absolute; inset: 0;
+  overflow: hidden;                      /* the app scrolls in .od-scroll */
+  padding-top: var(--phone-safe-top);
+  padding-bottom: var(--phone-safe-bottom);
+  background: var(--phone-screen-bg);
+}
+.phone-overlay {                          /* sheets, dialogs, toasts, scrims */
+  position: absolute; inset: 0; z-index: 12;
+  padding-top: var(--phone-safe-top); padding-bottom: var(--phone-safe-bottom);
+  display: grid;
+}
+
+.dynamic-island {
+  position: absolute; z-index: 20; top: 11px; left: 50%;
+  width: 126px; height: 37px; transform: translateX(-50%);
+  border-radius: 999px; background: #000;
+  box-shadow: inset 0 -1px 1px rgba(255,255,255,.05);
+  pointer-events: none;
+}
+.status-bar {
+  position: absolute; z-index: 15; top: 0; left: 0; right: 0;
+  height: var(--phone-safe-top);
+  display: flex; align-items: flex-start; justify-content: space-between;
+  padding: 18px 27px 0;
+  color: var(--phone-system-fg);
+  font-size: 15px; font-weight: 650; letter-spacing: -.01em;
+  pointer-events: none;
+}
+.status-icons { display: inline-flex; align-items: center; gap: 6px; }
+.status-icons svg { display: block; width: 17px; height: 11px; fill: currentColor; }
+.status-icons .battery { width: 25px; }
+.home-indicator {
+  position: absolute; z-index: 20; left: 50%; bottom: 8px;
+  width: 134px; height: 5px; transform: translateX(-50%);
+  border-radius: 999px; background: var(--phone-system-fg); opacity: .9;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   6 · FluentWork app surface (what lives inside .phone-content)
+   ========================================================================== */
+.app { background: var(--fw-bg); color: var(--fw-text); font-size: 15px; line-height: 1.5; height: 100%; }
+.app h1, .app h2, .app h3, .app h4, .app p, .app ul, .app dl, .app dd, .app figure { margin: 0; }
+.app ul { list-style: none; padding: 0; }
+
+.app-bar { display: flex; align-items: center; gap: 10px; padding: 6px 16px 10px; min-height: 44px; }
+.app-bar h1 { font-size: 17px; font-weight: 650; letter-spacing: -.015em; }
+.app-bar .bar-meta { margin-left: auto; font-size: 12.5px; color: var(--fw-text-2); font-variant-numeric: tabular-nums; }
+.app-icon-btn { flex: none; width: 44px; height: 44px; margin: -10px; display: grid; place-items: center; background: none; border: 0; color: var(--fw-text); cursor: pointer; border-radius: 12px; }
+.app-icon-btn:hover { background: rgba(232,237,239,.06); }
+.app-icon-btn svg { width: 22px; height: 22px; }
+
+.app-scroll { padding: 0 16px 20px; }
+.app-card { background: var(--fw-bg-elev); border-radius: var(--fw-r-card); padding: 16px; display: grid; gap: 10px; align-content: start; }
+.app-card.tight { padding: 13px 15px; gap: 8px; }
+
+.app-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 44px; padding: 0 20px; border: 0; border-radius: var(--fw-r-btn);
+  font: inherit; font-size: 15px; font-weight: 650; letter-spacing: -.005em;
+  cursor: pointer; white-space: nowrap;
+  transition: background var(--fw-d-micro) var(--fw-ease), box-shadow var(--fw-d-micro) var(--fw-ease);
+}
+.app-btn svg { width: 18px; height: 18px; flex: none; }
+.app-btn.primary { background: var(--fw-brand-strong); color: var(--fw-text); }
+.app-btn.primary:hover { background: #3C7076; }
+.app-btn.ghost { background: rgba(232,237,239,.07); color: var(--fw-text); }
+.app-btn.ghost:hover { background: rgba(232,237,239,.12); }
+.app-btn.quiet { background: none; color: var(--fw-text-2); font-weight: 500; padding: 0 10px; }
+.app-btn.quiet:hover { color: var(--fw-text); background: rgba(232,237,239,.06); }
+.app-btn.block { width: 100%; }
+.app-btn.danger { background: none; color: var(--fw-improve); box-shadow: inset 0 0 0 1px rgba(201,123,92,.4); }
+
+.app-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  min-height: 32px; padding: 0 13px; border-radius: 999px;
+  background: rgba(232,237,239,.07); color: var(--fw-text-2);
+  font-size: 13px; font-weight: 500; white-space: nowrap; border: 0; cursor: pointer;
+}
+.app-chip[aria-pressed="true"] { background: var(--fw-brand-strong); color: var(--fw-text); font-weight: 600; }
+.app-chip svg { width: 15px; height: 15px; }
+
+/* Lamp: colour is never the only cue — ○ / ◐ / ● carry the same meaning. */
+.lamp { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.lamp .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.lamp.new      { color: var(--fw-text-2); }
+.lamp.new .dot      { background: transparent; box-shadow: inset 0 0 0 1.5px var(--fw-text-2); }
+.lamp.learning { color: var(--fw-training); }
+.lamp.learning .dot { background: linear-gradient(90deg, var(--fw-training) 50%, transparent 50%); box-shadow: inset 0 0 0 1.5px var(--fw-training); }
+.lamp.done     { color: var(--fw-success); }
+.lamp.done .dot     { background: var(--fw-success); }
+
+.app-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 999px;
+  background: var(--fw-accent); color: #10201F;
+  font-size: 11.5px; font-weight: 750; letter-spacing: -.005em; white-space: nowrap;
+  box-shadow: 0 6px 16px -6px rgba(0,0,0,.6);
+}
+.app-badge svg { width: 12px; height: 12px; }
+.app-badge.settled { background: rgba(127,179,184,.18); color: var(--fw-accent); box-shadow: none; }
+
+.app-skel { border-radius: 8px; background: linear-gradient(90deg, rgba(232,237,239,.06), rgba(232,237,239,.13), rgba(232,237,239,.06)); background-size: 220% 100%; animation: skel 1.6s var(--fw-ease) infinite; }
+@keyframes skel { 0% { background-position: 140% 0; } 100% { background-position: -40% 0; } }
+
+/* ---- Tab bar ---- */
+.app-tabbar {
+  display: flex; align-items: stretch;
+  padding: 5px 8px 2px;
+  border-top: 1px solid var(--fw-line);
+  background: rgba(26,34,38,.94);
+  backdrop-filter: blur(14px);
+}
+.app-tab {
+  flex: 1; min-height: 48px; display: grid; justify-items: center; align-content: center; gap: 3px;
+  background: none; border: 0; cursor: pointer; border-radius: 12px;
+  color: var(--fw-text-2); font: inherit; font-size: 10.5px; font-weight: 550; letter-spacing: .01em;
+  transition: color var(--fw-d-micro) var(--fw-ease);
+}
+.app-tab svg { width: 23px; height: 23px; }
+.app-tab[aria-current="page"] { color: var(--fw-accent); font-weight: 650; }
+.app-tab:hover { color: var(--fw-text); }
+
+/* ==========================================================================
+   7 · Screen spec rows
+   ========================================================================== */
+.scr { padding-top: 52px; scroll-margin-top: 16px; }
+.scr-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; border-bottom: 1px solid var(--fw-line); padding-bottom: 12px; margin-bottom: 22px; }
+.scr-head .no { font-size: 12px; font-weight: 700; letter-spacing: .1em; color: var(--fw-accent); font-variant-numeric: tabular-nums; }
+.scr-head h3 { margin: 0; font-size: 21px; font-weight: 680; letter-spacing: -.02em; }
+.scr-head .tagline { font-size: 13.5px; color: var(--fw-text-2); margin-left: auto; }
+.scr-body { display: grid; grid-template-columns: minmax(0, 441px) minmax(0, 1fr); gap: 34px; align-items: start; }
+.scr-notes { display: grid; gap: 20px; align-content: start; padding-top: 6px; }
+.note-block { display: grid; gap: 8px; }
+.note-block h4 { margin: 0; font-size: 12px; letter-spacing: .07em; text-transform: uppercase; color: var(--fw-accent); font-weight: 650; }
+.note-block dl { margin: 0; display: grid; gap: 1px; background: var(--fw-line); border: 1px solid var(--fw-line); border-radius: 10px; overflow: hidden; }
+.note-block dl > div { display: grid; grid-template-columns: 108px minmax(0,1fr); gap: 12px; padding: 10px 13px; background: var(--fw-bg); font-size: 13.5px; }
+.note-block dt { color: var(--fw-text-2); font-size: 12.5px; }
+.note-block dd { margin: 0; line-height: 1.55; }
+.note-block p { margin: 0; font-size: 13.5px; color: var(--fw-text-2); line-height: 1.62; }
+.note-block p strong { color: var(--fw-text); font-weight: 620; }
+.note-block ul { margin: 0; padding-left: 18px; font-size: 13.5px; color: var(--fw-text-2); line-height: 1.62; }
+.note-block li + li { margin-top: 5px; }
+.note-block li b { color: var(--fw-text); font-weight: 620; }
+
+/* ==========================================================================
+   8 · Responsive
+   ========================================================================== */
+@media (max-width: 1240px) {
+  .doc-wrap { padding: 0 30px 100px; }
+  .scr-body { grid-template-columns: minmax(0, 441px) minmax(0, 1fr); gap: 26px; }
+}
+@media (max-width: 1080px) {
+  .doc-shell { grid-template-columns: 1fr; }
+  .doc-nav {
+    position: sticky; top: 0; z-index: 40; height: auto; overflow: visible;
+    border-right: 0; border-bottom: 1px solid var(--fw-line);
+    padding: 0; background: rgba(20,26,29,.96); backdrop-filter: blur(14px);
+  }
+  .doc-nav .doc-brand { padding: 14px 20px 10px; margin: 0; }
+  .doc-nav ol { display: flex; gap: 6px; overflow-x: auto; padding: 0 20px 12px; scrollbar-width: none; }
+  .doc-nav ol::-webkit-scrollbar { display: none; }
+  .doc-nav a { grid-template-columns: minmax(0,1fr); padding: 7px 12px; white-space: nowrap; }
+  .doc-nav a i { display: none; }
+  .doc-nav .nav-foot { display: none; }
+  .doc-wrap { padding: 0 24px 90px; }
+  .doc-hero { padding: 40px 0 34px; }
+}
+@media (max-width: 900px) {
+  .scr-body { grid-template-columns: minmax(0, 1fr); gap: 22px; }
+  .scr-head .tagline { margin-left: 0; flex-basis: 100%; }
+  .phone-stage { padding: 22px 14px; }
+  .phone-frame { zoom: .92; }
+}
+@media (max-width: 620px) {
+  .doc-wrap { padding: 0 18px 80px; }
+  .phone-frame { zoom: .78; }
+  .phone-stage { padding: 16px 8px; border-radius: 16px; }
+  .type-spec > div { grid-template-columns: minmax(0,1fr); gap: 6px; padding: 13px 15px; }
+  .type-spec .m { text-align: left; }
+  .note-block dl > div { grid-template-columns: minmax(0,1fr); gap: 3px; }
+  .tbl { font-size: 13px; }
+  .tbl th, .tbl td { padding: 9px 10px; }
+  .tbl td:first-child { white-space: normal; }
+}
+@media (max-width: 430px) {
+  .phone-frame { zoom: .70; }
+}
+/* ==========================================================================
+   9 · Specimen components (live, inside section 02)
+   ========================================================================== */
+.fw-mic {
+  position: relative; display: grid; place-items: center; flex: none;
+  width: var(--mic, 72px); height: var(--mic, 72px);
+  border: 0; padding: 0; border-radius: 999px;
+  background: var(--fw-brand-strong); color: var(--fw-text); cursor: pointer;
+}
+.fw-mic[data-size="56"] { --mic: 56px; }
+.fw-mic svg { width: 30%; height: 30%; }
+.fw-mic.idle { animation: fw-breath 3s var(--fw-ease) infinite; }
+.fw-mic.rec  { background: var(--fw-brand); }
+.fw-mic.rec i {
+  position: absolute; inset: -6px; border-radius: 999px;
+  border: 1.5px solid rgba(127,179,184,.55);
+  animation: fw-ripple 1.6s var(--fw-ease) infinite;
+}
+.fw-mic.proc { background: rgba(232,237,239,.08); }
+.fw-mic.proc::after {
+  content: ""; position: absolute; inset: 0; border-radius: 999px;
+  background: conic-gradient(var(--fw-accent) 0 62%, rgba(232,237,239,.14) 62% 100%);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+          mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+}
+@keyframes fw-breath { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.03); } }
+@keyframes fw-ripple { 0% { transform: scale(.92); opacity: .9; } 100% { transform: scale(1.3); opacity: 0; } }
+
+.pb-card { background: var(--fw-bg-elev); border-radius: var(--fw-r-card); padding: 14px 15px; display: grid; gap: 8px; }
+.pb-head { display: flex; align-items: flex-start; gap: 10px; }
+.pb-intent { flex: 1 1 auto; min-width: 0; font-size: 15px; font-weight: 650; line-height: 1.4; }
+.pb-en { display: block; font-size: 15px; font-weight: 700; color: var(--fw-accent); line-height: 1.45; }
+.pb-anchor { font-size: 12.5px; color: var(--fw-text-2); line-height: 1.5; padding-top: 8px; border-top: 1px solid var(--fw-line); }
+.pb-use { font-size: 11.5px; color: var(--fw-success); font-weight: 650; }
+
+.ev-card { background: var(--fw-bg-elev); border-radius: var(--fw-r-card); padding: 13px 15px; display: grid; gap: 7px; }
+.ev-card + .ev-card { margin-top: 8px; }
+.ev-card.collapsed { gap: 0; }
+.ev-head { display: flex; align-items: center; gap: 10px; }
+.ev-head b { flex: 1 1 auto; min-width: 0; font-size: 15px; font-weight: 650; }
+.ev-score { font-size: 12.5px; color: var(--fw-text-2); white-space: nowrap; }
+.ev-head svg { width: 17px; height: 17px; flex: none; color: var(--fw-text-2); }
+.ev-body { font-size: 13.5px; color: var(--fw-text-2); line-height: 1.6; }
+
+.ia-map {
+  display: grid; gap: 1px; background: var(--fw-line);
+  border: 1px solid var(--fw-line); border-radius: var(--fw-r-card); overflow: hidden;
+  grid-template-columns: repeat(auto-fit, minmax(228px, 1fr));
+}
+.ia-col { background: var(--fw-bg); padding: 18px; display: grid; gap: 11px; align-content: start; }
+.ia-col h4 { font-size: 13px; font-weight: 650; color: var(--fw-accent); letter-spacing: .02em; }
+.ia-col ul { display: grid; gap: 6px; font-size: 13px; color: var(--fw-text-2); line-height: 1.5; }
+.ia-col li { padding-left: 14px; position: relative; }
+.ia-col li::before { content: ""; position: absolute; left: 2px; top: .62em; width: 4px; height: 4px; border-radius: 50%; background: var(--fw-line-strong); }
+
+/* ==========================================================================
+   10 · App screen components (what the 12 handsets are built from)
+   ========================================================================== */
+.od-scroll { overscroll-behavior: auto; }
+.phone-overlay { padding: 0; }
+
+.stat-ring { display: grid; gap: 4px; justify-items: center; flex: none; }
+.stat-ring .ring {
+  width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center;
+  background: conic-gradient(var(--fw-accent) 0 66%, rgba(232,237,239,.12) 66% 100%);
+}
+.stat-ring .ring i { font-style: normal; width: 37px; height: 37px; border-radius: 50%; background: var(--fw-bg); display: grid; place-items: center; font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat-ring .cap { font-size: 10.5px; color: var(--fw-text-2); }
+
+.todo { display: inline-flex; align-items: center; gap: 5px; padding: 6px 11px; border-radius: 999px; background: rgba(232,237,239,.06); font-size: 12.5px; color: var(--fw-text-2); white-space: nowrap; }
+.todo.done { color: var(--fw-success); background: rgba(106,158,126,.13); }
+.todo svg { width: 13px; height: 13px; flex: none; }
+
+.entry-card { background: #2F5A60; border-radius: var(--fw-r-card); padding: 18px; display: grid; gap: 12px; }
+.entry-card .ec-lead { font-size: 17px; font-weight: 680; line-height: 1.42; letter-spacing: -.012em; }
+.entry-card .ec-sub { font-size: 12.5px; color: rgba(232,237,239,.78); }
+.entry-card .app-btn.ghost { background: rgba(232,237,239,.16); }
+.entry-card .app-btn.ghost:hover { background: rgba(232,237,239,.24); }
+
+.mini-head { display: flex; align-items: baseline; gap: 10px; }
+.mini-head h2 { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+.mini-head time { margin-left: auto; font-size: 12px; color: var(--fw-text-2); white-space: nowrap; }
+.mini-sub { font-size: 12.5px; color: var(--fw-text-2); line-height: 1.5; }
+
+.prog { height: 6px; border-radius: 999px; background: rgba(232,237,239,.10); overflow: hidden; }
+.prog i { display: block; height: 100%; border-radius: 999px; background: var(--fw-accent); }
+
+.hist-row { display: flex; align-items: center; gap: 12px; }
+.hist-ico { flex: none; width: 34px; height: 34px; border-radius: 10px; background: rgba(127,179,184,.13); color: var(--fw-accent); display: grid; place-items: center; }
+.hist-ico svg { width: 18px; height: 18px; }
+.hist-t { display: block; font-size: 14px; font-weight: 600; line-height: 1.35; }
+.hist-m { display: block; font-size: 11.5px; color: var(--fw-text-2); margin-top: 2px; }
+.hist-chev { flex: none; width: 16px; height: 16px; color: var(--fw-text-2); }
+
+/* ---- 说的房间 ---- */
+.room-top { display: flex; align-items: center; gap: 6px; padding: 4px 12px 8px 4px; }
+.room-top .rt-title { flex: 1 1 auto; min-width: 0; display: grid; gap: 1px; }
+.room-top .rt-title b { font-size: 14px; font-weight: 650; }
+.room-top .rt-title span { font-size: 11.5px; color: var(--fw-text-2); }
+.room-top .rt-end { font-size: 13.5px; color: var(--fw-text-2); }
+
+.ctx { margin: 0 16px 12px; background: var(--fw-bg-elev); border-radius: var(--fw-r-card); padding: 12px 14px; display: grid; gap: 7px; }
+.ctx .goal { font-size: 13px; line-height: 1.45; }
+.ctx .goal b { color: var(--fw-accent); font-weight: 650; }
+.ctx .src { font-size: 11.5px; color: var(--fw-text-2); line-height: 1.5; }
+.ctx .ctx-head { display: flex; align-items: center; gap: 8px; }
+.ctx .ctx-head svg { width: 15px; height: 15px; flex: none; color: var(--fw-accent); }
+.ctx .ctx-head b { font-size: 11.5px; letter-spacing: .05em; color: var(--fw-text-2); font-weight: 650; text-transform: uppercase; }
+.ctx .ctx-head .app-btn { margin-left: auto; }
+
+.tl { display: grid; gap: 13px; padding: 2px 16px 12px; }
+.turn { position: relative; display: grid; gap: 6px; max-width: 86%; }
+.turn.ai { justify-self: start; }
+.turn.me { justify-self: end; justify-items: end; }
+.bub { padding: 11px 14px; border-radius: 16px; font-size: 14.5px; line-height: 1.5; }
+.turn.ai .bub { background: var(--fw-bg-elev); border-bottom-left-radius: 6px; }
+.turn.me .bub { background: var(--fw-brand-strong); border-bottom-right-radius: 6px; }
+.bub.cut::after { content: "…"; opacity: .5; margin-left: 2px; }
+.turn .meta { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--fw-text-2); }
+.turn.me .meta { justify-content: flex-end; }
+.hit { display: inline-flex; align-items: center; gap: 3px; color: var(--fw-accent); font-weight: 650; }
+.hit svg { width: 12px; height: 12px; }
+.float-badge { position: absolute; top: -13px; right: -6px; }
+.bub-ladder { border: 1px solid rgba(201,164,92,.42); }
+.rung { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 650; color: var(--fw-training); }
+.rung svg { width: 12px; height: 12px; }
+.rung .dots { display: inline-flex; gap: 3px; }
+.rung .dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .3; }
+.rung .dots i.on { opacity: 1; }
+
+.dock { display: grid; gap: 11px; padding: 10px 16px 14px; border-top: 1px solid var(--fw-line); }
+.capture { background: rgba(35,46,51,.9); border: 1px solid var(--fw-line); border-radius: 14px; padding: 10px 13px; font-size: 13px; color: var(--fw-text-2); line-height: 1.5; min-height: 54px; display: grid; gap: 5px; align-content: start; }
+.capture b { color: var(--fw-text); font-weight: 600; }
+.capture .cap-cap { font-size: 10.5px; letter-spacing: .05em; color: var(--fw-text-2); text-transform: uppercase; font-weight: 650; }
+.wave { display: flex; align-items: center; justify-content: center; gap: 3px; height: 22px; }
+.wave i { width: 3px; border-radius: 2px; background: var(--fw-accent); opacity: .8; }
+.mic-row { display: grid; place-items: center; }
+.hint { font-size: 11.5px; color: var(--fw-text-2); text-align: center; }
+.status-line { display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 12px; color: var(--fw-text-2); }
+.status-line .live { width: 6px; height: 6px; border-radius: 50%; background: var(--fw-accent); }
+
+.tip-pill {
+  justify-self: center; display: inline-flex; align-items: center; gap: 6px;
+  padding: 9px 15px; border-radius: 999px; min-height: 40px;
+  background: rgba(201,164,92,.14); border: 1px solid rgba(201,164,92,.4);
+  color: var(--fw-training); font-size: 13px; font-weight: 650;
+}
+.tip-pill svg { width: 15px; height: 15px; }
+
+/* ---- 回顾页 ---- */
+.sum-bar { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--fw-line); border: 1px solid var(--fw-line); border-radius: var(--fw-r-card); overflow: hidden; }
+.sum-bar div { background: var(--fw-bg); padding: 12px 10px; display: grid; gap: 2px; justify-items: center; }
+.sum-bar b { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.sum-bar span { font-size: 11px; color: var(--fw-text-2); text-align: center; }
+
+.cmp-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cmp-col { border-radius: 12px; padding: 12px; display: grid; gap: 6px; align-content: start; background: var(--fw-bg-elev); }
+.cmp-col h5 { font-size: 10.5px; letter-spacing: .05em; color: var(--fw-text-2); font-weight: 650; text-transform: uppercase; }
+.cmp-col p { font-size: 13.5px; line-height: 1.5; }
+.cmp-col.better p { color: var(--fw-accent); font-weight: 650; }
+.cmp-col .fix { text-decoration: underline; text-decoration-color: var(--fw-improve); text-decoration-thickness: 2px; text-underline-offset: 3px; font-weight: 600; }
+.cmp-tools { display: flex; align-items: center; gap: 8px; }
+.cmp-tools .app-btn { min-height: 38px; font-size: 12.5px; padding: 0 13px; }
+
+.pb-rail { --od-gap: 10px; --od-rail-pad: 16px; }
+.pb-rail .pb-card { width: 246px; }
+.pb-rail .pb-card .pb-anchor { display: none; }
+
+/* ---- 闪测 ---- */
+.drill-top { display: flex; align-items: center; gap: 12px; padding: 6px 16px 10px; }
+.drill-top .prog-num { font-size: 12.5px; color: var(--fw-text-2); font-variant-numeric: tabular-nums; }
+.drill-stage { display: grid; place-content: center; gap: 26px; padding: 0 28px; text-align: center; }
+.drill-intent { font-size: 25px; font-weight: 700; line-height: 1.42; letter-spacing: -.022em; }
+.drill-intent small { display: block; font-size: 12.5px; font-weight: 500; letter-spacing: .04em; color: var(--fw-text-2); margin-bottom: 12px; }
+.timer { display: grid; place-items: center; gap: 8px; }
+.timer .dial { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--fw-accent) 0 64%, rgba(232,237,239,.14) 64% 100%); }
+.timer .dial i { font-style: normal; width: 34px; height: 34px; border-radius: 50%; background: var(--fw-bg); display: grid; place-items: center; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.timer .cap { font-size: 11px; color: var(--fw-text-2); }
+
+.verdict { display: grid; gap: 9px; background: var(--fw-bg-elev); border-radius: var(--fw-r-card); padding: 14px; }
+.verdict-head { display: flex; align-items: center; gap: 9px; }
+.verdict-head b { font-size: 14.5px; font-weight: 680; }
+.verdict p { font-size: 13px; color: var(--fw-text-2); line-height: 1.55; }
+.asr-line { display: grid; gap: 4px; padding: 10px 12px; border-radius: 10px; background: rgba(232,237,239,.05); }
+.asr-line .k { font-size: 10.5px; letter-spacing: .05em; color: var(--fw-text-2); font-weight: 650; text-transform: uppercase; }
+.asr-line .v { font-size: 14px; line-height: 1.45; }
+.appeal { display: flex; align-items: center; gap: 9px; padding-top: 3px; }
+.appeal .app-btn { min-height: 40px; font-size: 13px; padding: 0 14px; }
+.appeal span { font-size: 11px; color: var(--fw-text-2); line-height: 1.4; }
+
+/* ---- 语料库 / 每日一读 / 话题 ---- */
+.search-row { display: flex; align-items: center; gap: 9px; background: rgba(232,237,239,.07); border-radius: 12px; padding: 0 12px; min-height: 40px; }
+.search-row svg { width: 17px; height: 17px; flex: none; color: var(--fw-text-2); }
+.search-row input { flex: 1 1 auto; min-width: 0; background: none; border: 0; color: var(--fw-text); font: inherit; font-size: 14px; padding: 10px 0; }
+.search-row input::placeholder { color: var(--fw-text-2); }
+
+.read-body { display: grid; gap: 13px; font-size: 15px; line-height: 1.72; }
+.read-body p { color: var(--fw-text); }
+.read-body .gloss { border-bottom: 1px dashed rgba(127,179,184,.55); cursor: pointer; }
+.read-note { font-size: 12px; color: var(--fw-text-2); background: rgba(127,179,184,.10); border-radius: 10px; padding: 9px 11px; line-height: 1.5; }
+.player { display: grid; gap: 10px; padding: 12px 16px 14px; border-top: 1px solid var(--fw-line); background: rgba(26,34,38,.94); backdrop-filter: blur(14px); }
+.speed { display: flex; align-items: center; gap: 6px; }
+.speed button { min-height: 32px; padding: 0 11px; border-radius: 999px; border: 0; background: rgba(232,237,239,.07); color: var(--fw-text-2); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.speed button[aria-pressed="true"] { background: var(--fw-brand-strong); color: var(--fw-text); }
+
+.topic-card { display: grid; gap: 11px; }
+.topic-card h3 { font-size: 16px; font-weight: 680; line-height: 1.4; letter-spacing: -.012em; }
+.topic-src { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--fw-text-2); }
+.topic-src svg { width: 13px; height: 13px; }
+.topic-list { display: grid; gap: 7px; }
+.topic-list li { display: flex; align-items: flex-start; gap: 8px; font-size: 13.5px; line-height: 1.45; }
+.topic-list .lamp { margin-top: 4px; }
+.topic-list .en { color: var(--fw-accent); font-weight: 650; }
+.opener { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border-radius: 10px; background: rgba(232,237,239,.05); }
+.opener p { flex: 1 1 auto; min-width: 0; font-size: 13.5px; color: var(--fw-accent); font-weight: 650; line-height: 1.45; }
+.opener .app-icon-btn { margin: 0; width: 36px; height: 36px; }
+
+/* ---- 创建练习弹层 / 设置 ---- */
+.scrim { position: absolute; inset: 0; background: rgba(8,12,14,.68); backdrop-filter: blur(3px); }
+.sheet { align-self: end; background: var(--fw-bg-elev); border-radius: 22px 22px 0 0; display: grid; padding-bottom: var(--phone-safe-bottom); }
+.sheet-handle { width: 38px; height: 5px; border-radius: 999px; background: var(--fw-line-strong); margin: 9px auto 14px; }
+.sheet-body { padding: 0 16px 18px; display: grid; gap: 16px; }
+.sheet-body h2 { font-size: 19px; font-weight: 700; letter-spacing: -.02em; }
+.field { display: grid; gap: 7px; }
+.field > label { font-size: 12.5px; font-weight: 650; color: var(--fw-text-2); }
+.field textarea { width: 100%; min-height: 88px; resize: none; background: rgba(232,237,239,.06); border: 1px solid var(--fw-line); border-radius: 12px; color: var(--fw-text); font: inherit; font-size: 14.5px; line-height: 1.55; padding: 12px; }
+.field textarea::placeholder { color: var(--fw-text-2); }
+.field .hintline { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--fw-text-2); }
+.field .hintline svg { width: 13px; height: 13px; flex: none; }
+.seg { display: grid; grid-auto-flow: column; gap: 3px; padding: 3px; background: rgba(232,237,239,.07); border-radius: 13px; }
+.seg button { border: 0; background: none; color: var(--fw-text-2); font: inherit; font-size: 13px; font-weight: 620; padding: 10px 6px; border-radius: 10px; cursor: pointer; white-space: nowrap; }
+.seg button[aria-pressed="true"] { background: var(--fw-brand-strong); color: var(--fw-text); }
+.seg button small { display: block; font-size: 10.5px; font-weight: 500; opacity: .8; margin-top: 1px; }
+
+.set-row { display: flex; align-items: center; gap: 12px; padding: 13px 15px; background: var(--fw-bg-elev); border-radius: var(--fw-r-card); }
+.set-row + .set-row { margin-top: 8px; }
+.set-row .sr-ico { flex: none; width: 30px; height: 30px; border-radius: 9px; background: rgba(127,179,184,.13); color: var(--fw-accent); display: grid; place-items: center; }
+.set-row .sr-ico svg { width: 17px; height: 17px; }
+.set-row .sr-body { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.set-row .sr-body b { font-size: 14.5px; font-weight: 600; }
+.set-row .sr-body span { font-size: 12px; color: var(--fw-text-2); line-height: 1.45; }
+.set-row .sr-tail { flex: none; font-size: 13px; color: var(--fw-text-2); }
+.sw { position: relative; flex: none; width: 48px; height: 29px; border: 0; padding: 0; border-radius: 999px; background: rgba(232,237,239,.16); cursor: pointer; }
+.sw[aria-checked="true"] { background: var(--fw-brand-strong); }
+.sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 25px; height: 25px; border-radius: 50%; background: #fff; transition: transform var(--fw-d-micro) var(--fw-ease); }
+.sw[aria-checked="true"]::after { transform: translateX(19px); }
+.set-group { margin-top: 20px; }
+.set-group > h3 { font-size: 12px; letter-spacing: .07em; text-transform: uppercase; color: var(--fw-text-2); font-weight: 650; margin-bottom: 9px; }
+
+/* ---- 订阅 ---- */
+.plan-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.plan { border-radius: var(--fw-r-card); padding: 15px; display: grid; gap: 10px; align-content: start; background: var(--fw-bg-elev); border: 1px solid transparent; }
+.plan.pro { border-color: var(--fw-accent); background: rgba(127,179,184,.09); }
+.plan h4 { font-size: 14px; font-weight: 680; }
+.plan .price { font-size: 22px; font-weight: 700; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.plan .price small { font-size: 12px; font-weight: 500; color: var(--fw-text-2); letter-spacing: 0; }
+.plan ul { display: grid; gap: 7px; font-size: 12.5px; color: var(--fw-text-2); line-height: 1.45; }
+.plan li { display: flex; align-items: flex-start; gap: 7px; }
+.plan li svg { width: 14px; height: 14px; flex: none; margin-top: 2px; color: var(--fw-success); }
+.plan .off { color: rgba(154,171,175,.6); }
+.plan .off svg { color: rgba(154,171,175,.45); }
+
+/* ==========================================================================
+   11 · Change-log and reference sections
+   ========================================================================== */
+.v16 { display: grid; gap: 14px; }
+.v16-card { display: grid; gap: 14px; }
+.v16-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.v16-head b { font-size: 17px; font-weight: 680; letter-spacing: -.015em; }
+.v16-head .ref { margin-left: auto; font-size: 12px; color: var(--fw-text-2); white-space: nowrap; }
+.v16-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); }
+.v16-grid h4 { font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--fw-accent); font-weight: 650; margin-bottom: 7px; }
+.v16-grid p { font-size: 13.5px; color: var(--fw-text-2); line-height: 1.62; }
+.v16-grid p strong { color: var(--fw-text); font-weight: 620; }
+.v16-grid p + p { margin-top: 8px; }
+
+.chk { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.chk li { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 10px; align-items: start; font-size: 14px; line-height: 1.6; color: var(--fw-text-2); }
+.chk li svg { width: 17px; height: 17px; margin-top: 3px; color: var(--fw-success); flex: none; }
+.chk li b { color: var(--fw-text); font-weight: 620; }
+
+@media (prefers-reduced-motion: reduce) {
+  .app-skel { animation: none; }
+  .fw-mic.idle, .fw-mic.rec i { animation: none; }
+  * { transition-duration: 1ms !important; }
+}
+/* ==========================================================================
+   12 · 回顾页 · 段落层（V2.1 新增）
+   ========================================================================== */
+.para-col { border-radius: var(--fw-r-card); padding: 13px 14px; display: grid; gap: 7px; align-content: start; background: var(--fw-bg-elev); }
+.para-label { font-size: 10.5px; letter-spacing: .05em; color: var(--fw-text-2); font-weight: 650; text-transform: uppercase; }
+.para-col p { font-size: 13.5px; line-height: 1.62; }
+.para-col.up { background: rgba(127,179,184,.09); box-shadow: inset 0 0 0 1px rgba(127,179,184,.26); }
+.para-col.up .fix { color: var(--fw-accent); font-weight: 650; text-decoration: none; }
+.para-arrow { display: grid; place-items: center; color: var(--fw-text-2); }
+.para-arrow svg { width: 18px; height: 18px; }
+
+.paracheck { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.paracheck .k { flex: none; font-size: 10.5px; letter-spacing: .05em; color: var(--fw-text-2); font-weight: 650; text-transform: uppercase; }
+.paracheck ul { display: flex; flex-wrap: wrap; gap: 6px; }
+.paracheck li { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.paracheck li svg { width: 12px; height: 12px; flex: none; }
+.paracheck li.ok { background: rgba(106,158,126,.15); color: var(--fw-success); }
+.paracheck li.miss { background: rgba(201,123,92,.14); color: var(--fw-improve); }
+</style>
+</head>
+<body>
+
+<!-- ==========================================================================
+     SVG sprite — one icon family, 24×24, 1.5 stroke, round caps/joins.
+     ========================================================================== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <g id="i-base" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></g>
+  </defs>
+  <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 10.2 12 3.4l8.5 6.8V20a.8.8 0 0 1-.8.8H4.3a.8.8 0 0 1-.8-.8z"/><path d="M9.6 20.8v-6.2h4.8v6.2"/></symbol>
+  <symbol id="i-drill" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.4 2.6 5.2 13.1h5.6l-.9 8.3 8.2-10.5h-5.6z"/></symbol>
+  <symbol id="i-library" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.8h7.4v14.4H4zM13.4 4.8H20v14.4h-6.6z"/><path d="M6.4 8.6h2.6M6.4 11.8h2.6M15.8 8.6h1.8"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.6" width="6" height="11" rx="3"/><path d="M5.4 11.4a6.6 6.6 0 0 0 13.2 0M12 18v3.4"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7.8 4.9 19 12 7.8 19.1z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.2 4.6v14.8M14.8 4.6v14.8"/></symbol>
+  <symbol id="i-replay" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20.4 3.6v5.2h-5.2"/></symbol>
+  <symbol id="i-star4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2l2.1 6.7 6.7 2.1-6.7 2.1L12 20.8l-2.1-6.7L3.2 12l6.7-2.1z"/></symbol>
+  <symbol id="i-ladder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8.6 3.2v17.6M15.4 3.2v17.6M8.6 7.4h6.8M8.6 12h6.8M8.6 16.6h6.8"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.8" cy="10.8" r="6.6"/><path d="M15.6 15.6 20.4 20.4"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.4 5.2a1.8 1.8 0 0 1 1.8-1.8h13.4v17.2H6.2a1.8 1.8 0 0 1-1.8-1.8z"/><path d="M8.4 3.4v17.2"/></symbol>
+  <symbol id="i-talk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.2 6.4a2 2 0 0 1 2-2h11.6a2 2 0 0 1 2 2v7.4a2 2 0 0 1-2 2H9.8L4.2 20.2z"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.1"/><path d="M12 2.6v2.8M12 18.6v2.8M3.1 12h2.8M18.1 12h2.8M5.7 5.7l2 2M16.3 16.3l2 2M18.3 5.7l-2 2M7.7 16.3l-2 2"/></symbol>
+  <symbol id="i-chev-l" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.8 4.8 7.6 12l7.2 7.2"/></symbol>
+  <symbol id="i-chev-r" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.2 4.8 16.4 12l-7.2 7.2"/></symbol>
+  <symbol id="i-chev-d" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.8 9.2 12 16.4l7.2-7.2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.8 12.6 9.4 17.2 19.2 6.8"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M12 11v5.4M12 7.8v.6"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.9 19.4 6v6c0 4.4-3 7.7-7.4 9.1C7.6 19.7 4.6 16.4 4.6 12V6z"/><path d="M9 12.2 11.2 14.4 15.2 9.8"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.6 6.6h14.8M9.4 6.6V4.4h5.2v2.2M6.6 6.6l.9 13.2h9l.9-13.2"/></symbol>
+  <symbol id="i-wave" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h2.2M7.4 8.2v7.6M11.2 5.4v13.2M15 8.8v6.4M18.8 10.6v2.8M21.4 12h-.6"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.4 3.4h7.2l4.8 4.8v12.4H6.4z"/><path d="M13.4 3.4v5h5M9.2 13h6M9.2 16.4h4"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4.2M6 4.8h11.4l-2 3.6 2 3.6H6"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M12 7.2V12l3.2 2"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="8.4" y="8.4" width="11.2" height="11.2" rx="2"/><path d="M15.6 5.6V4.4H4.4v11.2h1.2"/></symbol>
+  <symbol id="i-sig" viewBox="0 0 18 12" fill="currentColor"><path d="M1 10.5h2V8H1v2.5Zm4 0h2V5.5H5v5Zm4 0h2V3H9v7.5Zm4 0h2V.5h-2v10Z"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 18 12" fill="currentColor"><path d="M9 11.2 7.2 9.4a2.55 2.55 0 0 1 3.6 0L9 11.2Zm4.1-4.1-1.35 1.35a3.9 3.9 0 0 0-5.5 0L4.9 7.1a5.8 5.8 0 0 1 8.2 0Zm3-3-1.35 1.35a8.15 8.15 0 0 0-11.5 0L1.9 4.1a10.05 10.05 0 0 1 14.2 0Z"/></symbol>
+  <symbol id="i-batt" viewBox="0 0 27 12" fill="currentColor"><path fill-rule="evenodd" d="M2.5 1h19A2.5 2.5 0 0 1 24 3.5v5a2.5 2.5 0 0 1-2.5 2.5h-19A2.5 2.5 0 0 1 0 8.5v-5A2.5 2.5 0 0 1 2.5 1Zm0 1A1.5 1.5 0 0 0 1 3.5v5A1.5 1.5 0 0 0 2.5 10h19A1.5 1.5 0 0 0 23 8.5v-5A1.5 1.5 0 0 0 21.5 2h-19Zm.5 1h17.5A1.5 1.5 0 0 1 22 4.5v3A1.5 1.5 0 0 1 20.5 9H3V3Zm22 1.5a1.5 1.5 0 0 1 0 3v-3Z"/></symbol>
+</svg>
+
+<div class="doc-shell">
+
+  <!-- ===================== Sidebar ===================== -->
+  <nav class="doc-nav" aria-label="文档导航">
+    <div class="doc-brand">
+      <b>FluentWork</b>
+      <span>UI/UX 设计文档 · V2.0</span>
+    </div>
+    <ol>
+      <li><a href="#s01"><i>01</i><span>设计目标与原则</span></a></li>
+      <li><a href="#s02"><i>02</i><span>设计系统</span></a></li>
+      <li><a href="#s03"><i>03</i><span>信息架构与导航</span></a></li>
+      <li><a href="#s04"><i>04</i><span>核心页面高保真稿</span></a></li>
+      <li><a href="#s05"><i>05</i><span>PRD V1.6 变化点</span></a></li>
+      <li><a href="#s06"><i>06</i><span>动效与语音状态</span></a></li>
+      <li><a href="#s07"><i>07</i><span>空态与错误态</span></a></li>
+      <li><a href="#s08"><i>08</i><span>无障碍</span></a></li>
+      <li><a href="#s09"><i>09</i><span>覆盖对照</span></a></li>
+    </ol>
+    <p class="nav-foot">
+      对应 PRD V1.6（MVP 范围）<br />
+      延续《21_界面设计文档》V1.2<br />
+      深色主题 · iPhone 393×852
+    </p>
+  </nav>
+
+  <main class="doc-main">
+    <div class="doc-wrap">
+
+      <!-- ===================== Hero ===================== -->
+      <header class="doc-hero">
+        <p class="doc-eyebrow">FluentWork · Design Specification</p>
+        <h1>把工作日常<br />变成英语练习的界面形态</h1>
+        <p class="lede">
+          这份文档把 PRD V1.6 的需求翻译成可实现的界面：一套设计系统、一套信息架构、12 屏高保真稿，
+          以及 V1.6 五项待落形态变更的具体设计。它延续《21_FluentWork界面设计文档》V1.2 已锁定的设计语言，
+          不另起一套视觉方向。
+        </p>
+        <dl class="doc-meta">
+          <div><dt>对应 PRD</dt><dd>V1.6（MVP 范围）</dd></div>
+          <div><dt>设计基线</dt><dd>21_ 界面设计文档 V1.2</dd></div>
+          <div><dt>目标平台</dt><dd>iOS 17+ · iPhone 393×852</dd></div>
+          <div><dt>主题</dt><dd>深色优先</dd></div>
+          <div><dt>覆盖屏幕</dt><dd>14 屏</dd></div>
+        </dl>
+      </header>
+
+      <!-- ===================== 01 ===================== -->
+      <section class="doc-sec" id="s01">
+        <h2><em>01</em>设计目标与原则</h2>
+        <p class="sec-lede">
+          为「高压、时间稀缺、目标导向」的程序员设计一款<strong>打开即练、练完即走、进步可见</strong>的
+          口语训练 App。核心矛盾是：语言训练需要放松的表达氛围，而目标用户是高度理性、反感花哨的工程师。
+        </p>
+
+        <div class="prin">
+          <article>
+            <span class="no">原则 1</span>
+            <h3>效率优先于愉悦</h3>
+            <p>从打开到开始说话 ≤ 2 次点击；核心操作支持单手完成；不做任何打断式新手引导蒙层。</p>
+            <p class="land">落点：<b>工作台入口卡直接给主按钮</b>，创建弹层默认停在摩擦最低的「一句话描述」。</p>
+          </article>
+          <article>
+            <span class="no">原则 2</span>
+            <h3>降低开口焦虑</h3>
+            <p>无分数大字报、无排名、无红色错误轰炸；错误用中性色标注，反馈永远先给肯定。</p>
+            <p class="land">落点：<b>待改进色 #C97B5C 刻意避开纯红</b>；闪测失败用黄不用红；页面内无排行榜。</p>
+          </article>
+          <article>
+            <span class="no">原则 3</span>
+            <h3>状态永远可见</h3>
+            <p>AI 正在听 / 正在想 / 正在说，三种状态必须有明确的视觉与动效区分。语音产品里「系统是否还活着」的不确定感是最大的体验杀手。</p>
+            <p class="land">落点：<b>说话键三态 + 状态条 + 可听的状态音</b>；波形与真实音频绑定，不做假动画。</p>
+          </article>
+          <article>
+            <span class="no">原则 4</span>
+            <h3>进步可视化</h3>
+            <p>自动化进度、实战命中、连续天数，是留存的核心动力，必须在首屏有一席之地。</p>
+            <p class="land">落点：<b>工作台数据条与「本周 2/3 次」进度环</b>；语料库卡片显示「开会用上过 N 次」。</p>
+          </article>
+          <article>
+            <span class="no">原则 5</span>
+            <h3>深色优先</h3>
+            <p>目标用户长期在 IDE 深色环境中工作，深色为默认主题，浅色为可选。</p>
+            <p class="land">落点：<b>全套色板与手机稿均为深色</b>；浅色主题的对比度验收随 V1.1 补齐。</p>
+          </article>
+        </div>
+
+        <div class="note" style="margin-top:22px">
+          <svg aria-hidden="true"><use href="#i-info" /></svg>
+          <div>
+            <b>与 PRD 设计原则的对应。</b>PRD §三 的六条产品原则（对准实时口语、用户素材驱动、自输出镜像、
+            干预分层、延迟即体验、练为实战服务）约束的是<strong>做什么</strong>；这里五条约束的是<strong>长什么样</strong>，
+            两者不冲突：视觉上的「低压力」服务于产品上的「干预分层」。
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== 02 ===================== -->
+      <section class="doc-sec" id="s02">
+        <h2><em>02</em>设计系统</h2>
+        <p class="sec-lede">
+          沿用 21_ 已锁定的设计语言，不重新发明。单位说明：本文所有数值标注为 <strong>pt</strong>（iOS 逻辑单位），
+          iPhone 的逻辑分辨率 393×852 与 CSS px 为 1:1，因此实现时直接落为 px。
+        </p>
+
+        <h3 class="doc-sub">2.1 色彩 <small>冷灰蓝绿（slate / teal）方向</small></h3>
+        <p class="doc-p">
+          与程序员审美契合。<strong>错误色刻意避开纯红</strong>——语言学习中的「错误」是中性事件，不是失败。
+          每张色卡右下角是该色作为正文色时的对比度实测值（背景 #1A2226）。
+        </p>
+        <div class="sw-grid">
+          <div class="sw">
+            <div class="chip" style="background:#1A2226;color:#9AABAF">#1A2226</div>
+            <div class="meta"><b>背景主色</b><span>页面底色</span><span class="ratio">基色</span></div>
+          </div>
+          <div class="sw">
+            <div class="chip" style="background:#232E33;color:#9AABAF">#232E33</div>
+            <div class="meta"><b>背景次色</b><span>卡片、弹层</span><span class="ratio">基色</span></div>
+          </div>
+          <div class="sw">
+            <div class="chip" style="background:#4A7C82;color:#E8EDEF">#4A7C82</div>
+            <div class="meta"><b>主品牌色</b><span>激活态、AI 相关元素</span><span class="ratio">用作文字 3.4:1 ✗</span></div>
+          </div>
+          <div class="sw">
+            <div class="chip" style="background:#35646A;color:#E8EDEF">#35646A</div>
+            <div class="meta"><b>按钮底（加深）</b><span>实心主按钮底色</span><span class="ratio">配 #E8EDEF 5.5:1 ✓</span></div>
+          </div>
+          <div class="sw">
+            <div class="chip" style="background:#7FB3B8;color:#10201F">#7FB3B8</div>
+            <div class="meta"><b>强调色</b><span>高亮、链接、命中、英文话术</span><span class="ratio">6.8:1 ✓</span></div>
+          </div>
+          <div class="sw">
+            <div class="chip" style="background:#E8EDEF;color:#1A2226">#E8EDEF</div>
+            <div class="meta"><b>正文</b><span>主文本</span><span class="ratio">13.2:1 ✓</span></div>
+          </div>
+          <div class="sw">
+            <div class="chip" style="background:#9AABAF;color:#1A2226">#9AABAF</div>
+            <div class="meta"><b>次要文本</b><span>说明、时间戳</span><span class="ratio">6.6:1 ✓</span></div>
+          </div>
+          <div class="sw">
+            <div class="chip" style="background:#6A9E7E;color:#10201F">#6A9E7E</div>
+            <div class="meta"><b>已自动化</b><span>状态灯绿、正向反馈</span><span class="ratio">5.1:1 ✓</span></div>
+          </div>
+          <div class="sw">
+            <div class="chip" style="background:#C9A45C;color:#10201F">#C9A45C</div>
+            <div class="meta"><b>训练中</b><span>状态灯黄、温和提醒</span><span class="ratio">6.7:1 ✓</span></div>
+          </div>
+          <div class="sw">
+            <div class="chip" style="background:#C97B5C;color:#10201F">#C97B5C</div>
+            <div class="meta"><b>待改进</b><span>错误标注（不用纯红）</span><span class="ratio">4.9:1 ✓</span></div>
+          </div>
+        </div>
+
+        <div class="note warn" style="margin-top:20px">
+          <svg aria-hidden="true"><use href="#i-info" /></svg>
+          <div>
+            <b>对 21_ 色板的两处加固（不改变方向）。</b>
+            21_ §2.1 把「对比度验收」列为未办事项，本次在写作时一次过掉，只动了两处用法、没动色相：
+            <br />· <b>英文话术块文本</b>：原定用主品牌色 #4A7C82（3.4:1，低于 AA 正文线）→ 改用强调色 <span class="mono">#7FB3B8</span>（6.8:1）。
+            <br />· <b>实心主按钮底色</b>：#4A7C82 配 #E8EDEF 文字仅 3.9:1 → 底色加深为 <span class="mono">#35646A</span>（5.5:1）；#4A7C82 保留给激活态、图标与装饰性填充。
+          </div>
+        </div>
+
+        <h3 class="doc-sub">2.2 字体与排版 <small>不引入自定义字体，控制包体积</small></h3>
+        <p class="doc-p">
+          中文使用系统默认（PingFang SC），英文使用系统无衬线（SF Pro Text）；技术术语与代码片段使用 SF Mono
+          提升扫读效率。<strong>英文内容同字号、字重加一级</strong>，保证中英混排的可读性。
+        </p>
+        <div class="type-spec">
+          <div>
+            <span class="k">页面标题</span>
+            <span class="v t-page">工作台</span>
+            <span class="m">20pt / Bold</span>
+          </div>
+          <div>
+            <span class="k">卡片标题</span>
+            <span class="v t-card">向下周 standup 同步缓存方案进展</span>
+            <span class="m">16pt / Bold</span>
+          </div>
+          <div>
+            <span class="k">正文</span>
+            <span class="v t-body">昨天的限流方案评审通过了，今天同步一下进展和下一步计划。</span>
+            <span class="m">15pt / Regular · 行高 1.5</span>
+          </div>
+          <div>
+            <span class="k">辅助文本</span>
+            <span class="v t-aux">9月25日 · 9 回合 · 新增 3 个话术块</span>
+            <span class="m">13pt / Regular</span>
+          </div>
+          <div>
+            <span class="k">英文话术块</span>
+            <span class="v t-en">Let's align on the timeline before Friday.</span>
+            <span class="m">15pt / 字重 +1 · #7FB3B8</span>
+          </div>
+          <div>
+            <span class="k">技术术语</span>
+            <span class="v t-mono">rate limit / cache / 限流</span>
+            <span class="m">SF Mono · 15pt</span>
+          </div>
+        </div>
+
+        <h3 class="doc-sub">2.3 间距与圆角 <small>4pt 体系</small></h3>
+        <p class="doc-p">间距只取 4 的倍数；页面左右安全边距 16pt。圆角三档，胶囊按钮即 24pt。</p>
+        <div class="spec-row" style="margin-top:14px">
+          <div class="spec">
+            <h4>间距阶梯</h4>
+            <div class="space-scale">
+              <div class="row"><span class="mono">4pt</span><span class="bar" style="width:4px"></span><span class="use">图标与文字</span></div>
+              <div class="row"><span class="mono">8pt</span><span class="bar" style="width:8px"></span><span class="use">同组元素</span></div>
+              <div class="row"><span class="mono">12pt</span><span class="bar" style="width:12px"></span><span class="use">卡片内块间距</span></div>
+              <div class="row"><span class="mono">16pt</span><span class="bar" style="width:16px"></span><span class="use">页面边距、卡片内边距</span></div>
+              <div class="row"><span class="mono">24pt</span><span class="bar" style="width:24px"></span><span class="use">卡片之间</span></div>
+              <div class="row"><span class="mono">32pt</span><span class="bar" style="width:32px"></span><span class="use">区块之间</span></div>
+            </div>
+          </div>
+          <div class="spec">
+            <h4>圆角三档</h4>
+            <div class="radius-row">
+              <figure><span class="box" style="border-radius:12px"></span><figcaption><b>12pt</b>卡片</figcaption></figure>
+              <figure><span class="box" style="border-radius:16px"></span><figcaption><b>16pt</b>气泡</figcaption></figure>
+              <figure><span class="box" style="border-radius:24px;height:48px"></span><figcaption><b>24pt</b>胶囊按钮</figcaption></figure>
+            </div>
+          </div>
+        </div>
+
+        <h3 class="doc-sub">2.4 核心组件 <small>规格即实现，下方为真实渲染</small></h3>
+        <div class="spec-row">
+          <div class="spec">
+            <h4>说话键 · 三态</h4>
+            <div class="stage" style="grid-template-columns:repeat(3,auto);gap:18px">
+              <div class="od-stack" style="--od-gap:8px;justify-items:center">
+                <span class="fw-mic idle" data-size="56"></span>
+                <span style="font-size:11.5px;color:var(--fw-text-2)">待按</span>
+              </div>
+              <div class="od-stack" style="--od-gap:8px;justify-items:center">
+                <span class="fw-mic rec" data-size="56"><i></i></span>
+                <span style="font-size:11.5px;color:var(--fw-text-2)">录音中</span>
+              </div>
+              <div class="od-stack" style="--od-gap:8px;justify-items:center">
+                <span class="fw-mic proc" data-size="56"></span>
+                <span style="font-size:11.5px;color:var(--fw-text-2)">处理中</span>
+              </div>
+            </div>
+            <ul>
+              <li>72pt 胶囊大按钮，居中于说的房间底部</li>
+              <li>待按态：3s 周期、3% 幅度呼吸缩放</li>
+              <li>录音中：外圈波纹随音量起伏</li>
+              <li>处理中：环形进度，不显示百分比</li>
+            </ul>
+          </div>
+
+          <div class="spec">
+            <h4>状态灯 · 三态</h4>
+            <div class="stage" style="justify-items:start;gap:10px">
+              <span class="lamp new"><span class="dot"></span>新入库</span>
+              <span class="lamp learning"><span class="dot"></span>训练中</span>
+              <span class="lamp done"><span class="dot"></span>已自动化</span>
+            </div>
+            <ul>
+              <li>8pt 圆点，置于话术块卡片右上角</li>
+              <li><b>不单靠颜色</b>：空心 ○ / 半实 ◐ / 实心 ● 与颜色同时变化</li>
+              <li>灰点在深色底需过 AA，形态差异为兜底</li>
+            </ul>
+          </div>
+
+          <div class="spec">
+            <h4>即时反馈徽章 · B7</h4>
+            <div class="stage" style="gap:16px">
+              <span class="app-badge"><svg aria-hidden="true"><use href="#i-star4" /></svg>地道表达 +1</span>
+              <div class="od-row" style="--od-gap:10px">
+                <span class="app-badge settled"><svg aria-hidden="true"><use href="#i-star4" /></svg>+1</span>
+                <span style="font-size:11.5px;color:var(--fw-text-2)">1.5s 后收起为角标</span>
+              </div>
+            </div>
+            <ul>
+              <li>从气泡右上角弹出，200ms 弹性动画</li>
+              <li>停留 1.5s 后收缩为气泡角标，不消失</li>
+              <li>无弹窗、无震动、不打断 AI 接续说话</li>
+            </ul>
+          </div>
+
+          <div class="spec">
+            <h4>话术块卡片 · 三段式</h4>
+            <div style="width:100%">
+              <div class="pb-card" data-state="done">
+                <div class="pb-head">
+                  <span class="pb-intent">需要推迟某个话题时说</span>
+                  <span class="lamp done"><span class="dot"></span>已自动化</span>
+                </div>
+                <span class="pb-en">Let's push the launch to next sprint.</span>
+                <p class="pb-anchor">你当时说：We need to, uh, do it later.</p>
+              </div>
+            </div>
+            <ul>
+              <li>意图（顶部加粗）/ 英文块（强调色，可点按发音）/ 对比锚点（可折叠）</li>
+              <li>右上角状态灯；已自动化的卡片追加「开会用上过 N 次」</li>
+            </ul>
+          </div>
+
+          <div class="spec">
+            <h4>评价卡 · 三段折叠</h4>
+            <div style="width:100%">
+              <div class="ev-card">
+                <div class="ev-head"><b>目标达成</b><span class="ev-score">3 件事说清了 2 件</span><svg aria-hidden="true"><use href="#i-chev-d" /></svg></div>
+                <p class="ev-body">讲清了限流方案的目的与当前进度，没提到预计完成时间。</p>
+              </div>
+              <div class="ev-card collapsed">
+                <div class="ev-head"><b>问题清单</b><span class="ev-score">3 条</span><svg aria-hidden="true"><use href="#i-chev-r" /></svg></div>
+              </div>
+              <div class="ev-card collapsed">
+                <div class="ev-head"><b>提高建议</b><span class="ev-score">2 条</span><svg aria-hidden="true"><use href="#i-chev-r" /></svg></div>
+              </div>
+            </div>
+            <ul><li>默认展开第一段，先肯定后改进</li><li>其余折叠，首屏最多 3 个最高价值点</li></ul>
+          </div>
+
+          <div class="spec">
+            <h4>骨架屏 · 加载态</h4>
+            <div class="stage" style="width:100%;gap:8px">
+              <span class="app-skel" style="width:100%;height:14px"></span>
+              <span class="app-skel" style="width:72%;height:14px"></span>
+              <span class="app-skel" style="width:100%;height:56px;border-radius:12px"></span>
+            </div>
+            <ul>
+              <li>语料库 / 历史 / 每日一读统一用闪光骨架块</li>
+              <li><b>不用转圈 spinner</b>——工程师用户对「系统活着但没内容」的感知更准确</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 class="doc-sub">2.5 图标 <small>一套线性描边图标，1.5pt 描边、圆头端点</small></h3>
+        <p class="doc-p">Tab、场景、状态灯、徽章共用同一套，统一描边宽度与圆角；不使用 emoji 充当功能图标。</p>
+        <div class="icon-grid">
+          <div><svg aria-hidden="true"><use href="#i-home" /></svg><span>i-home</span></div>
+          <div><svg aria-hidden="true"><use href="#i-drill" /></svg><span>i-drill</span></div>
+          <div><svg aria-hidden="true"><use href="#i-library" /></svg><span>i-library</span></div>
+          <div><svg aria-hidden="true"><use href="#i-mic" /></svg><span>i-mic</span></div>
+          <div><svg aria-hidden="true"><use href="#i-play" /></svg><span>i-play</span></div>
+          <div><svg aria-hidden="true"><use href="#i-pause" /></svg><span>i-pause</span></div>
+          <div><svg aria-hidden="true"><use href="#i-replay" /></svg><span>i-replay</span></div>
+          <div><svg aria-hidden="true"><use href="#i-wave" /></svg><span>i-wave</span></div>
+          <div><svg aria-hidden="true"><use href="#i-star4" /></svg><span>i-star4</span></div>
+          <div><svg aria-hidden="true"><use href="#i-ladder" /></svg><span>i-ladder</span></div>
+          <div><svg aria-hidden="true"><use href="#i-search" /></svg><span>i-search</span></div>
+          <div><svg aria-hidden="true"><use href="#i-book" /></svg><span>i-book</span></div>
+          <div><svg aria-hidden="true"><use href="#i-talk" /></svg><span>i-talk</span></div>
+          <div><svg aria-hidden="true"><use href="#i-gear" /></svg><span>i-gear</span></div>
+          <div><svg aria-hidden="true"><use href="#i-clock" /></svg><span>i-clock</span></div>
+          <div><svg aria-hidden="true"><use href="#i-flag" /></svg><span>i-flag</span></div>
+          <div><svg aria-hidden="true"><use href="#i-shield" /></svg><span>i-shield</span></div>
+          <div><svg aria-hidden="true"><use href="#i-trash" /></svg><span>i-trash</span></div>
+          <div><svg aria-hidden="true"><use href="#i-copy" /></svg><span>i-copy</span></div>
+          <div><svg aria-hidden="true"><use href="#i-info" /></svg><span>i-info</span></div>
+          <div><svg aria-hidden="true"><use href="#i-chev-l" /></svg><span>i-chev-l</span></div>
+          <div><svg aria-hidden="true"><use href="#i-chev-d" /></svg><span>i-chev-d</span></div>
+          <div><svg aria-hidden="true"><use href="#i-check" /></svg><span>i-check</span></div>
+          <div><svg aria-hidden="true"><use href="#i-x" /></svg><span>i-x</span></div>
+        </div>
+      </section>
+
+      <!-- ===================== 03 ===================== -->
+      <section class="doc-sec" id="s03">
+        <h2><em>03</em>信息架构与导航</h2>
+        <p class="sec-lede">
+          底部 3 个主 Tab ＋ 全屏沉浸页。<strong>从首页到开始说话不超过两次点击</strong>——这条是硬约束，
+          任何新增入口都要先过这一关。
+        </p>
+
+        <div class="ia-map">
+          <div class="ia-col">
+            <h4>Tab 1 · 工作台</h4>
+            <ul>
+              <li>今日入口卡（开始新练习 / 继续上次）</li>
+              <li>今日三件事清单</li>
+              <li>每日一读卡 → 每日一读页</li>
+              <li>话题建议卡 → 话题建议页</li>
+              <li>练习历史 → 回顾页</li>
+            </ul>
+          </div>
+          <div class="ia-col">
+            <h4>Tab 2 · 闪测</h4>
+            <ul>
+              <li>训练卡流（中文意图 → 口头作答 → 判定对照）</li>
+              <li>判定与申诉 → 同一屏内</li>
+              <li>结算页</li>
+              <li>空态引导（语料不足时）</li>
+            </ul>
+          </div>
+          <div class="ia-col">
+            <h4>Tab 3 · 语料库</h4>
+            <ul>
+              <li>搜索 ＋ 场景 / 功能双维度筛选</li>
+              <li>话术块卡片列表（状态灯）</li>
+              <li>收藏与置顶筛选</li>
+              <li>空态引导</li>
+            </ul>
+          </div>
+          <div class="ia-col">
+            <h4>全屏页（从入口推入）</h4>
+            <ul>
+              <li>说的房间（沉浸页，设计权重最高）</li>
+              <li>回顾页（wow moment 承载页）</li>
+              <li>每日一读 · 话题建议 · 设置</li>
+              <li>创建练习（底部弹层，非全屏）</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 class="doc-sub">关键路径长度审计</h3>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead><tr><th>目标</th><th>路径</th><th>点击数</th></tr></thead>
+            <tbody>
+              <tr><td>开始新练习</td><td>工作台 →「开始新练习」→ 创建弹层选场景 → 说的房间</td><td class="mono">2</td></tr>
+              <tr><td>继续上次</td><td>工作台 →「继续上次」→ 说的房间</td><td class="mono">1</td></tr>
+              <tr><td>闪测</td><td>底部 Tab → 直接开始</td><td class="mono">1</td></tr>
+              <tr><td>查看昨日回顾</td><td>工作台 → 历史列表点入</td><td class="mono">1</td></tr>
+              <tr><td>查看语料库</td><td>底部 Tab</td><td class="mono">1</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note" style="margin-top:18px">
+          <svg aria-hidden="true"><use href="#i-info" /></svg>
+          <div>
+            <b>导航形态纪律。</b>同一层级内不同时出现底部导航、侧边栏与顶部 Tab；模态与抽屉都有明确的关闭方式；
+            返回上一级时恢复滚动位置与已输入内容，绝不静默跳回首页。底部导航固定 3 项，图标配文字标签。
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== 04 ===================== -->
+      <section class="doc-sec" id="s04">
+        <h2><em>04</em>核心页面高保真稿</h2>
+        <p class="sec-lede">
+          14 屏，全部装在 iPhone 393×852 的真实外壳里（金属边框、灵动岛、状态栏、侧键、Home Indicator），
+          app 内容只挂在安全区之内。每屏右侧是该屏的规格注释——布局结构、交互状态，以及对应的 PRD 功能 ID。
+        </p>
+
+        <!-- ---------- 屏 01 ---------- -->
+        <section class="scr" id="scr01">
+          <header class="scr-head">
+            <span class="no">屏 01</span>
+            <h3>工作台（首页）</h3>
+            <span class="tagline">Tab 1 · 打开即知道「今天练什么」</span>
+          </header>
+          <div class="scr-body">
+            <div class="phone-stage">
+              <div class="phone-frame" data-phone-shell data-platform="iphone">
+                <span class="hardware-button silent" aria-hidden="true"></span>
+                <span class="hardware-button volume-up" aria-hidden="true"></span>
+                <span class="hardware-button volume-down" aria-hidden="true"></span>
+                <span class="hardware-button power" aria-hidden="true"></span>
+                <section class="phone-screen">
+                  <main class="phone-content">
+                    <div class="app od-screen">
+                      <header class="app-bar">
+                        <div class="od-fill">
+                          <h1>早上好</h1>
+                          <p style="font-size:12.5px;color:var(--fw-text-2)">准备今天的 standup 了吗</p>
+                          <p style="font-size:11.5px;color:var(--fw-text-2);margin-top:4px">话术块 14 · 已自动化 5</p>
+                        </div>
+                        <div class="stat-ring" role="img" aria-label="本周已完成 2 次练习，周目标 3 次">
+                          <span class="ring"><i>2/3</i></span>
+                          <span class="cap">本周</span>
+                        </div>
+                      </header>
+                      <div class="od-scroll app-scroll">
+                        <div class="od-stack" style="--od-gap:12px">
+
+                          <div class="od-cluster" style="--od-gap:8px">
+                            <span class="todo done"><svg aria-hidden="true"><use href="#i-check" /></svg>练一次</span>
+                            <span class="todo done"><svg aria-hidden="true"><use href="#i-check" /></svg>读一篇</span>
+                            <span class="todo">闪测一轮</span>
+                          </div>
+
+                          <div class="entry-card">
+                            <p class="ec-lead">上次你练了限流方案的讨论，今天继续？</p>
+                            <p class="ec-sub">约 4 分钟 · 标准会话 · Daily Standup</p>
+                            <div class="od-row" style="--od-gap:10px">
+                              <button class="app-btn primary od-fill">开始新练习</button>
+                              <button class="app-btn ghost od-fill">继续上次</button>
+                            </div>
+                          </div>
+
+                          <div class="app-card">
+                            <div class="mini-head"><h2>每日一读</h2><time>约 1 分钟</time></div>
+                            <p class="mini-sub od-clamp-2">一段可以直接用的 standup 汇报：把限流方案的进展和下一步讲清楚。</p>
+                            <div class="od-row" style="--od-gap:8px">
+                              <button class="app-btn ghost" style="min-height:38px;font-size:13px;padding:0 14px"><svg aria-hidden="true"><use href="#i-play" /></svg>开始朗读</button>
+                              <button class="app-btn quiet" style="min-height:38px;font-size:13px">跟读模式</button>
+                            </div>
+                          </div>
+
+                          <div class="app-card">
+                            <div class="mini-head"><h2>话题建议</h2><time>还差 6 个</time></div>
+                            <p class="mini-sub">再积累 6 个话术块，解锁「明天就能和同事聊」的实战话题。</p>
+                            <div class="prog" role="img" aria-label="话术块积累进度：14 / 20"><i style="width:70%"></i></div>
+                          </div>
+
+                          <div class="od-stack" style="--od-gap:8px">
+                            <div class="mini-head"><h2>练习历史</h2></div>
+                            <div class="app-card hist-row" style="padding:13px 15px">
+                              <span class="hist-ico"><svg aria-hidden="true"><use href="#i-talk" /></svg></span>
+                              <span class="od-fill"><span class="hist-t">Daily Standup 汇报进展</span><span class="hist-m">9月25日 · 9 回合 · 新增 3 个</span></span>
+                              <svg class="hist-chev" aria-hidden="true"><use href="#i-chev-r" /></svg>
+                            </div>
+                            <div class="app-card hist-row" style="padding:13px 15px">
+                              <span class="hist-ico"><svg aria-hidden="true"><use href="#i-talk" /></svg></span>
+                              <span class="od-fill"><span class="hist-t">缓存方案评审讨论</span><span class="hist-m">9月24日 · 11 回合 · 新增 4 个</span></span>
+                              <svg class="hist-chev" aria-hidden="true"><use href="#i-chev-r" /></svg>
+                            </div>
+                            <div class="app-card hist-row" style="padding:13px 15px">
+                              <span class="hist-ico"><svg aria-hidden="true"><use href="#i-talk" /></svg></span>
+                              <span class="od-fill"><span class="hist-t">复盘线上故障</span><span class="hist-m">9月22日 · 迷你会话 · 新增 2 个</span></span>
+                              <svg class="hist-chev" aria-hidden="true"><use href="#i-chev-r" /></svg>
+                            </div>
+                          </div>
+
+                        </div>
+                      </div>
+                      <footer class="app-tabbar">
+                        <button class="app-tab" aria-current="page"><svg aria-hidden="true"><use href="#i-home" /></svg>工作台</button>
+                        <button class="app-tab"><svg aria-hidden="true"><use href="#i-drill" /></svg>闪测</button>
+                        <button class="app-tab"><svg aria-hidden="true"><use href="#i-library" /></svg>语料库</button>
+                      </footer>
+                    </div>
+                  </main>
+                  <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg viewBox="0 0 18 12"><use href="#i-sig" /></svg><svg viewBox="0 0 18 12"><use href="#i-wifi" /></svg><svg class="battery" viewBox="0 0 27 12"><use href="#i-batt" /></svg></span></div>
+                  <div class="dynamic-island" aria-hidden="true"></div>
+                  <div class="home-indicator" aria-hidden="true"></div>
+                </section>
+              </div>
+            </div>
+            <div class="scr-notes">
+              <div class="note-block">
+                <h4>布局结构（自上而下）</h4>
+                <dl>
+                  <div><dt>问候条</dt><dd>问候语 ＋ 话术块 / 已自动化计数 ＋ 本周进度环</dd></div>
+                  <div><dt>今日三件事</dt><dd>练一次 / 读一篇 / 闪测一轮，完成即勾销</dd></div>
+                  <div><dt>今日入口卡</dt><dd>最大卡片，品牌色底，文案动态生成</dd></div>
+                  <div><dt>每日一读卡</dt><dd>今日短文标题 ＋ 时长 ＋ 朗读 / 跟读入口</dd></div>
+                  <div><dt>话题建议卡</dt><dd>语料未达 20 个时显示进度激励，不显示空卡</dd></div>
+                  <div><dt>练习历史</dt><dd>时间倒序，场景图标 ＋ 标题 ＋ 日期 ＋ 新增话术块数</dd></div>
+                </dl>
+              </div>
+              <div class="note-block">
+                <h4>设计意图</h4>
+                <p>首页同时服务两种心智：<strong>「我现在要练」</strong>（入口卡）与<strong>「我今天进步了什么」</strong>（数据条 ＋ 历史）。
+                进度环把 PRD 的核心假设「周练习 ≥3 次」变成用户可见的目标，纯自我参照——不做排名、不做连击惩罚。</p>
+              </div>
+              <div class="note-block">
+                <h4>状态与边界</h4>
+                <ul>
+                  <li><b>继续上次</b>：进房间后 AI 首句总结上次讨论，避免从零回忆。</li>
+                  <li><b>话题建议</b>：语料 ≥20 个才出现；未达标显示「再积累 N 个」的进度，而不是一个点不动的空卡。</li>
+                  <li><b>历史条目</b>含迷你会话记录，与北极星口径一致。</li>
+                </ul>
+              </div>
+              <div class="note-block">
+                <h4>对应</h4>
+                <p>PRD §六 Tab 1 · 21_ §4.1 · A5 演示素材主路径的落点。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+
+        <!-- ---------- 屏 02 ---------- -->
+        <section class="scr" id="scr02">
+          <header class="scr-head">
+            <span class="no">屏 02</span>
+            <h3>说的房间 · 对话中</h3>
+            <span class="tagline">全屏沉浸页 · 设计权重最高</span>
+          </header>
+          <div class="scr-body">
+            <div class="phone-stage">
+              <div class="phone-frame" data-phone-shell data-platform="iphone">
+                <span class="hardware-button silent" aria-hidden="true"></span>
+                <span class="hardware-button volume-up" aria-hidden="true"></span>
+                <span class="hardware-button volume-down" aria-hidden="true"></span>
+                <span class="hardware-button power" aria-hidden="true"></span>
+                <section class="phone-screen">
+                  <main class="phone-content">
+                    <div class="app od-screen">
+                      <header class="room-top">
+                        <button class="app-icon-btn" style="margin:0" aria-label="结束本轮"><svg aria-hidden="true"><use href="#i-chev-l" /></svg></button>
+                        <span class="rt-title"><b>Daily Standup</b><span>第 3 轮 · 标准会话</span></span>
+                        <button class="app-btn quiet rt-end">结束本轮</button>
+                      </header>
+                      <div class="od-scroll">
+                        <div class="ctx">
+                          <div class="ctx-head">
+                            <svg aria-hidden="true"><use href="#i-flag" /></svg>
+                            <b>本局目标</b>
+                            <button class="app-btn quiet" style="min-height:32px;font-size:12px;padding:0 8px">收起</button>
+                          </div>
+                          <p class="goal">用上 <b>2 个</b>新表达汇报进度，并说清下一步计划</p>
+                          <p class="src">素材：限流方案评审纪要 · 已提炼 5 个讨论点</p>
+                        </div>
+                        <div class="tl">
+                          <div class="turn ai">
+                            <div class="bub">Morning! What did you get done on the rate-limit work yesterday?</div>
+                            <div class="meta"><span>AI</span><button class="app-btn quiet" style="min-height:26px;font-size:11px;padding:0 7px"><svg style="width:13px;height:13px" aria-hidden="true"><use href="#i-replay" /></svg>重播</button></div>
+                          </div>
+                          <div class="turn me">
+                            <span class="app-badge float-badge"><svg aria-hidden="true"><use href="#i-star4" /></svg>地道表达 +1</span>
+                            <div class="bub">Yesterday I finished the rate-limit design and got it reviewed.</div>
+                            <div class="meta"><span>你说 · 可回听</span></div>
+                          </div>
+                          <div class="turn ai">
+                            <div class="bub">Nice — “got it reviewed” is exactly how I'd put it. Any blockers on your side?</div>
+                            <div class="meta"><span>AI</span><button class="app-btn quiet" style="min-height:26px;font-size:11px;padding:0 7px"><svg style="width:13px;height:13px" aria-hidden="true"><use href="#i-replay" /></svg>重播</button></div>
+                          </div>
+                        </div>
+                      </div>
+                      <footer class="dock">
+                        <div class="status-line"><span class="live"></span>轮到你了 · 我正在听</div>
+                        <div class="capture">
+                          <span class="cap-cap">我正在听</span>
+                          <p>One thing I want to <b>flag</b> is the cache eviction policy…</p>
+                        </div>
+                        <div class="wave" aria-hidden="true">
+                          <i style="height:7px"></i><i style="height:15px"></i><i style="height:9px"></i><i style="height:19px"></i><i style="height:12px"></i><i style="height:22px"></i><i style="height:10px"></i><i style="height:17px"></i><i style="height:8px"></i><i style="height:20px"></i><i style="height:13px"></i><i style="height:16px"></i><i style="height:9px"></i><i style="height:14px"></i><i style="height:7px"></i>
+                        </div>
+                        <div class="mic-row">
+                          <button class="fw-mic rec" aria-label="正在录音，点击结束"><i></i><svg aria-hidden="true"><use href="#i-mic" /></svg></button>
+                        </div>
+                        <p class="hint">说错了没关系，结束后我们一起看</p>
+                      </footer>
+                    </div>
+                  </main>
+                  <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg viewBox="0 0 18 12"><use href="#i-sig" /></svg><svg viewBox="0 0 18 12"><use href="#i-wifi" /></svg><svg class="battery" viewBox="0 0 27 12"><use href="#i-batt" /></svg></span></div>
+                  <div class="dynamic-island" aria-hidden="true"></div>
+                  <div class="home-indicator" aria-hidden="true"></div>
+                </section>
+              </div>
+            </div>
+            <div class="scr-notes">
+              <div class="note-block">
+                <h4>布局结构</h4>
+                <dl>
+                  <div><dt>顶部栏</dt><dd>极简：返回 / 结束 ＋ 场景与轮次，不抢视觉</dd></div>
+                  <div><dt>目标胶囊</dt><dd>可收起。目标句 ＋ 素材摘要，首个 AI 话轮后可收起</dd></div>
+                  <div><dt>对话时间线</dt><dd>AI 气泡带重播；用户气泡带命中标记与回听</dd></div>
+                  <div><dt>实时转录浮层</dt><dd>仅录音时出现，话音落下后 200ms 淡入归位到气泡</dd></div>
+                  <div><dt>说话键</dt><dd>72pt 胶囊，三态；波纹随真实音量起伏</dd></div>
+                </dl>
+              </div>
+              <div class="note-block">
+                <h4>语音状态机（本页核心设计物）</h4>
+                <div class="tbl-wrap">
+                  <table class="tbl">
+                    <thead><tr><th>状态</th><th>视觉</th></tr></thead>
+                    <tbody>
+                      <tr><td>等待说话</td><td>说话键静态，3s 周期 3% 幅度呼吸缩放</td></tr>
+                      <tr><td>用户录音中</td><td>外圈扩散波纹随音量起伏，浮层实时滚动</td></tr>
+                      <tr><td>AI 处理中</td><td>环形进度 ＋ 三点动效，≤1.5s，不显示百分比</td></tr>
+                      <tr><td>AI 播放中</td><td>气泡左侧波形随进度；用户开口即停</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="note-block">
+                <h4>三条易错点</h4>
+                <ul>
+                  <li><b>禁止双重展示</b>：录音中文本只在浮层；话音落下后归位到气泡，两者不同时显示同一句话。</li>
+                  <li><b>被打断要说清</b>：用户开口打断时，AI 气泡尾部加灰色截断标记，明确「它被你打断了」而不是「它卡住了」。</li>
+                  <li><b>可听的状态</b>：处理中加极轻呼吸音，断线与降级加短促提示音，恢复时由 AI 一句话带过；均可在设置单独关闭。</li>
+                </ul>
+              </div>
+              <div class="note-block">
+                <h4>对应</h4>
+                <p>PRD §六 说的房间 · B1–B7 · 21_ §4.2 · 22_ 会话内回合时间线。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 屏 03 ---------- -->
+        <section class="scr" id="scr03">
+          <header class="scr-head">
+            <span class="no">屏 03</span>
+            <h3>说的房间 · 卡壳救援</h3>
+            <span class="tagline"><span class="pill new">V1.6 新增</span> B8 的界面形态</span>
+          </header>
+          <div class="scr-body">
+            <div class="phone-stage">
+              <div class="phone-frame" data-phone-shell data-platform="iphone">
+                <span class="hardware-button silent" aria-hidden="true"></span>
+                <span class="hardware-button volume-up" aria-hidden="true"></span>
+                <span class="hardware-button volume-down" aria-hidden="true"></span>
+                <span class="hardware-button power" aria-hidden="true"></span>
+                <section class="phone-screen">
+                  <main class="phone-content">
+                    <div class="app od-screen">
+                      <header class="room-top">
+                        <button class="app-icon-btn" style="margin:0" aria-label="结束本轮"><svg aria-hidden="true"><use href="#i-chev-l" /></svg></button>
+                        <span class="rt-title"><b>Daily Standup</b><span>第 5 轮 · 标准会话</span></span>
+                        <button class="app-btn quiet rt-end">结束本轮</button>
+                      </header>
+                      <div class="od-scroll">
+                        <div class="tl">
+                          <div class="turn ai">
+                            <div class="bub">So what's the plan for the cache eviction work?</div>
+                            <div class="meta"><span>AI</span><button class="app-btn quiet" style="min-height:26px;font-size:11px;padding:0 7px"><svg style="width:13px;height:13px" aria-hidden="true"><use href="#i-replay" /></svg>重播</button></div>
+                          </div>
+                          <div class="turn me">
+                            <div class="bub cut">Well, we need to… um</div>
+                            <div class="meta"><span class="rung"><svg aria-hidden="true"><use href="#i-ladder" /></svg>卡壳点</span></div>
+                          </div>
+                          <div class="turn ai">
+                            <div class="bub bub-ladder">I think the main risk is…</div>
+                            <div class="meta">
+                              <span class="rung"><svg aria-hidden="true"><use href="#i-ladder" /></svg>梯子 1/3<span class="dots"><i class="on"></i><i></i><i></i></span></span>
+                              <button class="app-btn quiet" style="min-height:26px;font-size:11px;padding:0 7px"><svg style="width:13px;height:13px" aria-hidden="true"><use href="#i-replay" /></svg>重播</button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <footer class="dock">
+                        <div class="status-line"><span class="live" style="background:var(--fw-training)"></span>已经 3 秒没有听到你 · 梯子正在朗读</div>
+                        <div class="tip-pill"><svg aria-hidden="true"><use href="#i-ladder" /></svg>给我点儿提示</div>
+                        <div class="mic-row">
+                          <button class="fw-mic idle" aria-label="按住说话"><svg aria-hidden="true"><use href="#i-mic" /></svg></button>
+                        </div>
+                        <p class="hint">慢一点没关系，这不算失败</p>
+                      </footer>
+                    </div>
+                  </main>
+                  <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg viewBox="0 0 18 12"><use href="#i-sig" /></svg><svg viewBox="0 0 18 12"><use href="#i-wifi" /></svg><svg class="battery" viewBox="0 0 27 12"><use href="#i-batt" /></svg></span></div>
+                  <div class="dynamic-island" aria-hidden="true"></div>
+                  <div class="home-indicator" aria-hidden="true"></div>
+                </section>
+              </div>
+            </div>
+            <div class="scr-notes">
+              <div class="note-block">
+                <h4>三条硬约束怎么落的</h4>
+                <ul>
+                  <li><b>不追问。</b>卡壳时 AI 绝不重复原问题——用户卡的就是这个问题。上图 AI 换成递骨架，不再问一遍。</li>
+                  <li><b>不离开语音流。</b>梯子内容走 TTS，以普通 AI 气泡的形态出现在时间线上，不弹卡片、不切页面。气泡左侧有重播，与 B4 同一条通道。</li>
+                  <li><b>不记入失败。</b>用户那句截断的话保留在时间线上并标记为「卡壳点」，照常进入 D1 炼化候选——卡壳点正是最该练的东西。</li>
+                </ul>
+              </div>
+              <div class="note-block">
+                <h4>三层梯子 · 逐层升级不跳层</h4>
+                <div class="od-stack" style="--od-gap:8px">
+                  <div class="cmp-col"><h5>层 1 · 句首骨架</h5><p>“I think the main risk is…” — 用户往里填</p></div>
+                  <div class="cmp-col"><h5>层 2 · 中文意图提示</h5><p>“先说结论，再说原因”</p></div>
+                  <div class="cmp-col"><h5>层 3 · 完整表达</h5><p>只在 1、2 都无效时给出</p></div>
+                </div>
+                <p style="margin-top:10px">气泡下方的三点指示器显示当前处在第几层——这是<strong>本次提出的形态</strong>，让「不跳层」对用户可感知，同时不占用额外界面元素。</p>
+              </div>
+              <div class="note-block">
+                <h4>用户自取那一格</h4>
+                <p><strong>「给我点儿提示」不在静默窗口内常驻。</strong>它满足静默满一个窗口之后才淡入（240ms），用户开口或 AI 接管即淡出，不在时间线上占位、不推挤对话。
+                点按等于把梯子往上推一格，与自动梯子<strong>共用同一个梯子位置</strong>，不是另开一条。</p>
+                <p style="margin-top:8px">这条覆盖了自动检测看不见的人：一直在出声但没成句（「嗯…」「就是那个…」）的用户，一句听起来完整的话就会关掉静默窗口。</p>
+              </div>
+              <div class="note-block">
+                <h4>待验证假设</h4>
+                <p>梯子给得太早，用户会<strong>等</strong>梯子而不是先尝试，这与「主动召回」的训练目标相反。3 秒阈值与三点指示器都需要内测验证；救援触发率要与话术块自动化转化率配对监控，救援率持续过高说明场景难度与用户水平不匹配，该调的是场景而不是梯子。</p>
+              </div>
+              <div class="note-block">
+                <h4>对应</h4>
+                <p>PRD §5.4 · B8（P0）· §十一「首次卡壳救援触发率」· §十二 B8 依赖风险。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 屏 04 ---------- -->
+        <section class="scr" id="scr04">
+          <header class="scr-head">
+            <span class="no">屏 04</span>
+            <h3>回顾页</h3>
+            <span class="tagline">首次体验的 wow moment 承载页</span>
+          </header>
+          <div class="scr-body">
+            <div class="phone-stage">
+              <div class="phone-frame" data-phone-shell data-platform="iphone">
+                <span class="hardware-button silent" aria-hidden="true"></span>
+                <span class="hardware-button volume-up" aria-hidden="true"></span>
+                <span class="hardware-button volume-down" aria-hidden="true"></span>
+                <span class="hardware-button power" aria-hidden="true"></span>
+                <section class="phone-screen">
+                  <main class="phone-content">
+                    <div class="app od-screen">
+                      <header class="app-bar">
+                        <button class="app-icon-btn" style="margin:0" aria-label="返回工作台"><svg aria-hidden="true"><use href="#i-chev-l" /></svg></button>
+                        <h1>回顾</h1>
+                        <span class="bar-meta">9月26日</span>
+                      </header>
+                      <div class="od-scroll app-scroll">
+                        <div class="od-stack" style="--od-gap:14px">
+
+                          <div class="sum-bar">
+                            <div><b>12</b><span>分钟</span></div>
+                            <div><b>9</b><span>回合</span></div>
+                            <div><b>+4</b><span>新增话术块</span></div>
+                          </div>
+
+                          <div>
+                            <div class="ev-card">
+                              <div class="ev-head"><b>目标达成</b><span class="ev-score">3 件事说清了 2 件</span><svg aria-hidden="true"><use href="#i-chev-d" /></svg></div>
+                              <p class="ev-body">讲清了限流方案的目的与当前进度，没提到预计完成时间。</p>
+                            </div>
+                            <div class="ev-card collapsed">
+                              <div class="ev-head"><b>问题清单</b><span class="ev-score">3 条</span><svg aria-hidden="true"><use href="#i-chev-r" /></svg></div>
+                            </div>
+                            <div class="ev-card collapsed">
+                              <div class="ev-head"><b>提高建议</b><span class="ev-score">2 条</span><svg aria-hidden="true"><use href="#i-chev-r" /></svg></div>
+                            </div>
+                          </div>
+
+                          <div class="od-stack" style="--od-gap:9px">
+                            <div class="mini-head"><h2>这一句最值得改</h2><time>1 / 5</time></div>
+                            <div class="cmp-pair">
+                              <div class="cmp-col"><h5>你说的</h5><p>I will do the <span class="fix">cache thing</span> next week.</p></div>
+                              <div class="cmp-col better"><h5>更地道</h5><p>I'll get the caching work <span class="fix">wrapped up</span> next week.</p></div>
+                            </div>
+                            <div class="cmp-tools">
+                              <button class="app-btn ghost"><svg aria-hidden="true"><use href="#i-play" /></svg>原音</button>
+                              <button class="app-btn ghost"><svg aria-hidden="true"><use href="#i-play" /></svg>示范</button>
+                              <button class="app-btn primary" style="margin-left:auto">加入语料库</button>
+                            </div>
+                            <button class="app-btn quiet" style="justify-self:start;font-size:12.5px">查看其余 4 条对照</button>
+                          </div>
+
+                          <div class="od-stack" style="--od-gap:9px">
+                            <div class="mini-head"><h2>话术块炼化</h2><time>3 个待入库</time></div>
+                            <div class="od-rail pb-rail" style="--od-rail-pad:0">
+                              <div class="pb-card">
+                                <div class="pb-head"><span class="pb-intent">需要推迟某个话题时说</span><span class="lamp learning"><span class="dot"></span>训练中</span></div>
+                                <span class="pb-en">Let's push the launch to next sprint.</span>
+                              </div>
+                              <div class="pb-card">
+                                <div class="pb-head"><span class="pb-intent">表达「这块我来兜底」时</span><span class="lamp new"><span class="dot"></span>新入库</span></div>
+                                <span class="pb-en">I'll take ownership of that piece.</span>
+                              </div>
+                              <div class="pb-card">
+                                <div class="pb-head"><span class="pb-intent">需要同步风险时说</span><span class="lamp new"><span class="dot"></span>新入库</span></div>
+                                <span class="pb-en">There's a risk we might slip here.</span>
+                              </div>
+                            </div>
+                            <button class="app-btn primary block">全部入库</button>
+                          </div>
+
+                        </div>
+                      </div>
+                      <footer style="padding:10px 16px 12px;border-top:1px solid var(--fw-line);display:grid;gap:9px">
+                        <button class="app-btn ghost block" style="min-height:38px;font-size:13.5px">再来一轮</button>
+                        <button class="app-btn quiet block" style="min-height:34px;font-size:13.5px">完成</button>
+                      </footer>
+                    </div>
+                  </main>
+                  <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg viewBox="0 0 18 12"><use href="#i-sig" /></svg><svg viewBox="0 0 18 12"><use href="#i-wifi" /></svg><svg class="battery" viewBox="0 0 27 12"><use href="#i-batt" /></svg></span></div>
+                  <div class="dynamic-island" aria-hidden="true"></div>
+                  <div class="home-indicator" aria-hidden="true"></div>
+                </section>
+              </div>
+            </div>
+            <div class="scr-notes">
+              <div class="note-block">
+                <h4>渐进式加载（评价异步生成，≤15s）</h4>
+                <dl>
+                  <div><dt>3 秒内</dt><dd>转录按话轮展示（可回听）＋ 总结条；评价区用骨架屏占位，标注「正在分析你的表达…」</dd></div>
+                  <div><dt>≤15 秒</dt><dd>三层评价卡、双栏对照、炼化卡依次淡入，默认只呈现 Top 3</dd></div>
+                  <div><dt>失败态</dt><dd>保留转录可回听，评价区显示「评价生成失败，点此重试」，不留空白页</dd></div>
+                </dl>
+              </div>
+              <div class="note-block">
+                <h4>阅读顺序纪律：先肯定后改进</h4>
+                <p>首屏默认只呈现 <strong>3 个最高价值点</strong>——1 条最响亮的双栏对照、1 个最值得改的问题、1 条可复用建议，其余收进「查看全部」。
+                默认展开十几条信息会淹没阅读顺序；少而精的对照比 8 条对照更有冲击力。</p>
+                <p style="margin-top:8px"><strong>V2.1 重定：</strong>当用户在这一轮里说过一段连续长发言时，这一段之上会出现
+                <strong>段落层</strong>（见 屏 14），此时<strong>视觉焦点让位给段落层</strong>，句子层的 Top 1 对照降为它下面的第一个可入库点。
+                没有连续长发言的会话里此条纪律原样不变。</p>
+              </div>
+              <div class="note-block">
+                <h4>与段落层的关系</h4>
+                <p>这一屏是<strong>没有连续长发言</strong>时的形态。用户一口气说满 3 句以上时，页面顶端会多出一层「这一段整体」的对照——
+                段落是容器，句子是可带走的块，两层同时在，但<strong>只有句子层产出话术块</strong>。形态见 屏 14。</p>
+              </div>
+              <div class="note-block">
+                <h4>双栏对照：通用 AI 给不了的东西</h4>
+                <p>左「你说的」/ 右「更地道的版本」，差异词用<strong>待改进色下划线</strong>标注而非红字；每对可分别播放原音与示范音。
+                改写基于<strong>意图还原</strong>而非 ASR 原文——这是它与「批改作业」的分水岭。</p>
+                <p style="margin-top:8px">窄屏下双栏各约 152pt 文本宽，长句会折到 3 行；这是 21_ 双栏形态在手机上的必要代价，换来的是并置对比的冲击力。</p>
+              </div>
+              <div class="note-block">
+                <h4>注册时机（G4）</h4>
+                <p>游客态用户点「全部入库」→ 页内底部轻量面板，不离开回顾页：「登录后，这些表达才真正属于你」。
+                登录成功原位继续入库并给「语料库 +N」反馈；拒绝登录则本机暂存，后续注册自动归并。</p>
+              </div>
+              <div class="note-block">
+                <h4>对应</h4>
+                <p>PRD §六 回顾页 · C1–C3 · G4 · 21_ §4.3 · §十二 首次会话价值感知。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 屏 05 ---------- -->
+        <section class="scr" id="scr05">
+          <header class="scr-head">
+            <span class="no">屏 05</span>
+            <h3>闪测 · 答题</h3>
+            <span class="tagline">Tab 2 · 召回闪测（层级 1）</span>
+          </header>
+          <div class="scr-body">
+            <div class="phone-stage">
+              <div class="phone-frame" data-phone-shell data-platform="iphone">
+                <span class="hardware-button silent" aria-hidden="true"></span>
+                <span class="hardware-button volume-up" aria-hidden="true"></span>
+                <span class="hardware-button volume-down" aria-hidden="true"></span>
+                <span class="hardware-button power" aria-hidden="true"></span>
+                <section class="phone-screen">
+                  <main class="phone-content">
+                    <div class="app od-screen">
+                      <header class="drill-top">
+                        <span style="font-size:15px;font-weight:650">闪测</span>
+                        <span class="prog-num" style="margin-left:auto">第 3 / 10 题</span>
+                        <button class="app-icon-btn" style="margin:0;width:36px;height:36px" aria-label="退出闪测"><svg aria-hidden="true"><use href="#i-x" /></svg></button>
+                      </header>
+                      <div class="od-scroll">
+                        <div class="drill-stage" style="min-height:100%">
+                          <p class="drill-intent"><small>无提示 · 限时 5 秒 · 口头作答</small>要推迟一个已排期的需求</p>
+                          <div class="timer">
+                            <span class="dial"><i>5</i></span>
+                            <span class="cap">作答倒计时</span>
+                          </div>
+                          <button class="fw-mic idle" aria-label="按住说话"><svg aria-hidden="true"><use href="#i-mic" /></svg></button>
+                        </div>
+                      </div>
+                      <footer style="padding:6px 16px 14px;display:grid;justify-items:center">
+                        <button class="app-btn quiet">这题卡住了</button>
+                      </footer>
+                    </div>
+                  </main>
+                  <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg viewBox="0 0 18 12"><use href="#i-sig" /></svg><svg viewBox="0 0 18 12"><use href="#i-wifi" /></svg><svg class="battery" viewBox="0 0 27 12"><use href="#i-batt" /></svg></span></div>
+                  <div class="dynamic-island" aria-hidden="true"></div>
+                  <div class="home-indicator" aria-hidden="true"></div>
+                </section>
+              </div>
+            </div>
+            <div class="scr-notes">
+              <div class="note-block">
+                <h4>倒计时语义（V1.2 修订）</h4>
+                <p>5 秒<strong>不是从卡片出现就开始</strong>。准备期 1 秒读题，倒计时不动；作答 5 秒从开始录音起算。
+                <span class="mono">response_ms</span> 的计时起点是准备期结束，与后端 DrillRecord 口径对齐。</p>
+              </div>
+              <div class="note-block">
+                <h4>焦虑控制</h4>
+                <ul>
+                  <li>倒计时是<strong>细环不闪烁</strong>，不放数字跳动的大字。</li>
+                  <li>卡片下方给一个不抢眼的「这题卡住了」：跳过＝记失败并插入本轮尾部，但<strong>由用户主动选择</strong>，比盯着倒计时走完更能降低焦虑。</li>
+                  <li>整页无回合分数、无排名；全屏卡片流一卡一题。</li>
+                </ul>
+              </div>
+              <div class="note-block">
+                <h4>判定等待（1–3 秒）</h4>
+                <p>话音落下 → 卡片 300ms 翻转进入「判定中」背面（细环 ＋「正在听你说的…」，不用百分比）→ 判定返回后展示对照。
+                超过 3 秒未返回：先展示对照与转录，判定标记「待确认」并可稍后刷新，<strong>不阻断后续题目</strong>。</p>
+              </div>
+              <div class="note-block">
+                <h4>时长纪律</h4>
+                <p>一轮 10 题硬性控制在 5 分钟内——这是碎片时间产品。失败卡自动插入本轮尾部，用「这张卡稍后还会再来一次」把调度规则讲给用户听。</p>
+              </div>
+              <div class="note-block">
+                <h4>对应</h4>
+                <p>PRD §六 Tab 2 · E1/E3/E5 · §5.3 提取训练层级 1 · 21_ §4.4。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 屏 06 ---------- -->
+        <section class="scr" id="scr06">
+          <header class="scr-head">
+            <span class="no">屏 06</span>
+            <h3>闪测 · 判定与申诉</h3>
+            <span class="tagline"><span class="pill new">V1.6 新增</span> E2 的界面形态</span>
+          </header>
+          <div class="scr-body">
+            <div class="phone-stage">
+              <div class="phone-frame" data-phone-shell data-platform="iphone">
+                <span class="hardware-button silent" aria-hidden="true"></span>
+                <span class="hardware-button volume-up" aria-hidden="true"></span>
+                <span class="hardware-button volume-down" aria-hidden="true"></span>
+                <span class="hardware-button power" aria-hidden="true"></span>
+                <section class="phone-screen">
+                  <main class="phone-content">
+                    <div class="app od-screen">
+                      <header class="drill-top">
+                        <span style="font-size:15px;font-weight:650">闪测</span>
+                        <span class="prog-num" style="margin-left:auto">第 3 / 10 题</span>
+                        <button class="app-icon-btn" style="margin:0;width:36px;height:36px" aria-label="退出闪测"><svg aria-hidden="true"><use href="#i-x" /></svg></button>
+                      </header>
+                      <div class="od-scroll app-scroll">
+                        <div class="od-stack" style="--od-gap:13px">
+                          <p style="font-size:13px;color:var(--fw-text-2)">要推迟一个已排期的需求</p>
+
+                          <div class="verdict">
+                            <div class="verdict-head">
+                              <span class="lamp learning"><span class="dot"></span>判定：待改进</span>
+                            </div>
+                            <div class="asr-line">
+                              <span class="k">我说的 · 识别文本</span>
+                              <span class="v">We need to, uh, push the, the launch later.</span>
+                            </div>
+                            <div class="asr-line">
+                              <span class="k">标准话术块</span>
+                              <span class="v" style="color:var(--fw-accent);font-weight:650">Let's push the launch to next sprint.</span>
+                            </div>
+                            <p>判定理由：缺少「推到哪个时间点」的信息，语义不等价。</p>
+                          </div>
+
+                          <div class="appeal">
+                            <button class="app-btn ghost">我说的是对的</button>
+                            <span>识别错了？申诉会回流标定 ASR</span>
+                          </div>
+                        </div>
+                      </div>
+                      <footer style="padding:10px 16px 14px;display:grid;gap:9px">
+                        <button class="app-btn primary block">下一题</button>
+                        <p class="hint">这张卡稍后还会再来一次</p>
+                      </footer>
+                    </div>
+                  </main>
+                  <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg viewBox="0 0 18 12"><use href="#i-sig" /></svg><svg viewBox="0 0 18 12"><use href="#i-wifi" /></svg><svg class="battery" viewBox="0 0 27 12"><use href="#i-batt" /></svg></span></div>
+                  <div class="dynamic-island" aria-hidden="true"></div>
+                  <div class="home-indicator" aria-hidden="true"></div>
+                </section>
+              </div>
+            </div>
+            <div class="scr-notes">
+              <div class="note-block">
+                <h4>为什么这一屏必须存在</h4>
+                <p>闪测作答是几秒的<strong>短语音</strong>，ASR 错误率天然高于长句。转错 → LLM 判「语义不等价」→ 判定失败。
+                对「主动召回」训练的打击是毁灭性的——用户会开始怀疑整个系统。所以<strong>判定前必须让用户看见系统到底听成了什么</strong>。</p>
+              </div>
+              <div class="note-block">
+                <h4>三个必须同时存在的元素</h4>
+                <ul>
+                  <li><b>识别文本置顶展示</b>：先给「我说的」，再给判定结果。顺序不能反——先看到结果会让人直接进入防御。</li>
+                  <li><b>一键申诉</b>：「我说的是对的」，紧跟在识别文本下面，不需要翻页或长按。</li>
+                  <li><b>一句话理由</b>：二值结果 ＋ 一句解释（E2 原文要求），让失败可归因而不是一记闷棍。</li>
+                </ul>
+              </div>
+              <div class="note-block">
+                <h4>判定纪律</h4>
+                <ul>
+                  <li>语义等价判定，<strong>允许不同但地道的答法</strong>——不要求逐字一致。</li>
+                  <li>失败用<strong>黄不用红</strong>；状态灯同时带形态差异（◐ / ●），不单靠颜色。</li>
+                  <li>申诉数据回流用于标定 ASR，同时是 §14.3 的行为数据资产。</li>
+                </ul>
+              </div>
+              <div class="note-block">
+                <h4>发音分的位置（V1.1）</h4>
+                <p>I3 上线后此处出现两个独立维度：语义判定（成功 / 失败）＋ 发音评分（<strong>仅提示，不影响调度结果</strong>），避免发音焦虑干扰提取训练目标。</p>
+              </div>
+              <div class="note-block">
+                <h4>对应</h4>
+                <p>PRD E2（P0）· §十二「闪测误判」风险对策 · §14.3 行为数据资产。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 屏 07 ---------- -->
+        <section class="scr" id="scr07">
+          <header class="scr-head">
+            <span class="no">屏 07</span>
+            <h3>闪测 · 结算</h3>
+            <span class="tagline">E4 · 间隔重复的可视化就是这个产品的「经验条」</span>
+          </header>
+          <div class="scr-body">
+            <div class="phone-stage">
+              <div class="phone-frame" data-phone-shell data-platform="iphone">
+                <span class="hardware-button silent" aria-hidden="true"></span>
+                <span class="hardware-button volume-up" aria-hidden="true"></span>
+                <span class="hardware-button volume-down" aria-hidden="true"></span>
+                <span class="hardware-button power" aria-hidden="true"></span>
+                <section class="phone-screen">
+                  <main class="phone-content">
+                    <div class="app od-screen">
+                      <header class="app-bar">
+                        <h1>本轮完成</h1>
+                        <button class="app-icon-btn" style="margin-left:auto" aria-label="关闭结算"><svg aria-hidden="true"><use href="#i-x" /></svg></button>
+                      </header>
+                      <div class="od-scroll app-scroll">
+                        <div class="od-stack" style="--od-gap:16px">
+
+                          <div style="display:grid;justify-items:center;gap:11px;padding:10px 0 4px">
+                            <span style="width:120px;height:120px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(var(--fw-success) 0 80%, rgba(232,237,239,.12) 80% 100%)" role="img" aria-label="本轮正确率 8 / 10">
+                              <i style="font-style:normal;width:98px;height:98px;border-radius:50%;background:var(--fw-bg);display:grid;place-items:center;font-size:27px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.035em">8/10</i>
+                            </span>
+                            <p style="font-size:13px;color:var(--fw-text-2)">本轮 10 题 · 用时 4 分 21 秒</p>
+                          </div>
+
+                          <div class="app-card" style="border:1px solid rgba(106,158,126,.38)">
+                            <div class="od-row" style="--od-gap:10px">
+                              <span class="lamp done"><span class="dot"></span></span>
+                              <span class="od-fill">
+                                <span class="hist-t" style="font-size:15px">已自动化 +1</span>
+                                <span class="hist-m">「需要推迟某个话题时说」已进入 7 天间隔</span>
+                              </span>
+                            </div>
+                          </div>
+
+                          <div class="od-row" style="--od-gap:10px">
+                            <div class="app-card od-fill" style="padding:14px">
+                              <span class="hist-t" style="font-size:20px;font-variant-numeric:tabular-nums">6 天</span>
+                              <span class="hist-m">连续练习</span>
+                            </div>
+                            <div class="app-card od-fill" style="padding:14px">
+                              <span class="hist-t" style="font-size:20px;font-variant-numeric:tabular-nums">2 张</span>
+                              <span class="hist-m">待复习</span>
+                            </div>
+                          </div>
+
+                          <div class="app-card tight">
+                            <p class="mini-sub">2 张卡没答对，<strong style="color:var(--fw-text)">稍后还会再来一次</strong>——它们会在你快忘记的时候出现。</p>
+                          </div>
+
+                        </div>
+                      </div>
+                      <footer style="padding:10px 16px 12px;display:grid;gap:9px">
+                        <button class="app-btn primary block">明天再来一轮</button>
+                        <button class="app-btn quiet block" style="min-height:36px">返回工作台</button>
+                      </footer>
+                    </div>
+                  </main>
+                  <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg viewBox="0 0 18 12"><use href="#i-sig" /></svg><svg viewBox="0 0 18 12"><use href="#i-wifi" /></svg><svg class="battery" viewBox="0 0 27 12"><use href="#i-batt" /></svg></span></div>
+                  <div class="dynamic-island" aria-hidden="true"></div>
+                  <div class="home-indicator" aria-hidden="true"></div>
+                </section>
+              </div>
+            </div>
+            <div class="scr-notes">
+              <div class="note-block">
+                <h4>结算页承载四件事</h4>
+                <dl>
+                  <div><dt>成功率环图</dt><dd>本轮客观结果，用成功绿而不是「分数」的语感</dd></div>
+                  <div><dt>已自动化 +N</dt><dd>带高亮动画——这是用户真正在追的东西</dd></div>
+                  <div><dt>连续天数</dt><dd>习惯信号，纯自我参照</dd></div>
+                  <div><dt>不做排行榜</dt><dd>职场用户需要确定性进步，不是攀比</dd></div>
+                </dl>
+              </div>
+              <div class="note-block">
+                <h4>把调度规则讲给用户听</h4>
+                <p>失败卡自动插入本轮尾部（E3 的调度规则），但调度算法对用户是不可见的。结算页用一句<strong>「稍后还会再来一次——它们会在你快忘记的时候出现」</strong>
+                把间隔重复翻译成人的语言：用户不需要看懂算法，只需要感到<strong>它在推进</strong>。</p>
+              </div>
+              <div class="note-block">
+                <h4>时长纪律</h4>
+                <p>单轮 10 题硬性控制在 5 分钟内——上图用时 4 分 21 秒即为该约束下的典型值。这是碎片时间产品，
+                结算页文案强化「明天再来」，而不是鼓励一次练很久。</p>
+              </div>
+              <div class="note-block">
+                <h4>一条待评审的文案方向</h4>
+                <p>23_ §4.2 建议把核心文案从「本轮成功率 80%」换成具体的东西——例如「『降级』这个词，你已经能脱口而出了」，
+                理由是把抽象进度翻译成用户明天开会能用的具体表达。方向与 PRD §三「练为实战服务」一致，但<strong>尚未通过评审</strong>，
+                本文按 21_ 既定形态出稿，此处只挂账。</p>
+              </div>
+              <div class="note-block">
+                <h4>对应</h4>
+                <p>PRD §六 Tab 2 · E4 · §5.3 调度规则 · 21_ §4.4 结算页。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 屏 07 ---------- -->
+        <section class="scr" id="scr08">
+          <header class="scr-head">
+            <span class="no">屏 08</span>
+            <h3>语料库</h3>
+            <span class="tagline">Tab 3 · 长期资产的安放处</span>
+          </header>
+          <div class="scr-body">
+            <div class="phone-stage">
+              <div class="phone-frame" data-phone-shell data-platform="iphone">
+                <span class="hardware-button silent" aria-hidden="true"></span>
+                <span class="hardware-button volume-up" aria-hidden="true"></span>
+                <span class="hardware-button volume-down" aria-hidden="true"></span>
+                <span class="hardware-button power" aria-hidden="true"></span>
+                <section class="phone-screen">
+                  <main class="phone-content">
+                    <div class="app od-screen">
+                      <header class="app-bar">
+                        <h1>语料库</h1>
+                        <span class="bar-meta">24 个话术块</span>
+                      </header>
+                      <div class="od-scroll app-scroll">
+                        <div class="od-stack" style="--od-gap:13px">
+                          <div class="search-row">
+                            <svg aria-hidden="true"><use href="#i-search" /></svg>
+                            <input type="search" placeholder="搜索意图或英文" aria-label="搜索话术块" />
+                          </div>
+
+                          <div class="od-stack" style="--od-gap:7px">
+                            <span style="font-size:11px;letter-spacing:.05em;color:var(--fw-text-2)">场景</span>
+                            <div class="od-rail" style="--od-rail-pad:0;--od-gap:7px">
+                              <button class="app-chip" aria-pressed="true">Standup</button>
+                              <button class="app-chip">Design Review</button>
+                              <button class="app-chip">1:1</button>
+                              <button class="app-chip">面试</button>
+                            </div>
+                            <span style="font-size:11px;letter-spacing:.05em;color:var(--fw-text-2);margin-top:5px">功能</span>
+                            <div class="od-rail" style="--od-rail-pad:0;--od-gap:7px">
+                              <button class="app-chip" aria-pressed="true">表达反对</button>
+                              <button class="app-chip">请求澄清</button>
+                              <button class="app-chip">汇报进度</button>
+                              <button class="app-chip">推迟排期</button>
+                            </div>
+                          </div>
+
+                          <div class="pb-card">
+                            <div class="pb-head"><span class="pb-intent">需要推迟某个话题时说</span><span class="lamp done"><span class="dot"></span>已自动化</span></div>
+                            <span class="pb-en">Let's push the launch to next sprint.</span>
+                            <p class="pb-use">开会用上过 3 次</p>
+                            <p class="pb-anchor">你当时说：We need to, uh, do it later.</p>
+                          </div>
+
+                          <div class="pb-card">
+                            <div class="pb-head"><span class="pb-intent">表达「这块我来兜底」时</span><span class="lamp learning"><span class="dot"></span>训练中</span></div>
+                            <span class="pb-en">I'll take ownership of that piece.</span>
+                            <button class="app-btn quiet" style="justify-self:start;min-height:22px;padding:0;gap:4px;font-size:11.5px">对比锚点<svg style="width:13px;height:13px" aria-hidden="true"><use href="#i-chev-d" /></svg></button>
+                          </div>
+
+                          <div class="pb-card">
+                            <div class="pb-head"><span class="pb-intent">需要同步风险时</span><span class="lamp new"><span class="dot"></span>新入库</span></div>
+                            <span class="pb-en">There's a risk we might slip here.</span>
+                            <button class="app-btn quiet" style="justify-self:start;min-height:22px;padding:0;gap:4px;font-size:11.5px">对比锚点<svg style="width:13px;height:13px" aria-hidden="true"><use href="#i-chev-d" /></svg></button>
+                          </div>
+                        </div>
+                      </div>
+                      <footer class="app-tabbar">
+                        <button class="app-tab"><svg aria-hidden="true"><use href="#i-home" /></svg>工作台</button>
+                        <button class="app-tab"><svg aria-hidden="true"><use href="#i-drill" /></svg>闪测</button>
+                        <button class="app-tab" aria-current="page"><svg aria-hidden="true"><use href="#i-library" /></svg>语料库</button>
+                      </footer>
+                    </div>
+                  </main>
+                  <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg viewBox="0 0 18 12"><use href="#i-sig" /></svg><svg viewBox="0 0 18 12"><use href="#i-wifi" /></svg><svg class="battery" viewBox="0 0 27 12"><use href="#i-batt" /></svg></span></div>
+                  <div class="dynamic-island" aria-hidden="true"></div>
+                  <div class="home-indicator" aria-hidden="true"></div>
+                </section>
+              </div>
+            </div>
+            <div class="scr-notes">
+              <div class="note-block">
+                <h4>三段式卡片 ＋ 状态灯</h4>
+                <p>中文意图（顶部加粗）/ 英文块（强调色，可点按播放发音）/ 对比锚点（可折叠）。右上角状态灯三态：
+                <strong>新入库（灰 ○）/ 训练中（黄 ◐）/ 已自动化（绿 ●）</strong>。锚点首次展示默认展开，之后折叠。</p>
+              </div>
+              <div class="note-block">
+                <h4>进步证据</h4>
+                <p>已自动化的块在卡片上显示「开会用上过 N 次」（<span class="mono">real_use_count</span>）——这是「练了真能用上」的最强证据，
+                也是 PRD §14.3 里那个不可复制的数据飞轮在界面上的唯一露出。</p>
+              </div>
+              <div class="note-block">
+                <h4>筛选与检索</h4>
+                <ul>
+                  <li>场景 / 功能双维度筛选 ＋ 关键词搜索（F1）。</li>
+                  <li>收藏与置顶筛选（F3）；列表项右滑快捷操作。</li>
+                  <li>单条删除；删素材可级联删除衍生话术块（F4）。</li>
+                </ul>
+              </div>
+              <div class="note-block">
+                <h4>空态（首次进入）</h4>
+                <p>不做手绘插画。用状态灯的三个形态（○ ◐ ●）纵向排成一条进度轴，配文案「完成第一次对话练习，这里就会长出你的第一批表达」＋ 主按钮「去练习」——
+                图形本身就在说明这个页面接下来会发生什么。</p>
+              </div>
+              <div class="note-block">
+                <h4>对应</h4>
+                <p>PRD §六 Tab 3 · F1–F4 · §14.3 维度二「个人资产」· 21_ §4.5。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 屏 08 ---------- -->
+        <section class="scr" id="scr09">
+          <header class="scr-head">
+            <span class="no">屏 09</span>
+            <h3>每日一读</h3>
+            <span class="tagline">C5 · 内容从用户素材与语料衍生</span>
+          </header>
+          <div class="scr-body">
+            <div class="phone-stage">
+              <div class="phone-frame" data-phone-shell data-platform="iphone">
+                <span class="hardware-button silent" aria-hidden="true"></span>
+                <span class="hardware-button volume-up" aria-hidden="true"></span>
+                <span class="hardware-button volume-down" aria-hidden="true"></span>
+                <span class="hardware-button power" aria-hidden="true"></span>
+                <section class="phone-screen">
+                  <main class="phone-content">
+                    <div class="app od-screen">
+                      <header class="app-bar">
+                        <button class="app-icon-btn" style="margin:0" aria-label="返回工作台"><svg aria-hidden="true"><use href="#i-chev-l" /></svg></button>
+                        <h1>每日一读</h1>
+                        <span class="bar-meta">9月26日</span>
+                      </header>
+                      <div class="od-scroll app-scroll">
+                        <div class="od-stack" style="--od-gap:14px">
+                          <div class="od-stack" style="--od-gap:6px">
+                            <h2 style="font-size:19px;font-weight:700;line-height:1.34;letter-spacing:-.02em">一段可以直接用的 standup 汇报</h2>
+                            <p class="mini-sub">约 1 分钟 · 由你的「限流方案评审」素材生成</p>
+                          </div>
+
+                          <div class="read-body">
+                            <p>Morning everyone. Quick update on the rate-limit work — I finished the design and got it reviewed yesterday.</p>
+                            <p>The <span class="gloss">main risk</span> right now is the cache eviction policy: if we ship it as-is, we might see a spike in p99 latency during peak hours.</p>
+                            <p>My plan is to wrap up the caching work next week, then <span class="gloss">align on the timeline</span> with the platform team before we cut the release.</p>
+                          </div>
+
+                          <p class="read-note">点按带下划线的短语看中文注释</p>
+
+                          <div class="od-stack" style="--od-gap:8px">
+                            <div class="mini-head"><h2>跟读模式</h2><time>第 1 / 3 句</time></div>
+                            <div class="cmp-col"><h5>跟读这句</h5><p>Morning everyone. Quick update on the rate-limit work —</p></div>
+                            <div class="od-row" style="--od-gap:8px">
+                              <span style="font-size:11.5px;color:var(--fw-text-2)">自己听着</span>
+                              <button class="app-chip" aria-pressed="true">听得出</button>
+                              <button class="app-chip">含糊</button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <footer class="player">
+                        <div class="od-row" style="--od-gap:12px">
+                          <button class="app-btn primary" style="width:44px;height:44px;padding:0;border-radius:50%" aria-label="播放文章朗读"><svg aria-hidden="true"><use href="#i-play" /></svg></button>
+                          <div class="od-fill">
+                            <div class="prog" role="img" aria-label="播放进度 34%"><i style="width:34%"></i></div>
+                            <p style="font-size:11px;color:var(--fw-text-2);margin-top:6px">00:21 / 01:02</p>
+                          </div>
+                        </div>
+                        <div class="speed">
+                          <span style="font-size:11.5px;color:var(--fw-text-2)">语速</span>
+                          <button aria-pressed="true">0.8x</button>
+                          <button>1.0x</button>
+                          <button>1.2x</button>
+                        </div>
+                      </footer>
+                    </div>
+                  </main>
+                  <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg viewBox="0 0 18 12"><use href="#i-sig" /></svg><svg viewBox="0 0 18 12"><use href="#i-wifi" /></svg><svg class="battery" viewBox="0 0 27 12"><use href="#i-batt" /></svg></span></div>
+                  <div class="dynamic-island" aria-hidden="true"></div>
+                  <div class="home-indicator" aria-hidden="true"></div>
+                </section>
+              </div>
+            </div>
+            <div class="scr-notes">
+              <div class="note-block">
+                <h4>内容来源纪律</h4>
+                <p>每天生成 150–250 词英文短文，<strong>内容从用户素材与语料衍生</strong>，不是通用教材。语料不足时用预置内容兜底。
+                长难句可点按看中文注释；英文为主，术语保留原文。</p>
+              </div>
+              <div class="note-block">
+                <h4>MVP 期不出分的替代反馈</h4>
+                <p>发音评测后置到 V1.1，但「不出分」不等于「没反馈」。MVP 用两件事回答「不出分时跟读的意义是什么」：</p>
+                <ul>
+                  <li><b>句级自评</b>：「听得出 / 含糊」二选一，记录不计分。</li>
+                  <li><b>波形对照播放</b>：自己的录音与示范音并排听。</li>
+                </ul>
+                <p style="margin-top:8px">逐句即时评分随发音评测 V1.1 上线（I2）。</p>
+              </div>
+              <div class="note-block">
+                <h4>播放与语速</h4>
+                <ul>
+                  <li>AI 朗读支持 0.8x / 1.0x / 1.2x，与设置页的 AI 语速同源。</li>
+                  <li>支持后台播放；锁屏不中断。</li>
+                  <li>历史归档按日期分组，免费用户见近 7 天，Pro 全量（V1.1 商业化后生效）。</li>
+                </ul>
+              </div>
+              <div class="note-block">
+                <h4>对应</h4>
+                <p>PRD §六 每日一读页 · C5 · 模块 I 的 V1.1 边界 · 21_ §4.6。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 屏 09 ---------- -->
+        <section class="scr" id="scr10">
+          <header class="scr-head">
+            <span class="no">屏 10</span>
+            <h3>话题建议</h3>
+            <span class="tagline">模块 H · 从「练」到「用」的桥</span>
+          </header>
+          <div class="scr-body">
+            <div class="phone-stage">
+              <div class="phone-frame" data-phone-shell data-platform="iphone">
+                <span class="hardware-button silent" aria-hidden="true"></span>
+                <span class="hardware-button volume-up" aria-hidden="true"></span>
+                <span class="hardware-button volume-down" aria-hidden="true"></span>
+                <span class="hardware-button power" aria-hidden="true"></span>
+                <section class="phone-screen">
+                  <main class="phone-content">
+                    <div class="app od-screen">
+                      <header class="app-bar">
+                        <button class="app-icon-btn" style="margin:0" aria-label="返回工作台"><svg aria-hidden="true"><use href="#i-chev-l" /></svg></button>
+                        <h1>话题建议</h1>
+                      </header>
+                      <div class="od-scroll app-scroll">
+                        <p class="mini-sub" style="margin-bottom:13px">基于你已练的 24 个话术块生成 · 每周更新</p>
+                        <div class="od-stack" style="--od-gap:12px">
+
+                          <div class="app-card topic-card">
+                            <h3>向下周的 standup 同步缓存方案进展</h3>
+                            <p class="topic-src"><svg aria-hidden="true"><use href="#i-flag" /></svg>来源：你在 9/24 练过这个方向</p>
+                            <ul class="topic-list">
+                              <li><span class="lamp done"><span class="dot"></span></span><span>I'll get the caching work <span class="en">wrapped up</span> next week.</span></li>
+                              <li><span class="lamp done"><span class="dot"></span></span><span>There's a <span class="en">risk we might slip</span> here.</span></li>
+                              <li><span class="lamp learning"><span class="dot"></span></span><span>Let's <span class="en">align on the timeline</span> before Friday.</span></li>
+                            </ul>
+                            <div class="opener">
+                              <p>“Quick update on the caching work —”</p>
+                              <button class="app-icon-btn" aria-label="播放开场句"><svg aria-hidden="true"><use href="#i-play" /></svg></button>
+                            </div>
+                            <button class="app-btn ghost block" style="min-height:40px;font-size:13.5px">已和真人聊过</button>
+                          </div>
+
+                          <div class="app-card topic-card">
+                            <h3>向平台团队请求排期对齐</h3>
+                            <p class="topic-src"><svg aria-hidden="true"><use href="#i-flag" /></svg>来源：你在 9/25 练过这个方向</p>
+                            <ul class="topic-list">
+                              <li><span class="lamp done"><span class="dot"></span></span><span>Can we <span class="en">align on the timeline</span>?</span></li>
+                              <li><span class="lamp new"><span class="dot"></span></span><span>I'd like to <span class="en">flag a dependency</span> here.</span></li>
+                            </ul>
+                          </div>
+
+                        </div>
+                      </div>
+                    </div>
+                  </main>
+                  <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg viewBox="0 0 18 12"><use href="#i-sig" /></svg><svg viewBox="0 0 18 12"><use href="#i-wifi" /></svg><svg class="battery" viewBox="0 0 27 12"><use href="#i-batt" /></svg></span></div>
+                  <div class="dynamic-island" aria-hidden="true"></div>
+                  <div class="home-indicator" aria-hidden="true"></div>
+                </section>
+              </div>
+            </div>
+            <div class="scr-notes">
+              <div class="note-block">
+                <h4>为什么它天然「有的聊」</h4>
+                <p>话题所需的话术用户<strong>已经练过</strong>。卡片上列的不是「应该说这些」，而是「你已经会的这几句，正好能用在明天那个会上」——
+                可调用话术块清单按状态排序，已自动化的排前面并带绿色状态灯。</p>
+              </div>
+              <div class="note-block">
+                <h4>贴素材的硬约束</h4>
+                <ul>
+                  <li>仅从<strong>用户素材主题与语料场景标签</strong>派生，禁止泛话题（H2）。</li>
+                  <li>每张卡<strong>必须标注来源</strong>——「你在 9/24 练过这个方向」。来源不可追溯的话题卡等于通用内容。</li>
+                  <li>语料 ≥20 个话术块才生成，阈值服务端可配。</li>
+                </ul>
+              </div>
+              <div class="note-block">
+                <h4>实战闭环</h4>
+                <p>「已和真人聊过」打卡 ＋ 可选自评顺畅度（三档），数据回流验证实战转化率（H3）。
+                典型会议时段前推送当日话题（H4），可单独关闭。</p>
+                <p style="margin-top:8px"><strong>终点的方向性：</strong>这个页面的目的是把用户推出去和真人说话，不是把用户锁在 App 里。所以它只有打卡，没有停留设计。</p>
+              </div>
+              <div class="note-block">
+                <h4>对应</h4>
+                <p>PRD §7.8 模块 H · H1–H4 · §14.3 维度五「封闭练习 vs 真人落地」· 21_ §4.7。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 屏 10 ---------- -->
+        <section class="scr" id="scr11">
+          <header class="scr-head">
+            <span class="no">屏 11</span>
+            <h3>创建练习弹层</h3>
+            <span class="tagline"><span class="pill new">V1.6 新增</span> 迷你会话时长选择</span>
+          </header>
+          <div class="scr-body">
+            <div class="phone-stage">
+              <div class="phone-frame" data-phone-shell data-platform="iphone">
+                <span class="hardware-button silent" aria-hidden="true"></span>
+                <span class="hardware-button volume-up" aria-hidden="true"></span>
+                <span class="hardware-button volume-down" aria-hidden="true"></span>
+                <span class="hardware-button power" aria-hidden="true"></span>
+                <section class="phone-screen">
+                  <main class="phone-content" aria-hidden="true">
+                    <div class="app od-screen">
+                      <header class="app-bar">
+                        <div class="od-fill">
+                          <h1>早上好</h1>
+                          <p style="font-size:12.5px;color:var(--fw-text-2)">准备今天的 standup 了吗</p>
+                        </div>
+                        <div class="stat-ring"><span class="ring"><i>2/3</i></span><span class="cap">本周</span></div>
+                      </header>
+                      <div class="od-scroll app-scroll">
+                        <div class="od-stack" style="--od-gap:12px">
+                          <div class="entry-card">
+                            <p class="ec-lead">上次你练了限流方案的讨论，今天继续？</p>
+                            <p class="ec-sub">约 4 分钟 · 标准会话 · Daily Standup</p>
+                            <div class="od-row" style="--od-gap:10px">
+                              <button class="app-btn primary od-fill">开始新练习</button>
+                              <button class="app-btn ghost od-fill">继续上次</button>
+                            </div>
+                          </div>
+                          <div class="app-card">
+                            <div class="mini-head"><h2>每日一读</h2><time>约 1 分钟</time></div>
+                            <p class="mini-sub od-clamp-2">一段可以直接用的 standup 汇报：把限流方案的进展和下一步讲清楚。</p>
+                          </div>
+                        </div>
+                      </div>
+                      <footer class="app-tabbar">
+                        <button class="app-tab" aria-current="page"><svg aria-hidden="true"><use href="#i-home" /></svg>工作台</button>
+                        <button class="app-tab"><svg aria-hidden="true"><use href="#i-drill" /></svg>闪测</button>
+                        <button class="app-tab"><svg aria-hidden="true"><use href="#i-library" /></svg>语料库</button>
+                      </footer>
+                    </div>
+                  </main>
+                  <div class="phone-overlay">
+                    <div class="scrim"></div>
+                    <div class="sheet" role="dialog" aria-modal="true" aria-label="开始新练习">
+                      <span class="sheet-handle" aria-hidden="true"></span>
+                      <div class="sheet-body">
+                        <h2>开始新练习</h2>
+
+                        <div class="seg" role="tablist" aria-label="创建方式">
+                          <button role="tab" aria-selected="true" aria-pressed="true">一句话描述</button>
+                          <button role="tab" aria-selected="false">粘贴素材</button>
+                          <button role="tab" aria-selected="false">预置场景</button>
+                        </div>
+
+                        <div class="field">
+                          <label for="scene">今天想练什么？</label>
+                          <textarea id="scene" placeholder="例如：跟美国同事同步缓存方案的进展和风险"></textarea>
+                          <span class="hintline"><svg aria-hidden="true"><use href="#i-shield" /></svg>素材仅用于生成练习，不用于训练</span>
+                        </div>
+
+                        <div class="field">
+                          <label id="len-label">会话时长</label>
+                          <div class="seg" role="radiogroup" aria-labelledby="len-label">
+                            <button role="radio" aria-checked="false" aria-pressed="false">标准<small>8–12 回合 · 约 15 分钟</small></button>
+                            <button role="radio" aria-checked="true" aria-pressed="true">迷你<small>3–5 回合 · 约 2 分钟</small></button>
+                          </div>
+                        </div>
+
+                        <button class="app-btn primary block">开始练习</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg viewBox="0 0 18 12"><use href="#i-sig" /></svg><svg viewBox="0 0 18 12"><use href="#i-wifi" /></svg><svg class="battery" viewBox="0 0 27 12"><use href="#i-batt" /></svg></span></div>
+                  <div class="dynamic-island" aria-hidden="true"></div>
+                  <div class="home-indicator" aria-hidden="true"></div>
+                </section>
+              </div>
+            </div>
+            <div class="scr-notes">
+              <div class="note-block">
+                <h4>默认入口（A2）</h4>
+                <p>弹层默认停在<strong>「一句话描述」</strong>——冷启动摩擦最低的路径。≥10 字即可开始，AI 补全场景设定（≤1 秒，不阻塞）。
+                「粘贴素材」上限 2000 字；「预置场景」MVP 仅 Daily Standup 作为冷启动兜底。</p>
+              </div>
+              <div class="note-block">
+                <h4>会话时长（V1.6 变更）</h4>
+                <p>新增标准 / 迷你二选一。<strong>迷你会话是北极星口径的一部分</strong>，不是「简化版」：目标用户碎片时间多、整块时间少，
+                而 8–12 回合的标准会话加上回顾与入库约 15 分钟——若只认标准会话，北极星会被<strong>排期</strong>结构性压低，届时分不清是「产品没价值」还是「流水线太重」。</p>
+                <p style="margin-top:8px">所以两个选项<strong>并列呈现、不做视觉降级</strong>，迷你同样标注清楚回合数与时长，让用户自己按今天有多少时间选。</p>
+              </div>
+              <div class="note-block">
+                <h4>隐私（A4）</h4>
+                <ul>
+                  <li>输入框常驻隐私声明，不是折叠在角落的一次性弹窗。</li>
+                  <li>设置页提供「删除我的全部素材」，二次确认后即时生效，级联删除衍生话术块。</li>
+                  <li>素材与录音仅用于生成练习、不用于训练。</li>
+                </ul>
+              </div>
+              <div class="note-block">
+                <h4>对应</h4>
+                <p>PRD §六 创建练习（弹层）· A1–A5 · B1 迷你会话 · §三 北极星口径补充。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 屏 11 ---------- -->
+        <section class="scr" id="scr12">
+          <header class="scr-head">
+            <span class="no">屏 12</span>
+            <h3>设置</h3>
+            <span class="tagline"><span class="pill new">V1.6 新增</span> AI 语速 0.8x / 1.0x</span>
+          </header>
+          <div class="scr-body">
+            <div class="phone-stage">
+              <div class="phone-frame" data-phone-shell data-platform="iphone">
+                <span class="hardware-button silent" aria-hidden="true"></span>
+                <span class="hardware-button volume-up" aria-hidden="true"></span>
+                <span class="hardware-button volume-down" aria-hidden="true"></span>
+                <span class="hardware-button power" aria-hidden="true"></span>
+                <section class="phone-screen">
+                  <main class="phone-content">
+                    <div class="app od-screen">
+                      <header class="app-bar">
+                        <button class="app-icon-btn" style="margin:0" aria-label="返回工作台"><svg aria-hidden="true"><use href="#i-chev-l" /></svg></button>
+                        <h1>设置</h1>
+                      </header>
+                      <div class="od-scroll app-scroll">
+
+                        <div class="set-group" style="margin-top:0">
+                          <h3>账号</h3>
+                          <div class="set-row">
+                            <span class="sr-ico"><svg aria-hidden="true"><use href="#i-talk" /></svg></span>
+                            <span class="sr-body"><b>手机号</b><span>138****8888 · 已绑定</span></span>
+                            <span class="sr-tail">换绑</span>
+                          </div>
+                        </div>
+
+                        <div class="set-group">
+                          <h3>语音偏好</h3>
+                          <div class="set-row">
+                            <span class="sr-ico"><svg aria-hidden="true"><use href="#i-wave" /></svg></span>
+                            <span class="sr-body"><b>AI 语速</b><span>听不懂往往不是词汇问题，是语速问题</span></span>
+                            <span class="sr-tail">
+                              <span class="seg" role="radiogroup" aria-label="AI 语速">
+                                <button role="radio" aria-checked="true" aria-pressed="true">0.8x</button>
+                                <button role="radio" aria-checked="false" aria-pressed="false">1.0x</button>
+                              </span>
+                            </span>
+                          </div>
+                          <div class="set-row">
+                            <span class="sr-ico"><svg aria-hidden="true"><use href="#i-mic" /></svg></span>
+                            <span class="sr-body"><b>音色</b><span>默认音色（其余音色随 V1.1）</span></span>
+                            <span class="sr-tail">›</span>
+                          </div>
+                          <div class="set-row">
+                            <span class="sr-ico"><svg aria-hidden="true"><use href="#i-info" /></svg></span>
+                            <span class="sr-body"><b>状态提示音</b><span>处理中、断线与降级时的轻提示音</span></span>
+                            <button class="sw" role="switch" aria-checked="true" aria-label="状态提示音"></button>
+                          </div>
+                        </div>
+
+                        <div class="set-group">
+                          <h3>通知</h3>
+                          <div class="set-row">
+                            <span class="sr-body"><b>闪测复习提醒</b></span>
+                            <button class="sw" role="switch" aria-checked="true" aria-label="闪测复习提醒"></button>
+                          </div>
+                          <div class="set-row">
+                            <span class="sr-body"><b>每日一读更新</b></span>
+                            <button class="sw" role="switch" aria-checked="true" aria-label="每日一读更新"></button>
+                          </div>
+                          <div class="set-row">
+                            <span class="sr-body"><b>话题建议提醒</b><span>典型会议时段前推送当日话题</span></span>
+                            <button class="sw" role="switch" aria-checked="false" aria-label="话题建议提醒"></button>
+                          </div>
+                        </div>
+
+                        <div class="set-group">
+                          <h3>隐私与数据</h3>
+                          <div class="set-row">
+                            <span class="sr-ico"><svg aria-hidden="true"><use href="#i-shield" /></svg></span>
+                            <span class="sr-body"><b>数据用途说明</b><span>素材与录音不用于训练</span></span>
+                            <span class="sr-tail">›</span>
+                          </div>
+                          <div class="set-row">
+                            <span class="sr-ico"><svg aria-hidden="true"><use href="#i-trash" /></svg></span>
+                            <span class="sr-body"><b style="color:var(--fw-improve)">删除我的全部素材</b><span>二次确认后即时生效，并级联删除衍生话术块</span></span>
+                          </div>
+                        </div>
+
+                      </div>
+                    </div>
+                  </main>
+                  <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg viewBox="0 0 18 12"><use href="#i-sig" /></svg><svg viewBox="0 0 18 12"><use href="#i-wifi" /></svg><svg class="battery" viewBox="0 0 27 12"><use href="#i-batt" /></svg></span></div>
+                  <div class="dynamic-island" aria-hidden="true"></div>
+                  <div class="home-indicator" aria-hidden="true"></div>
+                </section>
+              </div>
+            </div>
+            <div class="scr-notes">
+              <div class="note-block">
+                <h4>AI 语速为什么是 P0（G2，V1.6）</h4>
+                <p>语速是<strong>可懂度开关</strong>，不是舒适度选项。目标用户「读写过关、听说薄弱」，听不懂往往不是词汇问题而是语速问题——
+                而它只是一个合成参数，成本极低。所以它出现在设置页第一组，与音色同级，而不是埋在「高级设置」里。</p>
+                <p style="margin-top:8px">每日一读播放条的 0.8x / 1.0x / 1.2x 与此处同源；两处都可改，且互相记忆。</p>
+              </div>
+              <div class="note-block">
+                <h4>MVP 期不出现的项目</h4>
+                <ul>
+                  <li><b>订阅管理</b>：MVP 期全免费，设置页不展示订阅入口。随 V1.1 由服务端远程开关放出，无需发版。</li>
+                  <li><b>发音评测开关</b>：随 V1.1 出现。</li>
+                </ul>
+              </div>
+              <div class="note-block">
+                <h4>危险操作的处理</h4>
+                <p>「删除我的全部素材」用待改进色而不是纯红——与全局的色彩纪律一致；二次确认后才执行，确认文案明确写出「衍生的 N 个话术块也会一并删除」，
+                不用模糊措辞掩盖后果。</p>
+              </div>
+              <div class="note-block">
+                <h4>对应</h4>
+                <p>PRD §六 设置页 · G2 · A4 · 21_ §4.8 · 同步提示第 2 条。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 屏 12 ---------- -->
+        <section class="scr" id="scr13">
+          <header class="scr-head">
+            <span class="no">屏 13</span>
+            <h3>订阅页</h3>
+            <span class="tagline"><span class="pill v11">V1.1 后置</span> MVP 期入口隐藏</span>
+          </header>
+          <div class="scr-body">
+            <div class="phone-stage">
+              <div class="phone-frame" data-phone-shell data-platform="iphone">
+                <span class="hardware-button silent" aria-hidden="true"></span>
+                <span class="hardware-button volume-up" aria-hidden="true"></span>
+                <span class="hardware-button volume-down" aria-hidden="true"></span>
+                <span class="hardware-button power" aria-hidden="true"></span>
+                <section class="phone-screen">
+                  <main class="phone-content">
+                    <div class="app od-screen">
+                      <header class="app-bar">
+                        <h1>升级到 Pro</h1>
+                        <button class="app-icon-btn" style="margin-left:auto" aria-label="关闭"><svg aria-hidden="true"><use href="#i-x" /></svg></button>
+                      </header>
+                      <div class="od-scroll app-scroll">
+                        <div class="od-stack" style="--od-gap:14px">
+                          <p style="font-size:17px;font-weight:680;line-height:1.4">让每一次练习都有积累</p>
+
+                          <div class="plan-grid">
+                            <div class="plan">
+                              <h4>免费版</h4>
+                              <p class="price">¥0</p>
+                              <ul>
+                                <li><svg aria-hidden="true"><use href="#i-check" /></svg>场景对话每天 1 次</li>
+                                <li><svg aria-hidden="true"><use href="#i-check" /></svg>完整回顾与三层评价</li>
+                                <li><svg aria-hidden="true"><use href="#i-check" /></svg>话术库上限 50 个</li>
+                                <li class="off"><svg aria-hidden="true"><use href="#i-x" /></svg>单词级发音标注</li>
+                                <li class="off"><svg aria-hidden="true"><use href="#i-x" /></svg>话题建议每周 1 张</li>
+                              </ul>
+                            </div>
+                            <div class="plan pro">
+                              <h4>Pro</h4>
+                              <p class="price">¥--<small>/月</small></p>
+                              <ul>
+                                <li><svg aria-hidden="true"><use href="#i-check" /></svg>场景对话不限次</li>
+                                <li><svg aria-hidden="true"><use href="#i-check" /></svg>单词级发音标注</li>
+                                <li><svg aria-hidden="true"><use href="#i-check" /></svg>话术库不限容量</li>
+                                <li><svg aria-hidden="true"><use href="#i-check" /></svg>话题建议每周 3–5 张</li>
+                                <li><svg aria-hidden="true"><use href="#i-check" /></svg>全量历史保留</li>
+                              </ul>
+                            </div>
+                          </div>
+
+                          <div class="app-card">
+                            <div class="od-row" style="--od-gap:8px">
+                              <b style="font-size:15px">年付</b>
+                              <span class="pill new">省 40%</span>
+                              <span style="margin-left:auto;font-weight:700;font-size:15px" class="od-nowrap">¥-- / 年</span>
+                            </div>
+                            <p class="mini-sub">7 天免费试用，到期自动续订，可随时取消。</p>
+                            <button class="app-btn primary block">开始 7 天免费试用</button>
+                            <button class="app-btn quiet block" style="min-height:36px">恢复购买</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </main>
+                  <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg viewBox="0 0 18 12"><use href="#i-sig" /></svg><svg viewBox="0 0 18 12"><use href="#i-wifi" /></svg><svg class="battery" viewBox="0 0 27 12"><use href="#i-batt" /></svg></span></div>
+                  <div class="dynamic-island" aria-hidden="true"></div>
+                  <div class="home-indicator" aria-hidden="true"></div>
+                </section>
+              </div>
+            </div>
+            <div class="scr-notes">
+              <div class="note-block">
+                <h4>免费版的设计原则</h4>
+                <p><strong>免费版必须能完整跑通一次闭环</strong>（说 → 读 → 入库 → 闪测），让用户先验证核心价值。
+                付费墙卡在「训练强度与资产容量」上，不卡在核心体验上——砍核心体验的免费版会导致用户还没感知价值就流失。</p>
+              </div>
+              <div class="note-block">
+                <h4>转化触点与文案框架</h4>
+                <ul>
+                  <li><b>免费额度用尽</b>：「今天的对话次数已用完」。</li>
+                  <li><b>语料库达上限</b>：「你的话术库已满，升级保留全部积累」——展示已有积累，利用沉没成本。</li>
+                  <li><b>发音评测结果页</b>：整体分可见、单词级标注模糊处理，升级解锁。</li>
+                  <li>不写「限时优惠」等施压话术；续费召回用进步报告（「你已自动化 X 个表达」）而不是折扣。</li>
+                </ul>
+              </div>
+              <div class="note-block">
+                <h4>占位说明</h4>
+                <p>价格显示为 <span class="mono">¥--</span> 占位：PRD §15.3 明确「具体金额立项后调研确定」，此处不编造数字。
+                「省 40%」与权益对比表均直接来自 PRD §15.2 / §15.3。</p>
+              </div>
+              <div class="note-block">
+                <h4>对应</h4>
+                <p>PRD §六 订阅页 · 第十五章 · 21_ §4.8（MVP 期入口隐藏，服务端远程开关）。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 屏 14 ---------- -->
+        <section class="scr" id="scr14">
+          <header class="scr-head">
+            <span class="no">屏 14</span>
+            <h3>回顾页 · 段落层</h3>
+            <span class="tagline"><span class="pill new">V2.1 新增</span> 用户说过一段连续长发言时出现</span>
+          </header>
+          <div class="scr-body">
+            <div class="phone-stage">
+              <div class="phone-frame" data-phone-shell data-platform="iphone">
+                <span class="hardware-button silent" aria-hidden="true"></span>
+                <span class="hardware-button volume-up" aria-hidden="true"></span>
+                <span class="hardware-button volume-down" aria-hidden="true"></span>
+                <span class="hardware-button power" aria-hidden="true"></span>
+                <section class="phone-screen">
+                  <main class="phone-content">
+                    <div class="app od-screen">
+                      <header class="app-bar">
+                        <button class="app-icon-btn" style="margin:0" aria-label="返回工作台"><svg aria-hidden="true"><use href="#i-chev-l" /></svg></button>
+                        <h1>回顾</h1>
+                        <span class="bar-meta">今天</span>
+                      </header>
+                      <div class="od-scroll app-scroll">
+                        <div class="od-stack" style="--od-gap:14px">
+
+                          <div class="sum-bar">
+                            <div><b>7</b><span>分钟</span></div>
+                            <div><b>4</b><span>回合</span></div>
+                            <div><b>+3</b><span>新增话术块</span></div>
+                          </div>
+
+                          <div>
+                            <div class="ev-card collapsed">
+                              <div class="ev-head"><b>目标达成</b><span class="ev-score">3 件事说清了 2 件</span><svg aria-hidden="true"><use href="#i-chev-r" /></svg></div>
+                            </div>
+                            <div class="ev-card collapsed">
+                              <div class="ev-head"><b>问题清单</b><span class="ev-score">2 条</span><svg aria-hidden="true"><use href="#i-chev-r" /></svg></div>
+                            </div>
+                          </div>
+
+                          <div class="od-stack" style="--od-gap:9px">
+                            <div class="mini-head"><h2>这一段整体</h2><time>你的开场陈述 · 3 句</time></div>
+
+                            <div class="para-col">
+                              <span class="para-label">你说的</span>
+                              <p>Yesterday I finished the rate-limit design and got it reviewed. Well, we need to… um, do the cache thing.</p>
+                            </div>
+
+                            <span class="para-arrow" aria-hidden="true"><svg><use href="#i-chev-d" /></svg></span>
+
+                            <div class="para-col up">
+                              <span class="para-label">更地道</span>
+                              <p>Yesterday I finished the rate-limit design and got it reviewed. The main risk is the cache eviction policy — <span class="fix">I'll get the caching work wrapped up</span> next week.</p>
+                            </div>
+
+                            <div class="paracheck">
+                              <span class="k">覆盖 2 / 3</span>
+                              <ul>
+                                <li class="ok"><svg aria-hidden="true"><use href="#i-check" /></svg>完成了什么</li>
+                                <li class="ok"><svg aria-hidden="true"><use href="#i-check" /></svg>主要风险</li>
+                                <li class="miss"><svg aria-hidden="true"><use href="#i-x" /></svg>完成时间</li>
+                              </ul>
+                            </div>
+
+                            <div class="cmp-tools">
+                              <button class="app-btn ghost"><svg aria-hidden="true"><use href="#i-play" /></svg>整段原音</button>
+                              <button class="app-btn ghost"><svg aria-hidden="true"><use href="#i-play" /></svg>整段示范</button>
+                            </div>
+                          </div>
+
+                          <div class="ev-card collapsed">
+                            <div class="ev-head"><b>这一段里的可入库点</b><span class="ev-score">3 个</span><svg aria-hidden="true"><use href="#i-chev-r" /></svg></div>
+                          </div>
+
+                        </div>
+                      </div>
+                      <footer style="padding:10px 16px 12px;border-top:1px solid var(--fw-line);display:grid;gap:9px">
+                        <button class="app-btn ghost block" style="min-height:38px;font-size:13.5px">再来一轮</button>
+                        <button class="app-btn quiet block" style="min-height:34px;font-size:13.5px">完成</button>
+                      </footer>
+                    </div>
+                  </main>
+                  <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg viewBox="0 0 18 12"><use href="#i-sig" /></svg><svg viewBox="0 0 18 12"><use href="#i-wifi" /></svg><svg class="battery" viewBox="0 0 27 12"><use href="#i-batt" /></svg></span></div>
+                  <div class="dynamic-island" aria-hidden="true"></div>
+                  <div class="home-indicator" aria-hidden="true"></div>
+                </section>
+              </div>
+            </div>
+            <div class="scr-notes">
+              <div class="note-block">
+                <h4>触发条件：不是每轮都有</h4>
+                <p>按<strong>用户有没有说过一段连续发言</strong>触发——单次发言 ≥ 3 句才出这一段。一句一答的会话里段落层纯属噪音，
+                不出现，页面与 屏 04 完全一致。所以它是<strong>有条件的一层</strong>，不是回顾页的常驻结构。</p>
+              </div>
+              <div class="note-block">
+                <h4>两层的关系：段落是容器，句子是可带走的块</h4>
+                <dl>
+                  <div><dt>段落层</dt><dd>回答「这段整体怎么样」——整段改写 ＋ 信息点覆盖核对 ＋ 整段播放</dd></div>
+                  <div><dt>句子层</dt><dd>回答「哪几句可以直接带走」——原句对照 ＋ 加入语料库（形态与 屏 04 一字不改）</dd></div>
+                  <div><dt>话术块</dt><dd><strong>只有句子层产出。</strong>D1 仍从句子层提炼三元组，段落层不进炼化候选——北极星闭环不受影响</dd></div>
+                </dl>
+              </div>
+              <div class="note-block">
+                <h4>差异怎么比：分层，不是一套规则打到底</h4>
+                <p>句级 diff 很干净（<span class="mono">cache thing</span> → <span class="mono">wrapped up</span>），因为改动是词的。
+                段落级整段重写会动语序、合并句子，<strong>再按词标红会糊成一片，等于没标</strong>。</p>
+                <p style="margin-top:8px">所以两层各比各的：<strong>段落层不比词，比「信息点有没有覆盖」</strong>（上图「覆盖 2 / 3」，
+                缺的那一项由改写补上）；<strong>词级高亮只留在句子层</strong>。段落层用强调色描边而不是整段变色——三段话全变粗会失去层级。</p>
+              </div>
+              <div class="note-block">
+                <h4>已解决 / 未解决</h4>
+                <ul>
+                  <li><b>已解决</b>：首屏纪律。有段落层时它是视觉焦点（见 屏 04 的重定说明），没有时 21_ 原纪律不变。</li>
+                  <li><b>未解决</b>：「整段听原音」需要一段的起止时间戳。PRD §9.1 的口径归档写明现网是 <strong>Seeduplex 端到端 duplex</strong>，
+                  不是三级级联，中间产物可干预面窄——<strong>段落边界在 duplex 下拿不拿得到，要回实现层确认</strong>，本文不替它假设。</li>
+                  <li><b>未解决</b>：评价服务的返回结构要从平铺的「3–8 条对照」变成「段落 → 段内句」的嵌套，
+                  且段落级改写要保持整段逻辑连贯，<strong>大概率不能再用小模型兜底</strong>——PRD §9.1 的「小模型优先」在这一层会失效。</li>
+                </ul>
+              </div>
+              <div class="note-block">
+                <h4>出形态前值得先验证的一件事</h4>
+                <p>如果用户真正缺的是<strong>怎么组织一段汇报</strong>（结论 → 原因 → 风险 → 下一步），那整段重写未必是最佳形态——
+                它把整段的活都替用户做了，用户只是读了一遍别人的版本。PRD §三 原则 4 的分层（标位置 / 给候选 / 给骨架）在段落层的对应做法，
+                可能更接近 <strong>B8 那种「给骨架让用户填」</strong>，而不是给成品。</p>
+                <p style="margin-top:8px">这一屏是<strong>「给成品」那一版</strong>，先拿真实素材看一眼效果；如果验证下来用户要的是结构而不是措辞，
+                形态要换成骨架，两个答案的界面长得完全不一样。</p>
+              </div>
+              <div class="note-block">
+                <h4>对应</h4>
+                <p>PRD C2/C3（回顾页评价与对照）· §三 原则 4 干预分层 · §9.1 AI 链路口径归档 · 21_ §4.3 · 本文 屏 04。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </section>
+
+      <!-- ===================== 05 ===================== -->
+      <section class="doc-sec" id="s05">
+        <h2><em>05</em>PRD V1.6 变化点</h2>
+        <p class="sec-lede">
+          V1.6 的七项修订里有五项改变了界面形态。21_ 把它们列为自己「需要吸收」的待办——这一节是吸收结果，
+          每一项都落到了具体的屏幕上。
+        </p>
+
+        <div class="v16">
+
+          <article class="card v16-card">
+            <div class="v16-head">
+              <span class="pill new">V1.6 新增</span>
+              <b>B8 卡壳救援</b>
+              <span class="pill p0">P0</span>
+              <span class="ref">→ 屏 03</span>
+            </div>
+            <div class="v16-grid">
+              <div>
+                <h4>问题</h4>
+                <p>PRD §三 的设计原则 4「干预分层」是全文<strong>唯一一条没有任何功能 ID 实现</strong>的原则。
+                原则写得越好，这个缺口越危险：读者会以为它已经做了。</p>
+              </div>
+              <div>
+                <h4>形态</h4>
+                <p>三层梯子<strong>走 TTS</strong>，以普通 AI 气泡出现在时间线上；气泡下方三点指示器显示当前层级；
+                「给我点儿提示」在静默满窗后淡入、用户开口即收起。<strong>不弹卡片、不切页面。</strong></p>
+              </div>
+              <div>
+                <h4>约束与接口</h4>
+                <p>不追问 / 不离开语音流 / 不记入失败。被救援的卡壳点<strong>照常进入 D1 炼化候选</strong>——
+                救援不是补救，是素材来源。</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="card v16-card">
+            <div class="v16-head">
+              <span class="pill new">V1.6 新增</span>
+              <b>G2 AI 语速 0.8x / 1.0x</b>
+              <span class="ref">→ 屏 11</span>
+            </div>
+            <div class="v16-grid">
+              <div>
+                <h4>问题</h4>
+                <p>目标用户「读写过关、听说薄弱」，听不懂往往<strong>不是词汇问题而是语速问题</strong>。</p>
+              </div>
+              <div>
+                <h4>形态</h4>
+                <p>语速是<strong>可懂度开关</strong>而不是舒适度选项，所以它进设置页第一组、与音色同级，
+                不埋在「高级设置」里。每日一读播放条的 0.8x / 1.0x / 1.2x 与此同源。</p>
+              </div>
+              <div>
+                <h4>成本判断</h4>
+                <p>它只是一个合成参数，成本极低——没有理由不做。</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="card v16-card">
+            <div class="v16-head">
+              <span class="pill new">V1.6 新增</span>
+              <b>迷你会话（3–5 回合）</b>
+              <span class="ref">→ 屏 10 · 屏 01</span>
+            </div>
+            <div class="v16-grid">
+              <div>
+                <h4>问题</h4>
+                <p>标准会话加上回顾与入库约 15 分钟，而目标用户<strong>碎片时间多、整块时间少</strong>。
+                只认标准会话，北极星会被<strong>排期</strong>结构性压低——届时分不清是「产品没价值」还是「流水线太重」。</p>
+              </div>
+              <div>
+                <h4>形态</h4>
+                <p>创建弹层增加时长二选一，<strong>两个选项并列、不做视觉降级</strong>，迷你同样标注清楚回合数与时长；
+                工作台入口卡标注预期时长；历史列表区分显示。</p>
+              </div>
+              <div>
+                <h4>口径</h4>
+                <p>迷你会话<strong>计入北极星</strong>，同时直接服务「周练习 ≥3 次」这个并列核心信号。</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="card v16-card">
+            <div class="v16-head">
+              <span class="pill new">V1.6 新增</span>
+              <b>E2 判定前展示识别文本 ＋ 一键申诉</b>
+              <span class="pill p0">P0</span>
+              <span class="ref">→ 屏 06</span>
+            </div>
+            <div class="v16-grid">
+              <div>
+                <h4>问题</h4>
+                <p>闪测作答是几秒的<strong>短语音</strong>，ASR 错误率天然高于长句。转错 → 判「语义不等价」→ 失败。
+                对「主动召回」训练的打击是毁灭性的——用户会开始怀疑整个系统。</p>
+              </div>
+              <div>
+                <h4>形态</h4>
+                <p>识别文本<strong>置顶</strong>展示，判定结果在后——顺序不能反，先看到结果会让人直接进入防御。
+                「我说的是对的」紧贴识别文本，不需要翻页或长按。</p>
+              </div>
+              <div>
+                <h4>数据回流</h4>
+                <p>申诉用于标定 ASR，同时是 §14.3 的行为数据资产。</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="card v16-card">
+            <div class="v16-head">
+              <span class="pill new">V1.6 修订</span>
+              <b>B7 命中阈值保守化</b>
+              <span class="ref">→ 屏 02 · §2.4</span>
+            </div>
+            <div class="v16-grid">
+              <div>
+                <h4>问题</h4>
+                <p>命中判定是<strong>语义判定</strong>，必然有误命中率。用户说了一句其实是错的话，系统却发「地道表达 +1」——
+                这在教学上是<strong>负资产</strong>，且用户发现一次就会信任崩塌。</p>
+              </div>
+              <div>
+                <h4>形态：只改条件，不改形态</h4>
+                <p>徽章的弹出位置、200ms 弹性、1.5 秒停留、收起为角标——<strong>全都不动</strong>。
+                收紧的只有出现条件：<strong>只有高置信命中才出徽章</strong>。</p>
+              </div>
+              <div>
+                <h4>纪律</h4>
+                <p>宁可漏报，不可错报。误命中率列为<strong>上线前必测项</strong>；徽章出现条件收紧后，
+                用户看不到徽章时应能理解为「这次没被判定为高置信」，而不是「系统坏了」。</p>
+              </div>
+            </div>
+          </article>
+
+        </div>
+
+        <div class="note" style="margin-top:20px">
+          <svg aria-hidden="true"><use href="#i-info" /></svg>
+          <div>
+            <b>没有采纳的两条建议。</b>《23_理想UX交互纲要》提出了两个会改变既定形态的方向——
+            「实时转录改关键词镜像」与「语料库按未来会议组织」——两者都<strong>尚未通过产品评审</strong>，
+            本次不进入形态。它们已在 23_ §七 待评审清单中挂账，其中关键词镜像需要产品评审 ＋ UI 出形态两道关。
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== 06 ===================== -->
+      <section class="doc-sec" id="s06">
+        <h2><em>06</em>动效与语音状态</h2>
+        <p class="sec-lede">
+          动效在这个产品里只有三个用途：说明状态变化、说明层级关系、说明一个动作的结果。
+          任何纯装饰的动效都不做——目标用户是工程师，花哨动效扣分。
+        </p>
+
+        <div class="v16-grid" style="margin-bottom:26px">
+          <div>
+            <h4>时长档位</h4>
+            <p>微交互 <strong>150–200ms</strong>（徽章弹出、按钮反馈）；页面转场 <strong>250–300ms</strong>（右推 / 上滑）；
+            退出取入场的 <strong>60–70%</strong>。</p>
+          </div>
+          <div>
+            <h4>缓动</h4>
+            <p>统一 <strong>ease-out</strong>，退出用 ease-in。
+            <strong>禁止弹性过强的 spring</strong>——工程师用户群，回弹感会被读成廉价。</p>
+          </div>
+          <div>
+            <h4>循环动画</h4>
+            <p>呼吸（3s 周期 / 3% 幅度，提示可说话）与波纹（随音量起伏）。
+            循环动画只用在「系统正在做什么」这类持续状态上。</p>
+          </div>
+        </div>
+
+        <h3 class="doc-sub">语音状态机 <small>说的房间的核心设计物</small></h3>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead><tr><th>状态</th><th>视觉表现</th><th>动效与声音</th></tr></thead>
+            <tbody>
+              <tr><td>等待用户说话</td><td>说话键静态主品牌色</td><td>微弱呼吸缩放（3s / 3%），提示可说话</td></tr>
+              <tr><td>用户录音中</td><td>说话键外圈扩散波纹</td><td>波纹随音量起伏；转录浮层实时滚动</td></tr>
+              <tr><td>AI 处理中</td><td>环形进度（≤1.5s）</td><td>不显示百分比；三点动效；加极轻呼吸音</td></tr>
+              <tr><td>AI 播放中</td><td>气泡左侧波形动画</td><td>随真实进度；用户开口即停，波形立即静止</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note warn" style="margin-top:20px">
+          <svg aria-hidden="true"><use href="#i-info" /></svg>
+          <div>
+            <b>铁律：不做假动画。</b>所有语音相关动效必须<strong>与真实音频状态绑定</strong>——波纹随真实音量、播放波形随真实进度。
+            这是设计原则 3「状态永远可见」的底线：一旦动效与真实状态脱钩，它就从信息退化成装饰，
+            而语音产品里「系统是否还活着」的不确定感是最大的体验杀手。
+          </div>
+        </div>
+
+        <h3 class="doc-sub">可听的状态 <small>语音产品里 1–2 秒静默是最强的「是不是挂了」信号</small></h3>
+        <ul class="chk" style="list-style:none;padding:0;margin:0">
+          <li><svg aria-hidden="true"><use href="#i-check" /></svg><span><b>处理中</b>加极轻的呼吸音 / 环境音，明显低于对话音量。</span></li>
+          <li><svg aria-hidden="true"><use href="#i-check" /></svg><span><b>断线与降级</b>加短促提示音；恢复时由 AI 一句话带过（「网络恢复了，我们继续」）。</span></li>
+          <li><svg aria-hidden="true"><use href="#i-check" /></svg><span><b>全部克制</b>、默认较轻，且可在设置单独关闭；音效与视觉状态一一对应，不重复播报。</span></li>
+        </ul>
+
+        <h3 class="doc-sub">触觉纪律</h3>
+        <p class="doc-p">
+          全 App <strong>不使用震动反馈</strong>。这与 B7「无震动」的约束一致——震动会打断沉浸感，
+          而沉浸感正是「把刻意练习伪装成一次顺利的对话」所需要的东西。
+        </p>
+      </section>
+
+      <!-- ===================== 07 ===================== -->
+      <section class="doc-sec" id="s07">
+        <h2><em>07</em>空态与错误态</h2>
+        <p class="sec-lede">
+          边界场景不是补丁，是产品的一部分。以下每一项都必须在开发前定形态——尤其是「AI 生成失败」与
+          「权限被拒」这两类，它们决定了用户第一次遇到意外时会不会直接卸载。
+        </p>
+
+        <div class="prin">
+          <article>
+            <span class="no">场景 01</span>
+            <h3>首次进入（未登录）</h3>
+            <p>演示素材直接作为主路径（A5）：无需任何输入即可完整走完「说 → 回顾 → 入库」闭环。
+            注册后置到第一次「保存语料」时触发；创建弹层默认停留在一句话描述 Tab。</p>
+          </article>
+          <article>
+            <span class="no">场景 02</span>
+            <h3>麦克风权限被拒</h3>
+            <p>非阻断式说明条：「听不到你就没法练啦」，附跳转设置按钮。
+            闪测、对话、跟读<strong>共用一次授权</strong>，不重复弹窗。</p>
+          </article>
+          <article>
+            <span class="no">场景 03</span>
+            <h3>网络中断（对话中）</h3>
+            <p>状态条提示 ＋ 自动降级为文本对话模式；恢复后询问是否切回语音。
+            降级不是失败页，是换一条路继续练。</p>
+          </article>
+          <article>
+            <span class="no">场景 04</span>
+            <h3>AI 生成失败（回顾页）</h3>
+            <p>保留原始转录可回听，评价区显示「评价生成失败，点此重试」。
+            <strong>不留空白页</strong>——用户刚说完一轮，不能让他面对一个什么都没有的页面。</p>
+          </article>
+          <article>
+            <span class="no">场景 05</span>
+            <h3>语料库为空时进闪测</h3>
+            <p>空态引导去完成一次「说」，<strong>不允许空跑</strong>。没有话术块的闪测没有可考核的对象。</p>
+          </article>
+          <article>
+            <span class="no">场景 06</span>
+            <h3>弱网浏览</h3>
+            <p>语料库 / 历史 / 每日一读走本地缓存，右上角轻量「离线模式」标识，不留空白页。</p>
+          </article>
+          <article>
+            <span class="no">场景 07</span>
+            <h3>素材超长或为空</h3>
+            <p>实时字数提示；超限截断并说明「将基于前 2000 字生成」——明确告知被截断了什么，而不是静默丢弃。</p>
+          </article>
+          <article>
+            <span class="no">场景 08</span>
+            <h3>会话中长时间不说话</h3>
+            <p>超过 10 秒 AI 主动递台阶（「Take your time. Want me to rephrase the question?」），
+            而不是沉默等待。与 B8 的 3 秒梯子是<strong>两条不同阈值</strong>的机制，不重叠。</p>
+          </article>
+        </div>
+
+        <h3 class="doc-sub">加载态的统一形态</h3>
+        <p class="doc-p">
+          语料库、历史、每日一读的加载态统一用<strong>闪烁骨架块</strong>（与卡片同形），不用转圈 spinner——
+          工程师用户对「系统活着但没内容」的感知更准确。例外是 A1 的素材提炼：
+          它必须是有预期的 loading（进度文案「正在提取讨论点…」＋ 预期时长），禁止无提示静默等待。
+        </p>
+      </section>
+
+      <!-- ===================== 08 ===================== -->
+      <section class="doc-sec" id="s08">
+        <h2><em>08</em>无障碍</h2>
+        <p class="sec-lede">
+          语音产品的无障碍不只是合规问题：目标用户里本来就有「看得懂但读不出」的人，
+          而这个 App 的核心动作恰恰是「读出来」。
+        </p>
+
+        <ul class="chk" style="list-style:none;padding:0;margin:0">
+          <li><svg aria-hidden="true"><use href="#i-check" /></svg><span><b>触控热区 ≥ 44×44pt</b>，相邻目标之间至少留 8pt。图标按钮即使视觉更小，热区也不缩水。</span></li>
+          <li><svg aria-hidden="true"><use href="#i-check" /></svg><span><b>状态灯不单独依赖颜色</b>：灰 ○ / 黄 ◐ / 绿 ● 三态同时改变形态；深色背景下灰点的对比度需过 AA，不达标时形态差异是兜底。</span></li>
+          <li><svg aria-hidden="true"><use href="#i-check" /></svg><span><b>英文内容均支持点按发音</b>，兼顾「看得懂但读不出」的用户。</span></li>
+          <li><svg aria-hidden="true"><use href="#i-check" /></svg><span><b>VoiceOver</b>：波形动画、状态灯、徽章等纯视觉元素必须配 accessibilityLabel（徽章：「命中已练表达，地道表达加一」）。徽章 1.5 秒自动收起对 VoiceOver 用户不可感知，命中时额外发送一次无障碍公告。</span></li>
+          <li><svg aria-hidden="true"><use href="#i-check" /></svg><span><b>支持系统动态字体</b>，正文最大放至 130% 时布局不破裂；正文基准 15pt 高于系统最小可读线。</span></li>
+          <li><svg aria-hidden="true"><use href="#i-check" /></svg><span><b>键盘可达、焦点可见</b>：所有主流程操作可从外接键盘到达，焦点环用强调色 2pt 描边，焦点顺序与阅读顺序一致。</span></li>
+          <li><svg aria-hidden="true"><use href="#i-check" /></svg><span><b>prefers-reduced-motion</b>：呼吸、波纹、骨架闪光全部停止，转为静态状态标识；页面转场改为直接切换。</span></li>
+          <li><svg aria-hidden="true"><use href="#i-check" /></svg><span><b>对比度</b>：正文 13.2:1、次要文本 6.6:1、三状态色均 ≥ 4.5:1（见 §2.1 实测值）。浅色主题的验收随 V1.1 补齐。</span></li>
+        </ul>
+      </section>
+
+      <!-- ===================== 09 ===================== -->
+      <section class="doc-sec" id="s09">
+        <h2><em>09</em>覆盖对照</h2>
+        <p class="sec-lede">
+          这份文档对 PRD V1.6 的覆盖情况，以及明确不在本次范围内的部分。
+        </p>
+
+        <h3 class="doc-sub">按页面</h3>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead><tr><th>PRD §六 页面</th><th>本文位置</th><th>覆盖内容</th></tr></thead>
+            <tbody>
+              <tr><td>Tab 1 工作台</td><td class="mono">屏 01</td><td>入口卡、三件事、数据条、每日一读卡、话题建议卡、历史列表</td></tr>
+              <tr><td>Tab 2 闪测</td><td class="mono">屏 05 / 06 / 07</td><td>训练卡流、判定与申诉、结算页；空态见 §07</td></tr>
+              <tr><td>Tab 3 语料库</td><td class="mono">屏 08</td><td>双维度筛选、搜索、三段式卡片、状态灯、进步证据</td></tr>
+              <tr><td>创建练习（弹层）</td><td class="mono">屏 11</td><td>三入口、字数额度、隐私声明、会话时长</td></tr>
+              <tr><td>说的房间（全屏）</td><td class="mono">屏 02 / 03</td><td>对话流、徽章、实时转录、目标胶囊、卡壳救援</td></tr>
+              <tr><td>回顾页（全屏）</td><td class="mono">屏 04 · 屏 14</td><td>总结条、三层评价、双栏对照、炼化区、注册时机；屏 14 为连续长发言时的段落层</td></tr>
+              <tr><td>每日一读页</td><td class="mono">屏 09</td><td>短文、朗读播放条、语速、跟读自评</td></tr>
+              <tr><td>话题建议页</td><td class="mono">屏 10</td><td>话题卡、来源标注、话术清单、开场句、打卡</td></tr>
+              <tr><td>订阅页</td><td class="mono">屏 13</td><td>权益对比、年付、试用；标注 V1.1 后置</td></tr>
+              <tr><td>设置页</td><td class="mono">屏 12</td><td>账号、语音偏好（含 AI 语速）、通知、隐私与删除</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="doc-sub">按功能模块</h3>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead><tr><th>模块</th><th>功能 ID</th><th>本文位置</th></tr></thead>
+            <tbody>
+              <tr><td>A 素材输入</td><td class="mono">A1–A5</td><td>屏 11 · §07 场景 01/07</td></tr>
+              <tr><td>B 说</td><td class="mono">B1–B8</td><td>屏 02 · 屏 03 · 屏 11（迷你会话）</td></tr>
+              <tr><td>C 读</td><td class="mono">C1–C5</td><td>屏 04 · 屏 14（段落层）· 屏 09</td></tr>
+              <tr><td>D 话术块炼化</td><td class="mono">D1–D3</td><td>屏 04 炼化区 · 屏 14 句子层 · 屏 08 卡片</td></tr>
+              <tr><td>E 闪测</td><td class="mono">E1–E5</td><td>屏 05 · 屏 06 · 屏 07</td></tr>
+              <tr><td>F 语料库</td><td class="mono">F1–F4</td><td>屏 08 · §07 场景 05</td></tr>
+              <tr><td>G 账号与基础</td><td class="mono">G1–G4</td><td>屏 04（注册时机）· 屏 12 · §07 场景 01</td></tr>
+              <tr><td>H 话题建议</td><td class="mono">H1–H4</td><td>屏 10 · 屏 01 话题建议卡</td></tr>
+              <tr><td>I 语音评测</td><td class="mono">I1–I4</td><td><span class="pill v11">V1.1 后置</span> 见下方说明</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="doc-sub">明确不在本次范围内</h3>
+        <ul class="chk" style="list-style:none;padding:0;margin:0">
+          <li><svg aria-hidden="true"><use href="#i-x" /></svg><span><b>发音评测（模块 I，I1–I4）</b>整体后置到 V1.1。评分校准依赖内测期人工标注数据，而内测在 W8 才开始，这个循环无法在 MVP 内解决。本文只在屏 06 与屏 09 预留了它的位置。</span></li>
+          <li><svg aria-hidden="true"><use href="#i-x" /></svg><span><b>订阅与商业化的完整形态</b>：屏 13 给出了权益与定价结构，但转化触点页、续费召回等留待 V1.1 商业化启动时细化。</span></li>
+          <li><svg aria-hidden="true"><use href="#i-x" /></svg><span><b>Android 端</b>：PRD §9.1 明确 Android 在 V2.0 视 iOS 留存数据决策，本文按 iOS 17+ 单一平台出稿。</span></li>
+          <li><svg aria-hidden="true"><use href="#i-x" /></svg><span><b>浅色主题</b>：本次按深色优先出稿。浅色为同一色相的反转映射，其正文 / 次要文本 / 待改进色的 WCAG AA 验收继续留待 V1.1。</span></li>
+          <li><svg aria-hidden="true"><use href="#i-x" /></svg><span><b>22_/23_ 中标「待评审」的建议</b>：关键词镜像、语料库按未来会议组织，未通过产品评审前不进入形态。</span></li>
+        </ul>
+
+        <div class="note" style="margin-top:22px">
+          <svg aria-hidden="true"><use href="#i-info" /></svg>
+          <div>
+            <b>演示数据说明。</b>手机稿中的练习历史、话术块、话题卡、日期与计数均为构造的示例，
+            与业务场景一致但<strong>不是真实用户数据</strong>；订阅页价格显示为占位符，因为 PRD §15.3 明确「具体金额立项后调研确定」。
+          </div>
+        </div>
+      </section>
+
+
+    </div>
+  </main>
+</div>
+
+<script>
+/* Scroll-spy: highlight the section currently in view. Progressive enhancement —
+   the document is fully readable with JS disabled. */
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('.doc-nav a[href^="#"]'));
+  var targets = links.map(function (a) { return document.getElementById(a.getAttribute('href').slice(1)); });
+  if (!('IntersectionObserver' in window) || targets.indexOf(null) !== -1) return;
+  var visible = new Set();
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) visible.add(e.target); else visible.delete(e.target);
+    });
+    var first = targets.filter(function (t) { return visible.has(t); })[0];
+    if (!first) return;
+    links.forEach(function (a) {
+      a.classList.toggle('is-active', a.getAttribute('href') === '#' + first.id);
+    });
+  }, { rootMargin: '-10% 0px -70% 0px', threshold: 0 });
+  targets.forEach(function (t) { io.observe(t); });
+})();
+</script>
+
+</body>
+</html>

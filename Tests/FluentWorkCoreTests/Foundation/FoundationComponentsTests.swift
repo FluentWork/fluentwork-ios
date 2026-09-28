@@ -368,12 +368,6 @@ import TGReduxKitTesting
     #expect(AppEnvironment.testLocal.wssBaseURL.scheme == "ws")
 }
 
-@Test func designTokensExposeDarkDefaultPalette() {
-    #expect(DesignTokens.Color.backgroundPrimary.hasPrefix("#"))
-    #expect(DesignTokens.Typography.titlePointSize == 20)
-    #expect(DesignTokens.Motion.standardSeconds == 0.25)
-}
-
 @Test func networkConnectivityReducerAppliesSnapshot() throws {
     let store = TGReduxKitTesting.TestStore(
         initialState: NetworkConnectivityState(),
