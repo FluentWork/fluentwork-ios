@@ -10,6 +10,20 @@ permissions:
   contents: read
 
 jobs:
+  # Cheap pre-flight on Linux — catches "someone moved/deleted a top-level
+  # directory" in seconds instead of waiting for the macOS job.
+  #
+  # ⚠️ Every path asserted here must exist on disk. The previous version of this
+  # job asserted `Modules/`, `Services/` and `Resources/` — none of which this
+  # repository has ever had — so the job failed on **every push**. That is the
+  # kind of assertion nobody notices, because a red check that is always red
+  # stops carrying information: people learn to ignore it.
+  #
+  # The rule is now enforced in both directions by
+  # `Tests/.../Repository/RepositoryLayoutTests.swift`: every `test -d/-f/-x`
+  # in `.github/workflows/*.yml` must resolve to something real, so a stale
+  # assertion cannot come back quietly. Adding a path here without creating it
+  # turns `swift test` red on the macOS job.
   repo-structure-check:
     runs-on: ubuntu-latest
     steps:
@@ -20,13 +34,13 @@ jobs:
       - name: Validate expected iOS skeleton
         run: |
           set -euo pipefail
-          test -d App
-          test -d Modules
-          test -d Shared
-          test -d Services
-          test -d Resources
-          test -d Tests
+          test -d App          # FluentWorkHost target sources (HostRootView 等)
+          test -d Shared       # 全部 SwiftPM target，逐个见 Package.swift 的 path:
+          test -d Tests        # FluentWorkCoreTests
+          test -d Scripts      # gate.sh 等落地脚本
           test -f Package.swift
+          test -f project.yml  # XcodeGen 的工程定义（.xcodeproj 由它生成）
+          test -x Scripts/gate.sh
           echo "Repository skeleton is present."
 
   swift-package-test:

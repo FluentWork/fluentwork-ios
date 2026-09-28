@@ -19,7 +19,8 @@
 | `F3` REST 契约守卫（**端点面**） | ✅ **已完成** | 契约镜像进仓（`Resources/Schemas/openapi-v1.yaml`，由 `Scripts/sync-shared-schemas.sh` 从 backend 同步）+ `Tests/.../Networking/OpenAPIContractTests.swift` 三条判据（代码↔对照表↔契约 三方一致 + 对照表覆盖源码每个 case）。变异 4 条全咬 |
 | `F3-b` REST 契约守卫（**字段面**） | ✅ **已完成** | `Tests/.../Networking/OpenAPIFieldContractTests.swift`：20 个模型的手写映射（含两处**名字不一致**：`DrillVerdict`→`DrillJudgeResponse`、`DrillAppealOutcome`→`DrillAppealResponse`，以及一处**内联响应**：`DeleteCorpusBlockResponse`→`DELETE /corpus/blocks/{id}`）+ 三条判据。变异 3 条全咬，另外**首次运行就咬掉两条说谎的豁免条目** |
 | `F4` DI 收紧 | ✅ **已完成** | 10 处 `?? Container.shared` **→ 0**；9 个 middleware 工厂 + `AppStoreFactory.make` 的 container 改成必传；新增 `AppStoreFactory.makeShared()` 作为**唯一有名字的组合根入口**；`Tests/.../Architecture/DependencyInjectionGuardTests.swift` 三条判据（生产代码零回落 / `Container.shared` 只在白名单 / **白名单无过期条目**）。变异 3 条全咬，且**白名单双向判据在真实修复过程中天然咬了一次**（第一版 `makeShared` 用了 `.shared` 简写） |
-| `F5`–`F9` | ⏳ 未开始 | 顺位：F5（并发口径）→ F6 → F7 → F8 → F9 |
+| `F8` CI 结构断言 | ✅ **已完成** | `ios-ci.yml` 断言的 `Modules/Services/Resources` **本仓从来没有过** ⇒ 每次推送必红；改成真实骨架（`App/Shared/Tests/Scripts` + `Package.swift` + `project.yml` + `Scripts/gate.sh` 可执行）。**实测对照**：拿 HEAD 的旧版 shell 跑 → `EXIT=1`，新版 → `EXIT=0`。另加 `Tests/.../Repository/RepositoryLayoutTests.swift`：CI 里每条 `test -d/-f/-x` 必须指到真实路径（棘轮下限 9） |
+| `F5`–`F7`、`F9` | ⏳ 未开始 | 顺位：F5（并发口径）→ F6 → F7 → F9 |
 
 
 ---
@@ -39,6 +40,7 @@
 | **F6** | **`AVAudioSession` 所有权**（高风险路径） | 两个实现点，`DailyReadAudioPlayer` 曾绕过 owner（局部已修）；**结构问题仍开着**；现有 `isActive` 是**永不取假的判据**【读码】 | 单一 owner 类型 + 可查询的「谁在占用」真值 | 真机验证（与 iOS-S0-3 合并做） | — |
 | **F7** | **设计资产落地** | 稿子 §2.5 的 **24 个线性图标（1.5pt 描边）未交付**，现在用 SF Symbols 顶替，描边与圆角都不一致；**动态字体未接**（130% 不破版未验证）【实测 `DESIGN.md` §7/§8】 | 图标集 + `DesignTokens.Icon` 映射；已迁移的屏接 `@ScaledMetric` | 图标描边/圆角与稿子一致；动态字体 130% 截图不破版 | — |
 | **F8** | **CI 结构断言改成真的** | `ios-ci.yml` 断言 `App / Modules / Services / Resources / Tests`，而仓里只有 `App / Shared / Tests / Scripts` ⇒ **每次推送必失败**【实测】 | 改成断言真实骨架；并让 CI 至少跑 `swift test` | CI 在 main 上不再结构性失败 | — |
+| **F8-b** | **XcodeGen 清单与 SwiftPM 的一致性**（F8 本轮查出的空档） | `project.yml` 的 `sources: - path: App/FluentWorkHost` 与 `dependencies: product: FluentWorkCore/FluentWorkUI` **没有任何东西校验**：CI 不跑 `xcodegen`，而门禁腿 2 构建的是**已提交的** `.xcodeproj` ⇒ project.yml 与 Package.swift 不一致时谁都不说话，直到有人重新生成工程才发现【实测】 | 判据：project.yml 的每个源路径存在、每个 product 在 Package.swift 的 `products:` 里已声明 | 改 `App/` 目录名或 product 名 ⇒ 红 | F8 |
 | **F9** | **离线缓存补齐** | `Storage/` 只有语料库三件套（`CorpusCacheStore` / `CorpusOutboxStore` / `CorpusSyncMetadataStore`）+ `SecureStorage`。稿子 §07 场景 06 要求「语料库 **/ 历史 / 每日一读** 走本地缓存」⇒ **只做了 1/3**【实测】 | 历史与每日一读的缓存层（沿用语料库的既有形状，不新立一套） | 断网进历史/每日一读不留白页；有判据 | F1 |
 
 **治理项（不是我在仓内能修的，挂账）**：远端 `main` 的分支保护要求 PR + 3 项状态检查，与
