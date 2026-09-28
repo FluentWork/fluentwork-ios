@@ -64,6 +64,32 @@
      门禁不自己跑）。要不要让钩子调这个脚本是**待拍**，别默认改。
 6. **`timeout` 命令在本机不存在**（macOS 没有 GNU coreutils）；要限时用工具自己的 timeout。
 
+## REST 契约镜像与守卫（2026-09-29 起，改网络层前先读）
+
+- **契约镜像在 `Shared/FluentWorkCore/Resources/Schemas/openapi-v1.yaml`**，由
+  `Scripts/sync-shared-schemas.sh` 从 `../fluentwork-backend/api/openapi-v1.yaml` 同步
+  （同一个脚本还同步 infra 的两份 JSON）。**不要手改镜像** —— 改源头再跑脚本。
+  同步后两侧 sha 应逐字节一致（现在是 `c5068c98…`）。
+- **守卫在 `Tests/FluentWorkCoreTests/Networking/OpenAPIContractTests.swift`**，
+  18 个 case 的手写对照表 + 三条判据：
+  ① 代码的 path/method ↔ 对照表；② 对照表 ↔ 契约；③ 对照表 ↔ 源码里 `FluentWorkAPI` 的每个 `case`
+  （双向集合相等）+ 反空洞下限 `declared.count >= 30`。
+- **两条都是端点面 + 字段面**（2026-09-29 补齐）：
+  `OpenAPIContractTests.swift`（端点：代码 ↔ 对照表 ↔ 契约，18 case）
+  + `OpenAPIFieldContractTests.swift`（字段：**20 个模型**的手写映射，`clientKeys ⊆ contractKeys`）。
+- ⇒ **给 `FluentWorkAPI` 加 case 时**：必须同时在端点对照表里声明它的契约路径与方法，否则当场红并点名。
+  **加响应模型时**：必须同时在字段映射里声明它对应的契约 schema，否则闭合规则红。
+  **不要再手工逐键核**（上上轮 drill 的三个端点就是这么核的，那正是这两条守卫要接管的活）。
+- ⚠️ 字段映射里有**两处名字不一致**（是事实，不是笔误）：`DrillVerdict` → 契约 `DrillJudgeResponse`、
+  `DrillAppealOutcome` → 契约 `DrillAppealResponse`；还有**一处内联响应**：
+  `DeleteCorpusBlockResponse` 没有同名 schema，契约把它写在 `DELETE /corpus/blocks/{id}` 的
+  200 响应里 ⇒ 映射的 `ContractSource` 有两种（`.schema` / `.operation`）。
+- ⚠️ **豁免名单有「过期检测」**：豁免的类型若已不再被 decode，判据会红。首次运行时它就咬掉了
+  两条说谎的条目（`ClientTurnAbortOutcome` / `DrillBlockState` 其实是模型**内部**的嵌套字段解码，
+  不是我扫描的「顶层响应类型」）—— 记这一笔是因为「豁免条目过期」这种腐烂通常靠人眼发现不了。
+- ⚠️ 已知债：`Resources/Schemas/` 现在同时镜像 **infra 拥有**与 **backend 拥有**的资产，
+  而脚本仍叫 `sync-shared-schemas.sh`。REST 契约要不要搬进 infra 是**设计决定**，别擅自改。
+
 ## 测试支撑（2026-09-29 收敛，改测试前先读）
 
 - **等待助手只有一份实现**：`Tests/FluentWorkCoreTests/Support/Await.swift` 的

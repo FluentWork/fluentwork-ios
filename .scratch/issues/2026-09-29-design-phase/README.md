@@ -17,7 +17,7 @@
 | `F1` 门禁脚本 | ✅ **已完成** | `Scripts/gate.sh`；`GATE PASSED`（腿 1 / 腿 2 全绿），失败路径实测会红（腿 2 用一个不存在的 scheme ⇒ `GATE FAILED` + `exit 1`） |
 | `F2` 测试支撑收敛 | ✅ **已完成** | `Tests/FluentWorkCoreTests/Support/Await.swift`；`waitUntil` **8 → 1 份**、错误类型 **16 → 1 份**（只余 `AwaitTimeout`）、`waitForBootstrap` **2 → 1 份且不再静默成功**、`waitForSpeakingRoomPhase` 内联。**664 tests / 30 suites 全绿**；变异（超时错误丢掉调用点与预算）⇒ 3 条断言红 |
 | `F3` REST 契约守卫（**端点面**） | ✅ **已完成** | 契约镜像进仓（`Resources/Schemas/openapi-v1.yaml`，由 `Scripts/sync-shared-schemas.sh` 从 backend 同步）+ `Tests/.../Networking/OpenAPIContractTests.swift` 三条判据（代码↔对照表↔契约 三方一致 + 对照表覆盖源码每个 case）。变异 4 条全咬 |
-| `F3-b` REST 契约守卫（**字段面**） | ⏳ 未开始 | 「服务端发的键都在契约里」的另一半，照 backend `openapi_contract_test.go` 的写法：手写 `{Swift 模型, 契约 schema}` 映射 + 逐键断言 |
+| `F3-b` REST 契约守卫（**字段面**） | ✅ **已完成** | `Tests/.../Networking/OpenAPIFieldContractTests.swift`：20 个模型的手写映射（含两处**名字不一致**：`DrillVerdict`→`DrillJudgeResponse`、`DrillAppealOutcome`→`DrillAppealResponse`，以及一处**内联响应**：`DeleteCorpusBlockResponse`→`DELETE /corpus/blocks/{id}`）+ 三条判据。变异 3 条全咬，另外**首次运行就咬掉两条说谎的豁免条目** |
 | `F4`–`F9` | ⏳ 未开始 | 顺位：F4（DI 收紧）… |
 
 
@@ -32,7 +32,7 @@
 | **F1** | **把两腿门禁变成脚本** | `Scripts/` 里没有任何 gate 脚本；`.githooks/pre-commit` 是 `exit 0`；`AGENTS.md` Local Rule 1 只写了「`swift test` + host Debug 构建」【实测】 | `Scripts/gate.sh`：腿 1 `swift test`、腿 2 host Debug 构建（**必须带三个反嵌套沙箱开关**，见 `MEMORY.md`） | 脚本 `exit 0`；**在干净 HEAD 上也 `exit 0`**；变异：删掉腿 2 的一个 flag ⇒ 脚本红 | — |
 | **F2** | **测试支撑收敛**：14 个等待助手 + 15 个错误类型 → 一份 | **14 个声明 / 10 个文件**：`waitUntil`×8、`waitForPhase`×2、`waitForBootstrap`×2、`waitForSpeakingRoomPhase`×1、`waitForProcessingStage`×1。错误类型 **15 个定义**，其中 **`TimeoutError` 一个类型就有 7 份副本**【实测】 | `Tests/…/Support/Await.swift`（**超时时必须报出「路过但没等到」的帧清单**）+ 一个 `TestTimeoutError`；逐文件替换 | 副本数 14→1、15→少数；全量测试绿；变异：让助手在超时时**丢弃**路过数据 ⇒ 必须有判据红 | F1 |
 | **F3** ✅ | **REST 契约守卫（端点面）** | `find . -name 'openapi*'` **零命中** —— REST 契约**根本没进 iOS 仓**；而 `FluentWorkAPI.swift:4` 自称 "aligned to `fluentwork-backend/api/openapi-v1.yaml`"，**没有任何东西校验**【实测】。WSS 侧有镜像 + 守卫，REST 侧是空的 | 镜像契约进仓（`Scripts/sync-shared-schemas.sh` 扩一个 backend 源）+ 守卫断言：每个 `FluentWorkAPI` case 的 path/method 在契约里存在（**另加**：代码的 path/method 要与对照表一致、对照表要覆盖源码里的每个 case） | **修前必红**：把 `.drillRound` 的 path 改成 `/drill/rounds` ⇒ 红。⚠️ **本轮的 drill 键是我手工核过的**，正因为没有这条守卫 | F1 |
-| **F3-b** | REST 契约守卫（**字段面**） | 同上；字段面是「服务端发的键都在契约里」，需手写 `{Swift 模型, 契约 schema}` 映射（backend `openapi_contract_test.go` 同一写法） | — | 修前必红（拿 `record_id` 这类「另一个端点的入参」做对照） | F3 |
+| **F3-b** ✅ | REST 契约守卫（**字段面**） | 同上；字段面是「客户端读的键，契约必须声明」 | 20 个模型的手写映射 + `clientKeys ⊆ contractKeys` + 三条反空洞下限（每类型有键、总键数 ≥ 80、扫到 ≥14 个解码类型）+ **豁免名单的过期检测** | 修前必红：把契约的 `promoted` 改名 ⇒ 点名 `DrillVerdict` 读 `promoted` | F3 |
 | **F4** | **DI 收紧**：去掉可选注入的默认值 | `?? Container.shared` **10 处**，`Container.shared` 共 17 处【实测】；清单原文「10 处」这条**数字是对的** | 去掉默认值让 container 必传（或引入显式 `AppContainer`） | 全量测试绿；构造点不再有「忘了传就静默拿单例」的路径 | F1 |
 | **F5** | **并发隔离口径**（先量再定） | actor **15** / `@MainActor` **20** / `OSAllocatedUnfairLock` **14**【实测】。⚠️ 清单原文写「17 actor / 5 `@MainActor` / 11 锁」——**三个数全变了**（代码在演进）。「三种策略并存、无统一规则」是【推断】 | 一份「谁该用哪种」的口径（IO 边界 → actor；UI 状态 → `@MainActor`；窄临界区 → `OSAllocatedUnfairLock`），**只对新代码生效**，不做全仓迁移 | 口径写进 `AGENTS.md`；新代码不再出现第四种 | — |
 | **F6** | **`AVAudioSession` 所有权**（高风险路径） | 两个实现点，`DailyReadAudioPlayer` 曾绕过 owner（局部已修）；**结构问题仍开着**；现有 `isActive` 是**永不取假的判据**【读码】 | 单一 owner 类型 + 可查询的「谁在占用」真值 | 真机验证（与 iOS-S0-3 合并做） | — |
