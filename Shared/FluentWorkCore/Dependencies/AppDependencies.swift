@@ -185,6 +185,18 @@ public protocol AudioEngineProtocol: AudioSink {
     /// Headset unplug / Bluetooth switch: re-apply full-duplex session and
     /// reinstall the input tap. No-op if capture is not running.
     func reconfigureForRouteChange() async
+    /// 把本次会话对共享音频会话的**认领还回去**（与 `startCapture()` 成对）。
+    ///
+    /// **不能**放进 `stopCapture()`：那一刻 AI 音频可能还在收尾，而 deactivate 会让
+    /// `AVAudioEngine` 的内部图 uninitialize —— 下一次 `engine.start()` 或任何节点访问会撞
+    /// `required condition is false: inputNode != nullptr || outputNode != nullptr`
+    /// （`LiveAudioEngine.stopCapture()` 尾部那条注释记的就是这件事）。归还因此挂在
+    /// 「显式结束会话 / 进入后台」这两条路径上。
+    ///
+    /// 与 `setVoiceProcessingEnabled` 同样的理由，这是**要求**而不是扩展默认实现：
+    /// 扩展方法在 `any AudioEngineProtocol` 上静态派发，默认实现会顶掉真引擎的实现 ——
+    /// 于是测试全绿，而真机上会话永远不归还。
+    func releaseSessionClaim() async
 }
 
 extension AudioEngineProtocol {
@@ -465,6 +477,8 @@ public final class PlaceholderAudioEngine: AudioEngineProtocol, Sendable {
 
     public func stopCapture() async {}
 
+    public func releaseSessionClaim() async {}
+
     public func events() -> AsyncStream<AudioEngineEvent> {
         stream
     }
@@ -715,6 +729,9 @@ public extension Container {
                     ),
                     preparePlaybackSession: {
                         try self.audioSessionOwner().claim(.playback)
+                    },
+                    releasePlaybackSession: {
+                        try self.audioSessionOwner().release(from: .playback)
                     }
                 )
                 #endif

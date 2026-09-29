@@ -172,6 +172,20 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
         try sessionOwner.claim(.fullDuplex)
 
+        // 认领与归还必须配对：从这里到函数最后一行之间**任何**一处抛出，都要把租约还回去。
+        //
+        // 不还的后果不是「没有声音」，而是**别人的声音被关掉**：会话被永久留在
+        // 「已认领、没人在跑」——`.playAndRecord` 的路由与 duck 状态继续生效，而租约名册上
+        // 那个名字再也等不到归还，于是此后任何一次归还都判「还有人占着」，再也不 deactivate。
+        // `defer` + 一个局部标志，而不是逐处 `catch`：逐处写会漏掉将来新加的抛出点，
+        // 而这条不变量要的正是「一处都不许漏」。
+        var captureIsArmed = false
+        defer {
+            if !captureIsArmed {
+                try? sessionOwner.release(from: .fullDuplex)
+            }
+        }
+
         // **先**摸一下 `inputNode`，让图在 `engine.start()` 之前至少挂上一个节点。
         // 没有节点就启动会断言 `inputNode != nullptr || outputNode != nullptr` 并让 App 崩。
         let inputNode = engine.inputNode
@@ -274,6 +288,9 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             // 见 `describeSession()`。
             session: Self.describeSession()
         ))
+        // 图武装好了 ⇒ 这次认领**留在了名册上**（归还由结束会话那条路径负责，见
+        // `releaseSessionClaim()`）。这一行必须在所有可能抛出的语句之后。
+        captureIsArmed = true
     }
 
     /// 拆掉已装的采集 tap，并把标志位清掉。
@@ -435,5 +452,13 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         // `engine.start()` 或任何节点访问撞上
         // `required condition is false: inputNode != nullptr || outputNode != nullptr`。
         // 会话在整个说话房间会话期间保持 active，只在 App 显式结束会话或进入后台时才 deactivate。
+    }
+
+    /// 归还 `startCapture()` 认领的那次会话（见 `AudioEngineProtocol.releaseSessionClaim`）。
+    ///
+    /// 位置由上面那条约束决定：归还挂在**结束会话/进入后台**两条路径上，而不是 `stopCapture()` 里。
+    /// 没有认领过时它是一句空话（`release` 自己会挡），所以失败路径上多叫一次是安全的。
+    public func releaseSessionClaim() async {
+        try? sessionOwner.release(from: .fullDuplex)
     }
 }

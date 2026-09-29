@@ -215,6 +215,7 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
         stream
     }
 
+    func releaseSessionClaim() async {}
     func stopCapture() async {
         await state.recordStop()
     }
@@ -268,6 +269,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     }
 
     func stopCapture() async {}
+    func releaseSessionClaim() async {}
 
     func play(pcm: Data) async {}
 

@@ -261,12 +261,18 @@ public enum AudioSessionClaim: Equatable, Sendable {
 /// 一次归还该做什么。
 public enum AudioSessionRelease: Equatable, Sendable {
     case deactivate
-    /// 别人还占着 —— **不要** deactivate。
+    /// 别人还占着 / 一个不持有租约的人来归还 —— **不要** deactivate。
     ///
     /// 这与「认领时不要抢」是同一件事的另一半，而它在 2026-09-29 之前**没人守**：
     /// 每日一读的 `teardown()` 无条件 `setActive(false)`，所以「朗读放完」会把
     /// 正在跑的说的房间一起关掉 —— 同一类静默事故，方向相反。
     case keep(heldBy: AudioSessionHolder)
+    /// 类别可以让，但**还有别的租约在册** —— 关掉会把借用者弄哑。
+    ///
+    /// 与上一档分开是因为「为什么不许关」是两件不同的事：上一档是**类别**被别人占着
+    /// （换了会拆 input route），这一档是**别人正在借这个类别用**。合成一档会让
+    /// 「谁在占」这个问题的答案变得含混，而含混的答案在这条链路上等于静默失败。
+    case keepLeased(by: [AudioRoute])
 }
 
 public enum AudioSessionPolicy {
@@ -293,18 +299,31 @@ public enum AudioSessionPolicy {
     }
 
     /// 归还时能不能 deactivate。
+    ///
+    /// 三个输入回答三个不同的问题：**我有没有东西可还**（`holdsALease`）、
+    /// **这次释放之后名册上还剩谁**（`remainingLeases`，含请求者自己剩下的那几次）、
+    /// **类别是不是我们设的**（`occupancy`）。
     public static func release(
         from requester: AudioRoute,
-        given occupancy: AudioSessionOccupancy
+        given occupancy: AudioSessionOccupancy,
+        holdsALease: Bool,
+        remainingLeases: [AudioRoute]
     ) -> AudioSessionRelease {
+        // 一个不持有租约的人不许关掉别人的会话。这条在租约模型之前不可能表达：
+        // 那时「谁在占」只能从类别推，而类别答不了「你是不是其中一个使用者」。
+        guard holdsALease else { return .keep(heldBy: occupancy.holder) }
+
+        // 名册上还有人（别人，或**自己没还完的那几次**）：关掉会把在用的人一起弄哑。
+        // 「自己还欠着一次」也必须走这一支：租约是计数的，认领两次就得归还两次。
+        guard remainingLeases.isEmpty else { return .keepLeased(by: remainingLeases) }
+
+        // 只剩自己了，但类别不是我们设的（真机上就是 App 启动时的系统默认值）：
+        // 没有东西可以归还，而关掉一个不属于我们的会话既没理由也没好处。
         switch occupancy.holder {
-        case .noOne:
-            // 没有任何人认领 —— deactivate 是安全的（会话本来就没被用）。
-            return .deactivate
-        case .claimed(let holderRoute) where holderRoute == requester:
-            return .deactivate
-        case .claimed, .notOurClaim:
+        case .notOurClaim:
             return .keep(heldBy: occupancy.holder)
+        case .noOne, .claimed:
+            return .deactivate
         }
     }
 }
@@ -400,26 +419,53 @@ public final class SharedAudioSessionPort: AudioSessionPorting {
 /// 共享 `AVAudioSession` 的认领面。
 public protocol AudioSessionOwning: Sendable {
     /// 认领会话给这条路线。返回**实际做了什么** —— 类别可能没被改（见 `AudioSessionClaim`）。
+    ///
+    /// 认领是**计数**的：同一条路线认领两次就要归还两次。
     @discardableResult
     func claim(_ route: AudioRoute) throws -> AudioSessionClaim
-    /// 归还。**当且仅当**占用者是本请求者时才会 deactivate。
+    /// 归还一次认领。**只有**当它是最后一个在册的租约、且类别是我们设的时，才会 deactivate。
+    ///
+    /// 不持有租约的归还是一句空话：它既不改名册，也不许关掉别人的会话。
     @discardableResult
     func release(from requester: AudioRoute) throws -> AudioSessionRelease
-    /// 「谁在占用」的真值。
+    /// 「谁占了类别」的真值 —— 从真实会话派生。
+    ///
+    /// 注意它**不回答**「谁在借」：那件事记在租约里，见 `SharedAudioSessionOwner`。
     func occupancy() -> AudioSessionOccupancy
 }
 
-/// 唯一的实现：策略 + 端口。
+/// 唯一的实现：策略 + 端口 + **租约名册**。
 ///
-/// 为什么它不持有任何状态：**占用状态从真实会话推导**（`occupancy()`）。
-/// 之前的实现持有一个 `active` 布尔，而它只在 `configure()` 里被置真 —— 那是一个
-/// 会永远说「房间还活着」的判据（见 `AudioSessionSnapshot.looksActive`）。
+/// ## 为什么这里有一份状态，而本票主张「占用从真实会话派生」
+///
+/// 因为这是两个不同的问题，而它们能不能派生**不一样**：
+///
+/// | 问题 | 能不能派生 | 谁回答 |
+/// |---|---|---|
+/// | **类别归谁**（动类别会不会拆掉 input route） | **能** —— 类别是进程级属性，而进程内只有我们写它 | `AudioSessionOccupancy.derive(from:)`（零状态） |
+/// | **谁在用**（能不能 deactivate） | **不能** —— `AVAudioSession` 里没有「谁认领过」这个信息 | 租约名册（本类） |
+///
+/// 具体到那个把模型逼出来的场景：说的房间占着 `.playAndRecord`，每日一读借它播（`keepCategory`，
+/// 只激活不切类别 —— 那是对的）。此时**类别上一点痕迹都没有**：占用者看起来还是房间，
+/// 而房间收尾归还时会判定「是我自己占着」→ `setActive(false)` → 正在播的朗读当场静音。
+///
+/// 所以：**类别决策照旧从真实会话派生**（这一半仍然零状态、不可能与事实脱节），
+/// 「谁在用」记在租约里。别把这两件事混起来 —— 混起来的后果是其中一个必然出错。
 public final class SharedAudioSessionOwner: AudioSessionOwning, @unchecked Sendable {
+    private struct State {
+        /// 路线 → 在册次数。计数而不是集合：同一条路线可以认领两次（重试、或两个入口）。
+        var leases: [AudioRoute: Int] = [:]
+    }
+
     private let port: any AudioSessionPorting
     /// `setCategory` / `setActive` 必须串行：说的房间与每日一读在不同的线程上认领
     /// **同一个进程级对象**。用锁而不是 `DispatchQueue.sync` —— 后者正是 `AGENTS.md`
-    /// 的并发口径里禁掉的形状（把队列当锁），而这里没有状态要保护，只需要互斥。
-    private let gate = OSAllocatedUnfairLock(initialState: ())
+    /// 的并发口径里禁掉的形状（把队列当锁）。
+    ///
+    /// 锁护的是**两件**事，而且缺一不可：会话的配置，以及租约名册。
+    /// 只护配置的话，「读快照 → 做决策 → 写名册」这三步会被并发插队，而租约名册
+    /// 一旦被两个线程同时读写，它自己就是一个数据竞争。
+    private let gate = OSAllocatedUnfairLock(initialState: State())
 
     public init(port: any AudioSessionPorting = SharedAudioSessionPort()) {
         self.port = port
@@ -431,9 +477,11 @@ public final class SharedAudioSessionOwner: AudioSessionOwning, @unchecked Senda
 
     @discardableResult
     public func claim(_ route: AudioRoute) throws -> AudioSessionClaim {
-        // 决策读的是**调用那一刻**的真实会话，而不是上一次认领留下的印象。
-        let decision = AudioSessionPolicy.claim(for: route, given: occupancy())
-        try gate.withLock { _ in
+        try gate.withLock { state in
+            // 决策读的是**调用那一刻**的真实会话，而不是上一次认领留下的印象。
+            // 它在锁**内**：否则两个并发认领会拿同一份陈旧快照各做各的决策，
+            // 后进锁的那个按陈旧决策去动类别 —— 锁就白加了（2026-09-24 那条路依然可达）。
+            let decision = AudioSessionPolicy.claim(for: route, given: occupancy())
             if case .reconfigure(let target) = decision {
                 try port.apply(target.configuration)
             }
@@ -444,17 +492,33 @@ public final class SharedAudioSessionOwner: AudioSessionOwning, @unchecked Senda
                     "Audio session could not be activated. Please close other apps using audio (e.g., music, video) and try again. Underlying error: \(error.localizedDescription)"
                 )
             }
+            state.leases[route, default: 0] += 1
+            return decision
         }
-        return decision
     }
 
     @discardableResult
     public func release(from requester: AudioRoute) throws -> AudioSessionRelease {
-        let decision = AudioSessionPolicy.release(from: requester, given: occupancy())
-        guard case .deactivate = decision else { return decision }
-        try gate.withLock { _ in
-            try port.setActive(false)
+        try gate.withLock { state in
+            let held = state.leases[requester] ?? 0
+            if held > 1 {
+                state.leases[requester] = held - 1
+            } else {
+                state.leases[requester] = nil
+            }
+            // 释放之后**还在册**的路线。同一个请求者如果还欠着一次租约，那条也在册 ——
+            // 所以它不是「别人」，而是「还没还完的自己」，两者都不许 deactivate。
+            let remaining = state.leases.keys.sorted { $0.rawValue < $1.rawValue }
+            let decision = AudioSessionPolicy.release(
+                from: requester,
+                given: occupancy(),
+                holdsALease: held > 0,
+                remainingLeases: remaining
+            )
+            if case .deactivate = decision {
+                try port.setActive(false)
+            }
+            return decision
         }
-        return decision
     }
 }

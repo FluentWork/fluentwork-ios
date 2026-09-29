@@ -1401,6 +1401,10 @@ private func interpretSpeechSessionSideEffect(
             .fireAndForget {
                 let sessionID = await speechClient.activeSessionID()
                 await audioEngine.stopCapture()
+                // I/O 都停了再归还共享会话（`setActive(false)` 要求调用者先停掉 running I/O）。
+                // 放在 `stopCapture()` **之后**而不是里面：那里面 deactivate 会让引擎的内部图
+                // uninitialize，下一次 start 撞断言（见 `LiveAudioEngine.stopCapture()` 尾注）。
+                await audioEngine.releaseSessionClaim()
                 await speechClient.endSession()
                 if let sessionID {
                     await dispatchBox.dispatch(.speakingRoom(.sessionIDCaptured(sessionID)))
@@ -1432,6 +1436,7 @@ private func interpretSpeechSessionSideEffect(
                 )
                 let sessionID = await speechClient.activeSessionID()
                 await audioEngine.stopCapture()
+                await audioEngine.releaseSessionClaim()
                 await speechClient.endSession()
                 await speechClient.closeTransport()
                 if let sessionID {

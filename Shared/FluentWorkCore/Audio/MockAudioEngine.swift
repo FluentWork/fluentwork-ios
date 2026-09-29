@@ -99,6 +99,10 @@ public actor MockAudioEngine: AudioEngineProtocol {
     /// 采集开始时本来会把音频会话配成 `.playAndRecord`（麦克风一直亮着）。
     /// 替身改成只配播放：听得见 TTS，但没有任何东西在录音。
     private let preparePlaybackSession: (@Sendable () throws -> Void)?
+    /// 上面那一步的**归还**。替身也必须配对：`preparePlaybackSession` 在生产里是一次
+    /// `claim(.playback)`（租约），不还的话名册上会永远挂着一个名字 —— 于是此后任何一次归还
+    /// 都判「还有人占着」，再也 deactivate。真机用替身跑时这条路径就是主路径，不能漏。
+    private let releasePlaybackSession: (@Sendable () throws -> Void)?
 
     /// `nonisolated` 与 `LiveAudioEngine` 保持一致：`events()` 是同步要求，
     /// 调用方在任意上下文里取流，不能要求先跳到这个 actor 上。
@@ -114,11 +118,13 @@ public actor MockAudioEngine: AudioEngineProtocol {
     public init(
         script: Script,
         playback: any AudioEngineProtocol,
-        preparePlaybackSession: (@Sendable () throws -> Void)? = nil
+        preparePlaybackSession: (@Sendable () throws -> Void)? = nil,
+        releasePlaybackSession: (@Sendable () throws -> Void)? = nil
     ) {
         self.script = script
         self.playback = playback
         self.preparePlaybackSession = preparePlaybackSession
+        self.releasePlaybackSession = releasePlaybackSession
         let pair = AsyncStream.makeStream(of: AudioEngineEvent.self)
         self.stream = pair.stream
         self.continuation = pair.continuation
@@ -148,6 +154,8 @@ public actor MockAudioEngine: AudioEngineProtocol {
         utteranceTask = nil
         isSpeaking = false
         await playback.stopCapture()
+        // 归还认领（放在最后：I/O 都停了再谈会话），与 `startCapture` 里的那次成对。
+        try? releasePlaybackSession?()
     }
 
     public nonisolated func events() -> AsyncStream<AudioEngineEvent> {
@@ -238,6 +246,13 @@ public actor MockAudioEngine: AudioEngineProtocol {
 
     public func reconfigureForRouteChange() async {
         await playback.reconfigureForRouteChange()
+    }
+
+    /// 转发给真引擎：替身自己的采集认领是 `.playback`，已经由 `stopCapture()` 里的
+    /// `releasePlaybackSession` 还掉了；而 `playback`（真引擎）可能在路由变化时认领过
+    /// `.fullDuplex`，这里就是它的归还点。
+    public func releaseSessionClaim() async {
+        await playback.releaseSessionClaim()
     }
 }
 #endif

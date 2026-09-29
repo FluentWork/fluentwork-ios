@@ -15,20 +15,23 @@ import os
     ///
     /// 房间占着（类别 = `playAndRecord`）时，每日一读认领播放**必须一次都不调 `setCategory`**，
     /// 只激活。切走类别会拆掉 input route，正在跑的引擎会自己停，而它一行我们的代码都不执行。
+    ///
+    /// 房间那一次认领是**真的走了一遍**（不是把端口快照摆成 `playAndRecord`）：租约模型之后
+    /// 「类别上像那么回事」和「房间里真的有个会话在跑」是两件事，判据要按后者的形状写。
     @Test func dailyReadNeverReconfiguresWhileTheSpeakingRoomHoldsTheSession() throws {
-        let port = ScriptedAudioSessionPort(
-            snapshot: .active(category: .playAndRecord, mode: .voiceChat)
-        )
+        let port = ScriptedAudioSessionPort(snapshot: .unclaimed)
         let owner = SharedAudioSessionOwner(port: port)
+        _ = try owner.claim(.fullDuplex)
+        let appliedAfterTheRoom = port.calls.applied
 
         let decision = try owner.claim(.playback)
 
         #expect(decision == .keepCategory(heldBy: .claimed(.fullDuplex)))
         #expect(
-            port.calls.applied.isEmpty,
+            port.calls.applied == appliedAfterTheRoom,
             "类别被切走了：\(port.calls.applied) —— 这正是 2026-09-24 那次静默事故"
         )
-        #expect(port.calls.activeChanges == [true])
+        #expect(port.calls.activeChanges == [true, true])
         // 类别没被动过，所以它仍然是采集会话。
         #expect(owner.occupancy().holder == .claimed(.fullDuplex))
     }
@@ -68,21 +71,59 @@ import os
 
     /// **同一类事故的归还方向**（这是一条在 2026-09-29 之前没人守的活缺陷）。
     ///
-    /// 每日一读放完就归还。房间还在跑的时候归还**不能** deactivate ——
+    /// 每日一读放完就归还。房间还在跑（在册）的时候归还**不能** deactivate ——
     /// 那会把正在进行的练习会话关掉，同样是一行代码都不执行地停。
     @Test func releasingDailyReadDoesNotDeactivateWhileTheSpeakingRoomRuns() throws {
-        let port = ScriptedAudioSessionPort(
-            snapshot: .active(category: .playAndRecord, mode: .voiceChat)
-        )
+        let port = ScriptedAudioSessionPort(snapshot: .unclaimed)
         let owner = SharedAudioSessionOwner(port: port)
+        _ = try owner.claim(.fullDuplex)   // 房间在跑，并且它在册
+        _ = try owner.claim(.playback)     // 每日一读借了它
 
         let decision = try owner.release(from: .playback)
 
-        #expect(decision == .keep(heldBy: .claimed(.fullDuplex)))
+        #expect(decision == .keepLeased(by: [.fullDuplex]))
         #expect(
-            port.calls.activeChanges.isEmpty,
+            port.calls.activeChanges == [true, true],
             "归还时把会话关了：\(port.calls.activeChanges) —— 正在跑的说的房间会静默停掉"
         )
+    }
+
+    /// 租约是**计数**的：认领两次就要归还两次，第一次归还什么都不该动。
+    @Test func claimingTwiceRequiresReleasingTwice() throws {
+        let port = ScriptedAudioSessionPort(snapshot: .unclaimed)
+        let owner = SharedAudioSessionOwner(port: port)
+        _ = try owner.claim(.playback)
+        _ = try owner.claim(.playback)
+
+        #expect(try owner.release(from: .playback) == .keepLeased(by: [.playback]))
+        #expect(
+            port.calls.activeChanges == [true, true],
+            "还有一次租约在册就把会话关了：\(port.calls.activeChanges)"
+        )
+
+        #expect(try owner.release(from: .playback) == .deactivate)
+        #expect(port.calls.activeChanges == [true, true, false])
+    }
+
+    /// 不持有租约的人归还：**不许**关掉别人的会话，也不许改坏名册。
+    ///
+    /// 这条是「认领/归还必须配对」的守卫：一个从没认领过的组件（例如说房间失败后
+    /// 才走到归还的路径）不能把还在跑的房间关掉。
+    @Test func releasingWithoutALeaseLeavesTheSessionAndTheRegisterAlone() throws {
+        let port = ScriptedAudioSessionPort(snapshot: .unclaimed)
+        let owner = SharedAudioSessionOwner(port: port)
+        _ = try owner.claim(.fullDuplex)   // 房间里有人在跑
+
+        let decision = try owner.release(from: .playback)   // 一个没借过的人来归还
+
+        #expect(decision == .keep(heldBy: .claimed(.fullDuplex)))
+        #expect(
+            port.calls.activeChanges == [true],
+            "一个没持有租约的组件关掉了别人的会话：\(port.calls.activeChanges)"
+        )
+        // 名册没被弄坏：房间那次认领还在，所以它一次归还是真的能关。
+        #expect(try owner.release(from: .fullDuplex) == .deactivate)
+        #expect(port.calls.activeChanges == [true, false])
     }
 
     @Test func releasingDailyReadDeactivatesOnlyWhenItHoldsTheSession() throws {
@@ -94,6 +135,32 @@ import os
 
         #expect(decision == .deactivate)
         #expect(port.calls.activeChanges == [true, false])
+    }
+
+    /// **房间收尾归还时，不许把还在播的每日一读弄哑。**
+    ///
+    /// 房间占着会话时，每日一读是「借」的：它 `claim(.playback)` 只激活、不切类别
+    /// （那是对的，切了会拆掉 input route），但它**在会话上没留下任何痕迹** —— 类别仍是
+    /// `.playAndRecord`，所以从会话派生出来的占用者看起来还是房间。
+    /// 于是今天的 `release(from: .fullDuplex)` 会判定「是我自己占着」→ `setActive(false)`
+    /// → 正在播的朗读当场静音。这正是本票另一个方向上的同类事故。
+    ///
+    /// 这条判据是 R2 的证据：**「谁占了类别」能从进程级类别派生出来，但「谁在借」不能** ——
+    /// `AVAudioSession` 里没有这个信息。要让两条归还路径都安全，主人必须记一份借用者名册。
+    @Test func releasingTheRoomDoesNotSilenceTheDailyReadThatBorrowedIt() throws {
+        let port = ScriptedAudioSessionPort(
+            snapshot: .active(category: .playAndRecord, mode: .voiceChat)
+        )
+        let owner = SharedAudioSessionOwner(port: port)
+        _ = try owner.claim(.playback)
+
+        let decision = try owner.release(from: .fullDuplex)
+
+        #expect(decision == .keep(heldBy: .claimed(.fullDuplex)))
+        #expect(
+            port.calls.activeChanges == [true],
+            "归还时把会话关了 —— 正在播的每日一读被静音：\(port.calls.activeChanges)"
+        )
     }
 
     /// 激活失败要报成会话冲突，而且**把底层错误带出来** ——

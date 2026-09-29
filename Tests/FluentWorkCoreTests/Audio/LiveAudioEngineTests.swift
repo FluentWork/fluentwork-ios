@@ -396,6 +396,86 @@ import Testing
     #expect(sessionOwner.didClaimFullDuplex)
 }
 
+/// **采集起不来时，会话认领必须还回去。**
+///
+/// 认领与归还要配对。一次失败的 `startCapture()` 如果把会话留在「已认领、没人在跑」，
+/// 后果不是「没有声音」，而是**别人的声音被关掉**：会话继续停在 `.playAndRecord`
+/// （路由与 duck 状态），而租约名册上挂着一个永远不归还的名字 —— 那正是一次真机失败
+/// 之后「离开房间，别的 App 的音频再也不恢复」的成因。
+///
+/// `installCaptureTap` 返回一个 error 就代表装 tap 失败（引擎把它当 raise 处理），这是
+/// 唯一能在**认领之后**稳定制造失败的注入点；`armEngine` 也被替掉了，所以无论这台机器
+/// 有没有音频输入设备，这条判据都在同一处抛出。
+@available(iOS 17, macOS 14, *)
+@Test func startCaptureReturnsTheSessionClaimWhenItFails() async {
+    let owner = RecordingSessionOwner()
+    let engine = LiveAudioEngine(
+        sessionOwner: owner,
+        decoder: RawPCM16FrameDecoder(),
+        requestMicrophonePermission: { true },
+        installCaptureTap: { _, _, _ in NSError(domain: "com.fluentwork.tests.tap", code: 1) },
+        startEngine: { _ in },
+        removeCaptureTap: { _ in }
+    )
+
+    var thrown: Error?
+    do {
+        try await engine.startCapture()
+    } catch {
+        thrown = error
+    }
+
+    #expect(thrown != nil, "这条判据要靠一次失败的采集 —— 它居然成功了")
+    #expect(owner.claimCalls == [.fullDuplex])
+    #expect(
+        owner.releaseCalls == [.fullDuplex],
+        "采集失败后没有归还会话，租约永远挂着：\(owner.releaseCalls)"
+    )
+}
+
+/// **归还点在「结束会话」那条路上，而不是 `stopCapture()` 里。**
+///
+/// 这条同时钉两件事，因为它们是同一个决定的两面：
+///
+/// 1. `stopCapture()` **不许**归还 —— 那一刻 AI 音频可能还在收尾，而 deactivate 会让
+///    `AVAudioEngine` 的内部图 uninitialize，下一次 `engine.start()` 撞
+///    `required condition is false: inputNode != nullptr || outputNode != nullptr`
+///    （`LiveAudioEngine.stopCapture()` 尾注记的就是这件事）；
+/// 2. `releaseSessionClaim()` 必须真的去归还 —— 它是「显式结束会话 / 进入后台」两条路径的入口。
+///
+/// 这台机器上没有音频输入设备，所以 `startCapture()` 必然在武装之前抛出、从而走失败回滚
+/// （`owner.releaseCalls` 里那第一次归还）。这条判据的落点因此是**后两次**：
+/// `stopCapture()` 一次都不许加，`releaseSessionClaim()` 必须加一次。
+/// 替身只记录「有没有要求归还」，真实主人那边的「没租约就不许关」由
+/// `AudioSessionPolicyTests.releaseWithoutALeaseNeverDeactivates` 钉住。
+@available(iOS 17, macOS 14, *)
+@Test func releaseSessionClaimIsTheHandBackPointNotStopCapture() async {
+    let owner = RecordingSessionOwner()
+    let engine = LiveAudioEngine(
+        sessionOwner: owner,
+        decoder: RawPCM16FrameDecoder(),
+        requestMicrophonePermission: { true },
+        installCaptureTap: { _, _, _ in nil },
+        startEngine: { _ in },
+        removeCaptureTap: { _ in }
+    )
+
+    try? await engine.startCapture()
+    let afterFailure = owner.releaseCalls
+
+    await engine.stopCapture()
+    #expect(
+        owner.releaseCalls == afterFailure,
+        "stopCapture() 归还了会话：那里的 deactivate 会让引擎内部图 uninitialize，下一次 start 撞断言"
+    )
+
+    await engine.releaseSessionClaim()
+    #expect(
+        owner.releaseCalls == afterFailure + [.fullDuplex],
+        "结束会话没有归还会话：\(owner.releaseCalls)"
+    )
+}
+
 /// `AudioSink.play(pcm:)` —— 带轮次归属的帧的播放出口。
 ///
 /// 这两条是从被删掉的 `EngineAudioSink` 缓冲测试迁过来的不变量（Stage 4）：
@@ -1092,6 +1172,33 @@ final class PermissiveSessionOwner: AudioSessionOwning, @unchecked Sendable {
     var didClaimFullDuplex: Bool {
         queue.sync { claimedRoute == .fullDuplex }
     }
+}
+
+/// 记下**每一次**认领与归还的路线，好让判据断言「配对」而不是「有没有调过」。
+///
+/// `PermissiveSessionOwner` 只答「认领成功了吗」；而本票要钉的是生命周期：
+/// 失败路径必须归还、结束会话必须归还，少一次就是一个永远不归还的租约。
+final class RecordingSessionOwner: AudioSessionOwning, @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.fluentwork.tests.recording-session-owner")
+    private var claims: [AudioRoute] = []
+    private var releases: [AudioRoute] = []
+
+    func claim(_ route: AudioRoute) throws -> AudioSessionClaim {
+        queue.sync { claims.append(route) }
+        return .reconfigure(route)
+    }
+
+    func release(from requester: AudioRoute) throws -> AudioSessionRelease {
+        queue.sync { releases.append(requester) }
+        return .deactivate
+    }
+
+    func occupancy() -> AudioSessionOccupancy {
+        AudioSessionOccupancy(holder: .claimed(.fullDuplex), isLive: true, otherAudioPlaying: false)
+    }
+
+    var claimCalls: [AudioRoute] { queue.sync { claims } }
+    var releaseCalls: [AudioRoute] { queue.sync { releases } }
 }
 
 final class RecordingAudioInterruptionObserver: AudioInterruptionObserving, @unchecked Sendable {

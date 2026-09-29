@@ -288,27 +288,88 @@ import Testing
 
     // MARK: - 归还策略
 
-    /// 归还方向的那一半：**只有**请求者自己占着（或没人占）时才 deactivate。
+    /// 归还方向的那一半：**最后一个在册的租约**离开时才 deactivate。
     ///
     /// 这一半在 2026-09-29 之前没人守，而且是个**活缺陷**：每日一读的 `teardown()`
     /// 无条件 `setActive(false)` ——「朗读放完」会把正在跑的说的房间一起关掉，
     /// 与 2026-09-24 同类，只是方向相反。
     @Test func releaseDeactivatesOnlyWhenTheRequesterHoldsIt() {
         #expect(
-            AudioSessionPolicy.release(from: .playback, given: occupancy(holder: .claimed(.playback)))
-                == .deactivate
+            AudioSessionPolicy.release(
+                from: .playback,
+                given: occupancy(holder: .claimed(.playback)),
+                holdsALease: true,
+                remainingLeases: []
+            ) == .deactivate
         )
         #expect(
-            AudioSessionPolicy.release(from: .playback, given: occupancy(holder: .noOne))
-                == .deactivate
+            AudioSessionPolicy.release(
+                from: .playback,
+                given: occupancy(holder: .noOne),
+                holdsALease: true,
+                remainingLeases: []
+            ) == .deactivate
         )
     }
 
+    /// **房间还在册时，每日一读归还它借来的会话，不许关掉它。**
+    ///
+    /// 上一条的判据从类别推「谁在占」，而这一条只有租约名册答得出来：房间占着 `.playAndRecord`，
+    /// 每日一读借它播（`keepCategory`，只激活不切类别 ⇒ **类别上一点痕迹都没有**）。
     @Test func releasingDailyReadDoesNotDeactivateWhileTheSpeakingRoomHoldsIt() {
         #expect(
-            AudioSessionPolicy.release(from: .playback, given: occupancy(holder: .claimed(.fullDuplex)))
-                == .keep(heldBy: .claimed(.fullDuplex))
+            AudioSessionPolicy.release(
+                from: .playback,
+                given: occupancy(holder: .claimed(.fullDuplex)),
+                holdsALease: true,
+                remainingLeases: [.fullDuplex]
+            ) == .keepLeased(by: [.fullDuplex])
         )
+    }
+
+    /// 反过来：**房间收尾时，正在借的每日一读不能被弄哑。**
+    ///
+    /// 这是同一条事故的另一半，而它在租约模型之前**根本表达不出来** —— 那时从类别看
+    /// 房间自己就是占用者，于是 `deactivate` 看起来完全正确。
+    @Test func releasingTheRoomDoesNotDeactivateWhileTheDailyReadBorrowsIt() {
+        #expect(
+            AudioSessionPolicy.release(
+                from: .fullDuplex,
+                given: occupancy(holder: .claimed(.fullDuplex)),
+                holdsALease: true,
+                remainingLeases: [.playback]
+            ) == .keepLeased(by: [.playback])
+        )
+    }
+
+    /// 不持有租约的归还是一句空话：不许关掉别人的会话。
+    @Test func releaseWithoutALeaseNeverDeactivates() {
+        for holder: AudioSessionHolder in [
+            .claimed(.fullDuplex), .claimed(.playback), .notOurClaim(category: "AVAudioSessionCategorySoloAmbient"),
+        ] {
+            #expect(
+                AudioSessionPolicy.release(
+                    from: .playback,
+                    given: occupancy(holder: holder),
+                    holdsALease: false,
+                    remainingLeases: []
+                ) == .keep(heldBy: holder)
+            )
+        }
+    }
+
+    /// 名册里还有**别的**路线就不许关 —— 哪怕类别看起来是我们自己占着的。
+    @Test func releaseKeepsDeactivatingBlockedWhileAnyOtherLeaseIsOnTheBooks() {
+        for other: AudioRoute in AudioRoute.allCases where other != .fullDuplex {
+            #expect(
+                AudioSessionPolicy.release(
+                    from: .fullDuplex,
+                    given: occupancy(holder: .claimed(.fullDuplex)),
+                    holdsALease: true,
+                    remainingLeases: [other]
+                ) == .keepLeased(by: [other])
+            )
+        }
     }
 
     /// 归还方向仍然保守：类别不是我们设的就不碰。
@@ -319,7 +380,9 @@ import Testing
         #expect(
             AudioSessionPolicy.release(
                 from: .playback,
-                given: occupancy(holder: .notOurClaim(category: "AVAudioSessionCategoryAmbient"))
+                given: occupancy(holder: .notOurClaim(category: "AVAudioSessionCategoryAmbient")),
+                holdsALease: true,
+                remainingLeases: []
             )
                 == .keep(heldBy: .notOurClaim(category: "AVAudioSessionCategoryAmbient"))
         )

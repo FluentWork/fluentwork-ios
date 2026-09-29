@@ -29,12 +29,16 @@ struct ForceCloseMiddlewareTests {
             let ended = await speechClient.endSessionCalled
             let closed = await speechClient.closeTransportCalled
             let stopped = await audioEngine.stopCaptureCalled
-            return ended && closed && stopped
+            let released = await audioEngine.releaseSessionClaimCalled
+            return ended && closed && stopped && released
         }
 
         #expect(await speechClient.endSessionCalled)
         #expect(await speechClient.closeTransportCalled)
         #expect(await audioEngine.stopCaptureCalled)
+        // 进后台是「显式结束会话」那一类，所以共享会话也要还回去 —— 否则 App 退到后台后
+        // 仍永久占着音频会话（别的 App 的声音再也回不来）。
+        #expect(await audioEngine.releaseSessionClaimCalled)
         #expect(store.state.speakingRoom.phase == .ended)
     }
 
@@ -56,6 +60,7 @@ struct ForceCloseMiddlewareTests {
         #expect(await speechClient.endSessionCalled == false)
         #expect(await speechClient.closeTransportCalled == false)
         #expect(await audioEngine.stopCaptureCalled == false)
+        #expect(await audioEngine.releaseSessionClaimCalled == false)
         #expect(store.state.speakingRoom.phase == .idle)
     }
 }
@@ -67,6 +72,8 @@ private final class StubAudioEngineForForceClose: AudioEngineProtocol, @unchecke
     private let continuation: AsyncStream<AudioEngineEvent>.Continuation
     private let _stopCaptureCalled = AsyncValue(false)
     var stopCaptureCalled: Bool { get async { await _stopCaptureCalled.get() } }
+    private let _releaseSessionClaimCalled = AsyncValue(false)
+    var releaseSessionClaimCalled: Bool { get async { await _releaseSessionClaimCalled.get() } }
 
     init() {
         let pair = AsyncStream.makeStream(of: AudioEngineEvent.self)
@@ -76,6 +83,7 @@ private final class StubAudioEngineForForceClose: AudioEngineProtocol, @unchecke
 
     func startCapture() async throws {}
     func stopCapture() async { await _stopCaptureCalled.set(true) }
+    func releaseSessionClaim() async { await _releaseSessionClaimCalled.set(true) }
     func play(pcm: Data) async {}
     func interruptNow() async {}
     func discardActiveSpeech() async {}

@@ -1428,7 +1428,7 @@ struct SpeechSessionMiddlewareEndSessionTests {
         try await waitForPhase(store, phase: .failed)
 
         // The .endSession effect is dispatched by the machine after entering .failed phase.
-        // Wait for it to complete (stopCapture + endSession calls).
+        // Wait for it to complete (stopCapture + releaseSessionClaim + endSession calls).
         try await waitUntil() {
             await speechClient.endSessionCalled
         }
@@ -1436,6 +1436,9 @@ struct SpeechSessionMiddlewareEndSessionTests {
         // Verify cleanup
         #expect(await audioEngine.stopCaptureCalled)
         #expect(await speechClient.endSessionCalled)
+        // 失败也要归还共享会话：否则一次失败的进房间会把会话永久留在「已认领、没人在跑」，
+        // 此后别的 App 的声音回不来（而屏幕上的原因正是被 57 顶掉的那一条，见评审 R5）。
+        #expect(await audioEngine.releaseSessionClaimCalled)
         // Verify failure reason is not nil
         #expect(store.state.speakingRoom.failureReason != nil)
         #expect(store.state.speakingRoom.phase == .failed)
@@ -1899,6 +1902,8 @@ private final class StubAudioEngineForMiddleware: AudioEngineProtocol, @unchecke
 
     private let _stopCaptureCalled = AsyncValue(false)
     var stopCaptureCalled: Bool { get async { await _stopCaptureCalled.get() } }
+    private let _releaseSessionClaimCalled = AsyncValue(false)
+    var releaseSessionClaimCalled: Bool { get async { await _releaseSessionClaimCalled.get() } }
     private let _interruptCalls = AsyncValue(0)
     var interruptCalls: Int { get async { await _interruptCalls.get() } }
     private let _pauseCalls = AsyncValue(0)
@@ -1931,6 +1936,9 @@ private final class StubAudioEngineForMiddleware: AudioEngineProtocol, @unchecke
     }
     func stopCapture() async {
         await _stopCaptureCalled.set(true)
+    }
+    func releaseSessionClaim() async {
+        await _releaseSessionClaimCalled.set(true)
     }
     func play(pcm: Data) async {
         await _playedPCM.update { $0 + [pcm] }

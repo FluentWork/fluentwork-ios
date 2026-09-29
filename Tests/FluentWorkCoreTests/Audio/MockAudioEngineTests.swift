@@ -36,6 +36,37 @@ struct MockAudioEngineTests {
         )
     }
 
+    /// 替身的会话认领也必须**配对**。
+    ///
+    /// `startCapture` 里的 `preparePlaybackSession` 在生产里是一次 `claim(.playback)` 租约；
+    /// 不还的话名册上永远挂着一个名字，于是此后任何一次归还都判「还有人占着」，
+    /// 会话再也不 deactivate。真机用替身跑时这条就是主路径，所以它必须成对。
+    @Test("认领/归还成对：stopCapture 归还会话，releaseSessionClaim 转发给播放引擎")
+    func sessionClaimIsPairedAndForwarded() async {
+        let calls = OSAllocatedUnfairLock(initialState: [String]())
+        let playback = RecordingPlaybackEngine()
+        let engine = MockAudioEngine(
+            script: MockAudioEngine.Script(
+                utteranceDuration: .milliseconds(20),
+                chunkInterval: .milliseconds(20)
+            ),
+            playback: playback,
+            preparePlaybackSession: { calls.withLock { $0.append("prepare") } },
+            releasePlaybackSession: { calls.withLock { $0.append("release") } }
+        )
+
+        try? await engine.startCapture()
+        await engine.stopCapture()
+
+        #expect(calls.withLock { $0 } == ["prepare", "release"])
+
+        await engine.releaseSessionClaim()
+        #expect(
+            await playback.releaseSessionClaimCalls == 1,
+            "替身没把归还会话转发给播放引擎 —— 路由变化那一次认领会永远留在名册上"
+        )
+    }
+
     @Test("endManualSpeech 提前收尾，且整轮只发一次 speechEnded")
     func manualEndClosesTheUtteranceOnce() async {
         let engine = MockAudioEngine(
@@ -245,11 +276,16 @@ private final class CallCounter: @unchecked Sendable {
 private actor RecordingPlaybackEngine: AudioEngineProtocol {
     private(set) var pcmCalls: [Data] = []
     private(set) var interruptCalls = 0
+    /// 替身把「归还会话」转发过来了吗（`MockAudioEngine.releaseSessionClaim`）。
+    private(set) var releaseSessionClaimCalls = 0
 
     private nonisolated let stream = AsyncStream<AudioEngineEvent> { $0.finish() }
 
     func startCapture() async throws {}
     func stopCapture() async {}
+    func releaseSessionClaim() async {
+        releaseSessionClaimCalls += 1
+    }
     nonisolated func events() -> AsyncStream<AudioEngineEvent> {
         stream
     }
