@@ -698,7 +698,14 @@ private func audioEventPump(
                     await dispatchBox.dispatch(.speakingRoom(.session(.captureLive)))
     
                 case let .failed(message):
-                    timings.mark(event: "audio_engine_failed", properties: ["message": message])
+                    // 带**来源**：这个事件名有八个产地（+Playback 的五处、+Capture:89、
+                    // LiveAudioEngine:383/397/404、+Interruption:34），只有一句 message 时
+                    // 事后只能读文案去猜是哪一层。`origin` 至少把「音频栈」与
+                    // 「传输栈」（`session_failed`）分开。
+                    timings.mark(
+                        event: "audio_engine_failed",
+                        properties: ["origin": "audio.engine", "message": message]
+                    )
                     // Close the gate first. The session is over, so nothing more
                     // may be forwarded — and a closed gate is also what makes the
                     // rest of this loop safe: `takeForwardDecision()` then refuses
@@ -1063,6 +1070,16 @@ internal func makeTransportEventRouter(
         else {
             // 原来是 `continue`：跳过这一条事件，继续读下一条。
             return
+        }
+        // 失败要留痕。这条 action 的文案里带着 mapper 有意保留的 domain/code
+        // （`userFacingErrorText`），而在这次改动之前它**只到屏幕**：2026-09-29 那次
+        // 只有 356ms 的会话在后端留了 `write: broken pipe`，客户端一条记录都没有。
+        // 屏幕上有人话 ≠ 事后查得到 —— 判据 `aTransportFailureIsRecordedWithItsOrigin`。
+        if case .session(.failed(let message)) = action {
+            timings.mark(
+                event: "session_failed",
+                properties: ["origin": "transport", "detail": message]
+            )
         }
         await dispatchBox.dispatch(.speakingRoom(action))
     }

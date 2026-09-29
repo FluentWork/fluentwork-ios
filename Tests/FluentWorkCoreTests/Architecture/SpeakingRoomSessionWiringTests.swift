@@ -708,7 +708,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
         ("timing_audio_route_changed", ["reason"]),
         ("timing_audio_engine_configuration_changed", ["is_running"]),
         ("timing_speech_endpointed", ["reason", "window_ms", "trailing_silence_ms"]),
-        ("timing_audio_engine_failed", ["message"]),
+        ("timing_audio_engine_failed", ["origin", "message"]),
     ]
 
     for (name, keys) in expected {
@@ -723,6 +723,41 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
             )
         }
     }
+}
+
+/// **传输层的失败必须留下记录**，而不只是屏幕上一句话。
+///
+/// mapper 有意在文案里保留 domain/code（`userFacingErrorText`），可那条字符串在这次改动
+/// 之前**只到屏幕**：2026-09-29 23:29 那次只有 356ms 的会话在后端留了 `write: broken pipe`，
+/// 客户端一条记录都没有 —— 事后只能靠猜（真机屏幕上是 `[NSPOSIXErrorDomain 57]`）。
+@MainActor
+@Test func aTransportFailureIsRecordedWithItsOrigin() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    let tracker = CapturingTracker()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+    container.tracker.register { tracker }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+    try? await waitUntil { await speechClient.snapshotStartCalls() == 1 }
+
+    speechClient.emit(.failure(.notConnected))
+
+    try? await waitUntil {
+        tracker.events.contains { $0.name == "timing_session_failed" }
+    }
+
+    let hit = tracker.events.first { $0.name == "timing_session_failed" }
+    #expect(hit != nil, "传输失败没有留下任何记录：\(tracker.events.map(\.name))")
+    #expect(hit?.properties["origin"] == "transport", "记录里没有来源维度：\(hit?.properties ?? [:])")
+    #expect(
+        (hit?.properties["detail"] ?? "").isEmpty == false,
+        "记录里没有可查的东西（domain/code 应该在文案里）"
+    )
 }
 
 @MainActor
