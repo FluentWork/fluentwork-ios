@@ -115,12 +115,16 @@ to be — it is prose plus three named instances.
 
 These are measured, not suspected. Fix or work around them deliberately.
 
-1. **`AppEnvironment.local` hardcodes a machine-specific IP.** `AppEnvironment.swift:39-40`
-   points at `192.168.2.156`, while the doc comment directly above it says
-   "Default: 127.0.0.1 (simulator)". In `DEBUG`, `AppEnvironment.current` returns
-   `LOCAL_HOST` if set and otherwise falls back to `.local` — i.e. to that hardcoded
-   address, not to localhost. Set `LOCAL_HOST` in the scheme, or the app will talk to
-   whatever machine that address belonged to. Do not commit a personal IP here.
+1. **`AppEnvironment.local` hardcodes a machine-specific IP — and it is committed.**
+   `AppEnvironment.swift:39-40` points at `192.168.2.185` (committed in `8b99b81`), while the
+   doc comment directly above it says "Default: 127.0.0.1 (simulator)". In `DEBUG`,
+   `AppEnvironment.current` returns `LOCAL_HOST` if set and otherwise falls back to `.local` —
+   i.e. to that hardcoded address, not to localhost. Set `LOCAL_HOST` in the scheme, or the app
+   will talk to whatever machine that address belonged to. Do not commit a personal IP here:
+   the value has already moved three times (`192.168.2.156` → `.181` → `.185`), which is what a
+   per-machine value living in a tracked file looks like. `TestProcess`-scoped access uses
+   `TEST_LOCAL_HOST` with a `127.0.0.1` fallback (`AppEnvironment.swift:56-62`) — that is the
+   shape the non-test path needs.
 2. **`wssBaseURL` is a dead field.** The WSS address the client actually uses comes
    from the `POST /sessions` response (`wss_url`), not from `AppEnvironment`.
    `AppEnvironment` only governs the HTTP base URL, so a wrong host there produces
