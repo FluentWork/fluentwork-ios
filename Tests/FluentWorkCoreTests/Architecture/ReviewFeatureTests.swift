@@ -297,6 +297,174 @@ import TGReduxKitTesting
     #expect(store.state.review.acceptErrorMessage == "accept denied")
 }
 
+// MARK: - D2 · 可丢弃（PRD §7.2 D2）
+
+/// 丢弃一张卡：它从学员眼前消失，也不会被送进语料库。
+///
+/// **原始产出不动**（`payload.refineCards` 仍是服务端给的那一份）：丢弃是学员的取舍，
+/// 不是对产出的改写 —— 否则撤回就只能重新拉一次回顾，而回顾生成是有成本的。
+@Test func discardingARefineCardHidesItFromTheLearner() throws {
+    let payload = try makeReadyPayload()
+    let cardID = try #require(payload.refineCards.first?.id)
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+
+    store.send(.review(.applyPoll(ReviewPollResponse(sessionID: "s-1", status: .ready, review: payload))))
+    #expect(store.state.review.visibleRefineCards.count == 1)
+
+    store.send(.review(.discardRefineCardTapped(cardID: cardID)))
+
+    #expect(
+        store.state.review.discardedRefineCardIDs == [cardID],
+        "丢弃没有落到状态上"
+    )
+    #expect(
+        store.state.review.visibleRefineCards.isEmpty,
+        "丢弃之后这张卡还在视图里：\(store.state.review.visibleRefineCards.map(\.id))"
+    )
+    #expect(
+        store.state.review.payload?.refineCards.count == 1,
+        "丢弃改写了服务端给的产出 —— 撤回就只剩「重新拉一次回顾」这条路"
+    )
+}
+
+/// 丢弃要能撤回。
+///
+/// 没有撤回的丢弃是一条**单行道**：点错一次就永久少一张卡，而回顾页没有别的入口能找回来
+/// （产出是服务端给的一份快照）。
+@Test func aDiscardedCardCanBeBroughtBack() throws {
+    let payload = try makeReadyPayload()
+    let cardID = try #require(payload.refineCards.first?.id)
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+    store.send(.review(.applyPoll(ReviewPollResponse(sessionID: "s-1", status: .ready, review: payload))))
+
+    store.send(.review(.discardRefineCardTapped(cardID: cardID)))
+    #expect(store.state.review.visibleRefineCards.isEmpty)
+
+    store.send(.review(.restoreRefineCardTapped(cardID: cardID)))
+    #expect(store.state.review.discardedRefineCardIDs.isEmpty, "撤回没有把丢弃拿掉")
+    #expect(store.state.review.visibleRefineCards.map(\.id) == [cardID], "撤回之后卡没回来")
+}
+
+/// 丢弃**不许跨回顾存活**。
+///
+/// 卡的 id 是**内容派生**的（`expressionEN-anchorUserSaid`），所以两个会话完全可能产出同一个
+/// id。丢弃集合若跨会话存活，B 会话里那张同 id 的卡会被 A 会话的丢弃**静默藏起来** ——
+/// 学员只看到「少了一张」，没有任何东西告诉他为什么。
+///
+/// 同一条理由要求新一版产出也剪枝：服务端重出一份回顾时，卡可能已经不是同一批了。
+@Test func discardsDoNotOutliveTheirReview() throws {
+    let payload = try makeReadyPayload()
+    let cardID = try #require(payload.refineCards.first?.id)
+
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+    store.send(.review(.applyPoll(ReviewPollResponse(sessionID: "s-1", status: .ready, review: payload))))
+    store.send(.review(.discardRefineCardTapped(cardID: cardID)))
+    #expect(store.state.review.discardedRefineCardIDs == [cardID])
+
+    store.send(.review(.loadRequested(sessionID: "s-2")))
+    #expect(
+        store.state.review.discardedRefineCardIDs.isEmpty,
+        "丢弃跟着学员跨了会话 —— 新会话里同 id 的卡会被静默藏起来"
+    )
+
+    // 新一版产出里没有那张卡：集合里剩下的名字要剪掉。
+    var seeded = AppState.initial
+    seeded.review.sessionID = "s-1"
+    seeded.review.discardedRefineCardIDs = ["已经不存在的卡"]
+    let second = TestStore(initialState: seeded, reducer: appReducer)
+    second.send(.review(.applyPoll(ReviewPollResponse(sessionID: "s-1", status: .ready, review: payload))))
+    #expect(
+        second.state.review.discardedRefineCardIDs.isEmpty,
+        "上一轮的丢弃粘在了新产出上：\(second.state.review.discardedRefineCardIDs)"
+    )
+}
+
+/// 丢弃的卡**连请求都不许发**。
+///
+/// 判据落在中间件而不是 reducer：接收入口那道 guard 若仍按 `payload.refineCards` 查卡，
+/// 被丢弃的卡照样能入库 —— 学员会看到它一边从眼前消失、一边出现在语料库里。
+@MainActor
+@Test func aDiscardedCardIsNeverSentToTheCorpus() async throws {
+    let payload = try makeReadyPayload()
+    let card = try #require(payload.refineCards.first)
+    let calls = AcceptCallCounter()
+
+    let container = Container()
+    container.corpusClient.register {
+        RecordingAcceptCorpusClient { _, _ in
+            calls.bump()
+            return try makeBatchAcceptResponse(acceptedCount: 1)
+        }
+    }
+
+    var initialState = AppState.initial
+    initialState.review.sessionID = "s-1"
+    initialState.review.phase = .ready
+    initialState.review.payload = payload
+
+    let store = AppStoreFactory.make(container: container, initialState: initialState)
+    store.dispatch(.review(.discardRefineCardTapped(cardID: card.id)))
+    store.dispatch(.review(.acceptRefineCardTapped(cardID: card.id)))
+
+    // 给那条本该被 guard 挡住的 `.task` 足够的时间出错。
+    try await Task.sleep(for: .milliseconds(300))
+
+    #expect(calls.count == 0, "丢弃的卡还是被送进了语料库")
+    #expect(store.state.review.acceptingRefineCardIDs.isEmpty, "丢弃的卡进了「入库中」")
+    #expect(store.state.review.acceptedRefineCardIDs.isEmpty)
+}
+
+private final class AcceptCallCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func bump() {
+        lock.lock()
+        defer { lock.unlock() }
+        value += 1
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
+
+private final class RecordingAcceptCorpusClient: CorpusClientProtocol, @unchecked Sendable {
+    private let handler: @Sendable (String, [RefineCard]) async throws -> BatchAcceptBlocksResponse
+
+    init(
+        handler: @escaping @Sendable (String, [RefineCard]) async throws -> BatchAcceptBlocksResponse
+    ) {
+        self.handler = handler
+    }
+
+    func listBlocks(
+        cursor: String?,
+        updatedAfter: String?,
+        limit: Int?,
+        favoriteOnly: Bool
+    ) async throws -> ListPhraseBlocksResponse {
+        throw APIError.backend(code: "unexpected", message: "unused")
+    }
+
+    func setFavorite(blockID: String, isFavorite: Bool, pinned: Bool) async throws -> PhraseBlock {
+        throw APIError.backend(code: "unexpected", message: "unused")
+    }
+
+    func deleteBlock(blockID: String) async throws {
+        throw APIError.backend(code: "unexpected", message: "unused")
+    }
+
+    func batchAccept(
+        sourceSessionID: String,
+        cards: [RefineCard]
+    ) async throws -> BatchAcceptBlocksResponse {
+        try await handler(sourceSessionID, cards)
+    }
+}
+
 private func makeReadyPayload() throws -> ReviewReadyPayload {
     let payload = Data(
         """
