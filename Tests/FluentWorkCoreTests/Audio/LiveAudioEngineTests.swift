@@ -77,7 +77,7 @@ import Testing
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineStartsPlaybackForScheduledAudio() async {
     let decoder = RawPCM16FrameDecoder()
-    let engine = LiveAudioEngine(decoder: decoder)
+    let engine = LiveAudioEngine(sessionOwner: PermissiveSessionOwner(), decoder: decoder)
 
     #expect(await engine._testPlaybackStarted() == false)
 
@@ -95,6 +95,7 @@ import Testing
     struct EngineRefusedToStart: Error {}
     let decoder = RawPCM16FrameDecoder()
     let engine = LiveAudioEngine(
+        sessionOwner: PermissiveSessionOwner(),
         decoder: decoder,
         startEngine: { _ in throw EngineRefusedToStart() }
     )
@@ -131,7 +132,7 @@ import Testing
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineRetiresPlaybackWhenCaptureStops() async {
     let decoder = RawPCM16FrameDecoder()
-    let engine = LiveAudioEngine(decoder: decoder)
+    let engine = LiveAudioEngine(sessionOwner: PermissiveSessionOwner(), decoder: decoder)
 
     // Live session: playback works.
     await engine.play(pcm: Data(repeating: 0x01, count: 8))
@@ -181,6 +182,7 @@ import Testing
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineStartCaptureFailsWhenPermissionDenied() async {
     let engine = LiveAudioEngine(
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         requestMicrophonePermission: { false }
     )
@@ -206,6 +208,7 @@ import Testing
 @available(iOS 17, macOS 14, *)
 @Test func aStartThatReturnsWithoutStartingTheEngineNamesThatCauseAndTheSession() async {
     let engine = LiveAudioEngine(
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         startEngine: { _ in }
     )
@@ -232,6 +235,7 @@ import Testing
 @available(iOS 17, macOS 14, *)
 @Test func aStartFailureDuringAnInterruptionSaysSo() async {
     let engine = LiveAudioEngine(
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         startEngine: { _ in }
     )
@@ -249,6 +253,7 @@ import Testing
 @Test func aStartThatThrowsReportsTheErrorItThrew() async {
     struct EngineRefusedToStart: Error {}
     let engine = LiveAudioEngine(
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         startEngine: { _ in throw EngineRefusedToStart() }
     )
@@ -284,6 +289,7 @@ import Testing
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineManualSpeechEmitsStartAndEnd() async {
     let engine = LiveAudioEngine(
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         requestMicrophonePermission: { true }
     )
@@ -312,7 +318,7 @@ import Testing
 /// `FoundationComponentsTests`.
 @available(iOS 17, macOS 14, *)
 @Test func endingAManualTurnReportsHowItClosed() async {
-    let engine = LiveAudioEngine(decoder: RawPCM16FrameDecoder())
+    let engine = LiveAudioEngine(sessionOwner: PermissiveSessionOwner(), decoder: RawPCM16FrameDecoder())
     let stream = engine.events()
 
     await engine.beginManualSpeech()
@@ -333,6 +339,7 @@ import Testing
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineManualSpeechStartIsIdempotent() async {
     let engine = LiveAudioEngine(
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         requestMicrophonePermission: { true }
     )
@@ -483,7 +490,7 @@ import Testing
 /// **真正会出声**的那条路径上，而不是一个没有生产接线、只是长得像播放器的 actor。
 @available(iOS 17, macOS 14, *)
 @Test func playPCMSchedulingRejectsAnOddByteCount() async {
-    let engine = LiveAudioEngine(decoder: RawPCM16FrameDecoder())
+    let engine = LiveAudioEngine(sessionOwner: PermissiveSessionOwner(), decoder: RawPCM16FrameDecoder())
     let stream = engine.events()
 
     await engine.play(pcm: Data([0x01, 0x02, 0x03]))
@@ -501,7 +508,7 @@ import Testing
 
 @available(iOS 17, macOS 14, *)
 @Test func playPCMSchedulingRejectsEmptyPCM() async {
-    let engine = LiveAudioEngine(decoder: RawPCM16FrameDecoder())
+    let engine = LiveAudioEngine(sessionOwner: PermissiveSessionOwner(), decoder: RawPCM16FrameDecoder())
     let stream = engine.events()
 
     await engine.play(pcm: Data())
@@ -514,7 +521,7 @@ import Testing
 
 @available(iOS 17, macOS 14, *)
 @Test func playPCMSchedulingStartsPlaybackForScheduledAudio() async {
-    let engine = LiveAudioEngine(decoder: RawPCM16FrameDecoder())
+    let engine = LiveAudioEngine(sessionOwner: PermissiveSessionOwner(), decoder: RawPCM16FrameDecoder())
 
     #expect(await engine._testPlaybackStarted() == false)
 
@@ -556,7 +563,7 @@ private func consumeFirstEvent<T: Sendable>(
 
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineInterruptRecordsTimestampWithinLatencyBudget() async {
-    let engine = LiveAudioEngine(decoder: RawPCM16FrameDecoder())
+    let engine = LiveAudioEngine(sessionOwner: PermissiveSessionOwner(), decoder: RawPCM16FrameDecoder())
 
     let before = ContinuousClock.now
     await engine.interruptNow()
@@ -602,7 +609,7 @@ private func consumeFirstEvent<T: Sendable>(
         }
     }
 
-    let engine = LiveAudioEngine(decoder: RawPCM16FrameDecoder())
+    let engine = LiveAudioEngine(sessionOwner: PermissiveSessionOwner(), decoder: RawPCM16FrameDecoder())
     let pcm = try #require(
         try engine._testConvertToPCM16(input, from: sourceFormat),
         "tap chain should produce PCM16 bytes"
@@ -796,7 +803,7 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
         }
     }
 
-    let engine = LiveAudioEngine(decoder: RawPCM16FrameDecoder())
+    let engine = LiveAudioEngine(sessionOwner: PermissiveSessionOwner(), decoder: RawPCM16FrameDecoder())
     let pcm = try #require(
         try engine._testConvertToPCM16(input, from: source),
         "the tap chain should produce PCM16 bytes"
@@ -981,6 +988,7 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
 @Test func liveAudioEngineStartAndStopInterruptionObservationRecordsCalls() async {
     let observer = RecordingAudioInterruptionObserver()
     let engine = LiveAudioEngine(
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         interruptionObserver: observer
     )
@@ -995,6 +1003,7 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineHandleBeganYieldsInterruptedBySystemWithoutStartCapture() async {
     let engine = LiveAudioEngine(
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         interruptionObserver: RecordingAudioInterruptionObserver()
     )
@@ -1011,6 +1020,7 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineHandleRouteChangedYieldsFailedRouteChanged() async {
     let engine = LiveAudioEngine(
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         interruptionObserver: RecordingAudioInterruptionObserver()
     )
@@ -1029,6 +1039,7 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineHandleEndedShouldResumeFalseDoesNotYieldSystemInterruptEnded() async {
     let engine = LiveAudioEngine(
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         interruptionObserver: RecordingAudioInterruptionObserver()
     )
@@ -1055,6 +1066,7 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineReportsAnInterruptionItCannotResume() async {
     let engine = LiveAudioEngine(
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         interruptionObserver: RecordingAudioInterruptionObserver()
     )
@@ -1077,6 +1089,7 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineHandleEndedShouldResumeTrueAfterBeganYieldsSystemInterruptEnded() async {
     let engine = LiveAudioEngine(
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         interruptionObserver: RecordingAudioInterruptionObserver()
     )
@@ -1102,6 +1115,7 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineCountsBuffersDroppedDuringAnInterruption() async throws {
     let engine = LiveAudioEngine(
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         interruptionObserver: RecordingAudioInterruptionObserver()
     )
@@ -1430,7 +1444,7 @@ final class VoiceProcessingRecorder: @unchecked Sendable {
 /// still speaking" used to kill 「开始说话」 on the next session.
 @available(iOS 17, macOS 14, *)
 @Test func stopCaptureDropsLateFramesWithoutFailingTheEngine() async {
-    let engine = LiveAudioEngine(decoder: RawPCM16FrameDecoder())
+    let engine = LiveAudioEngine(sessionOwner: PermissiveSessionOwner(), decoder: RawPCM16FrameDecoder())
     let stream = engine.events()
 
     await engine.play(pcm: Data(repeating: 0x01, count: 8))
@@ -1455,7 +1469,7 @@ final class VoiceProcessingRecorder: @unchecked Sendable {
 /// 但不得把 player 重新 play() 起来。确定之后才走 stopCapture。
 @available(iOS 17, macOS 14, *)
 @Test func pausePlaybackHoldsThePlayerWithoutRetiringIt() async {
-    let engine = LiveAudioEngine(decoder: RawPCM16FrameDecoder())
+    let engine = LiveAudioEngine(sessionOwner: PermissiveSessionOwner(), decoder: RawPCM16FrameDecoder())
     let stream = engine.events()
 
     await engine.play(pcm: Data(repeating: 0x01, count: 8))

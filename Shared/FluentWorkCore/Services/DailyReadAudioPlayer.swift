@@ -50,7 +50,9 @@ public final class DailyReadAudioPlayer: NSObject, DailyReadAudioPlayerProtocol,
 
   private var didFinishObserver: NSObjectProtocol?
 
-  public init(sessionOwner: any AudioSessionOwning = SharedAudioSessionOwner()) {
+  /// `sessionOwner` 没有默认值，理由与 `LiveAudioEngine` 同：默认值会造出第二个主人，
+  /// 而互斥锁是实例属性。
+  public init(sessionOwner: any AudioSessionOwning) {
     self.sessionOwner = sessionOwner
     let pair = AsyncStream.makeStream(
       of: DailyReadAudioEvent.self,

@@ -74,32 +74,55 @@ public enum DeviceScenarioDriver {
         _ = await wait(seconds: 10) { store.state.speakingRoom.phase != .idle }
         log("room entered phase=\(store.state.speakingRoom.phase.rawValue)")
 
-        // ③ 开始说话。抄自 `HostRootView.swift:89` 的 `.manualSpeechBegin`
-        //    （真机上是「开始说话」那个按钮；这里由麦克风替身把那一轮说完）。
+        // ③ **起会话**。抄自 `HostRootView.swift:874-883` 的 `restartOrStartSpeakingSession()`
+        //    —— 真机上就是那个「开始 / 重新开始」按钮，它派的正是 `.sessionStartTap`。
+        //
+        //    ⚠️ 这一步以前派的是 `.manualSpeechBegin`（=「开始说话」那个按钮），于是驱动
+        //    **永远停在 `.idle`**：会话从头到尾没被创建。而它当时把这件事报成
+        //    「30 秒内没有进入采集」—— 判据在指责被测对象，错的是**派 action 的人**。
+        //    23:28 那次 `room+daily` 的 FAIL 就是这个。
+        store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+        _ = await wait(seconds: 10) { store.state.speakingRoom.phase == .connecting }
+        log("session start tapped phase=\(store.state.speakingRoom.phase.rawValue)")
+
+        // 然后才是「开始说话」。抄自 `HostRootView.swift:89` 的 `.manualSpeechBegin`
+        // （替身会替人把这一轮说完）。房间要离开「连接中」需要 `socketReady` **与**
+        // `captureLive` 两半，后者正是替身交付第一块 PCM 时上报的 `.captureFirstBuffer`。
         store.dispatch(.speakingRoom(.manualSpeechBegin))
         let captureStarted = await wait(seconds: 30) {
-            store.state.speakingRoom.phase == .recording
-                || store.state.speakingRoom.phase == .processing
+            let phase = store.state.speakingRoom.phase
+            return phase == .aiSpeaking || phase == .waitingUser
+                || phase == .recording || phase == .processing
         }
         log("capture started=\(captureStarted) phase=\(store.state.speakingRoom.phase.rawValue)")
         let afterCapture = logSession("after-capture-start")
 
+        // 房间真正认领的那条路线。**替身模式下是 `.playback`**：`MockAudioEngine.startCapture`
+        // 刻意不走 record 路径（否则系统会全程显示麦克风在用）。所以期望值从**路线**推导，
+        // 而不是写死 `.playAndRecord` —— 写死的那一版在替身模式下永远不可能成立，
+        // 而那正是我们唯一能无人值守跑的模式。
+        let route: AudioRoute = MockDeviceMode.isMicrophoneMocked ? .playback : .fullDuplex
+        let expected = route.configuration
+
         // **验收 1**：类别必须真的落到系统。单测只能证明「我们决定要配成什么」，
         // 证不了 `setCategory` 真的被系统接受了 —— 这一行才是那个证据。
         if captureStarted {
-            if afterCapture.category != AudioSessionCategory.playAndRecord.rawValue {
+            if afterCapture.category != expected.category.rawValue {
                 failures.append(
-                    "采集开始后类别是 \(afterCapture.category)，期望 \(AudioSessionCategory.playAndRecord.rawValue)"
+                    "采集开始后类别是 \(afterCapture.category)，期望 \(expected.category.rawValue)（\(route.rawValue)）"
                 )
             }
-            if afterCapture.mode != AudioSessionMode.voiceChat.rawValue {
-                failures.append("采集开始后模式是 \(afterCapture.mode)，期望 \(AudioSessionMode.voiceChat.rawValue)")
+            if afterCapture.mode != expected.mode.rawValue {
+                failures.append("采集开始后模式是 \(afterCapture.mode)，期望 \(expected.mode.rawValue)")
             }
-            if !afterCapture.reportsASampleRate {
-                failures.append("采集开始后采样率是 0 —— 会话没被激活")
+            // 「活着」的证据是**我们自己认领着**，不是采样率非 0：真机上我们从没认领过的会话
+            // 也报 48000（见 `reportsASampleRate` 的注释）。采样率只进日志。
+            let holder = AudioSessionOccupancy.derive(from: afterCapture).holder
+            if holder != .claimed(route) {
+                failures.append("采集开始后占用者是 \(holder.label)，期望 claimed(\(route.rawValue))")
             }
         } else {
-            failures.append("30 秒内没有进入采集（phase=\(store.state.speakingRoom.phase.rawValue)）")
+            failures.append("30 秒内没有离开「连接中」（phase=\(store.state.speakingRoom.phase.rawValue)）")
         }
 
         // ④ 房间**还在跑**的时候播每日一读。
@@ -114,10 +137,9 @@ public enum DeviceScenarioDriver {
             )
             let afterDailyRead = logSession("after-daily-read-play")
 
-            // **验收 2（2026-09-24 事故的回归）**：朗读认领播放时，房间占着的
-            // `.playAndRecord` 必须**原样不动** —— 切走它会拆掉 input route，
-            // 让正在跑的引擎一行代码都不执行地停。
-            if afterDailyRead.category != AudioSessionCategory.playAndRecord.rawValue {
+            // **验收 2（2026-09-24 事故的回归）**：朗读认领播放时，房间占着的类别必须
+            // **原样不动** —— 切走它会拆掉 input route，让正在跑的引擎一行代码都不执行地停。
+            if afterDailyRead.category != expected.category.rawValue {
                 failures.append(
                     "朗读开播后类别变成了 \(afterDailyRead.category) —— 房间的 input route 被拆掉了"
                 )

@@ -36,6 +36,47 @@ struct MockAudioEngineTests {
         )
     }
 
+    /// **交付第一块 PCM 之前上报 `.captureFirstBuffer`，且整条进程只报一次。**
+    ///
+    /// 房间的 `.connecting` 等的是 `socketReady` **与** `captureLive` 两半，而后者只由这条
+    /// 事件打开（`SpeechSessionMachine`）。真引擎的它来自采集 tap 的第一次回调；
+    /// 替身没有 tap，它交付的第一个 buffer 就是这一块 —— 不上报它，替身模式下房间会一直
+    /// 停在「连接中」，10 秒后被 connectWait 判成「连接超时」，而真相是替身没有食言、
+    /// 只是没人告诉房间它交付了。
+    @Test("第一块 PCM 之前上报一次 .captureFirstBuffer，第二轮不再报")
+    func captureFirstBufferIsReportedOnceBeforeTheFirstChunk() async {
+        let engine = MockAudioEngine(
+            script: MockAudioEngine.Script(
+                utteranceDuration: .milliseconds(60),
+                chunkInterval: .milliseconds(20)
+            ),
+            playback: RecordingPlaybackEngine()
+        )
+        let stream = engine.events()
+
+        await engine.beginManualSpeech()
+        let events = await collect(stream, stoppingAt: .speechEnded)
+
+        let firstBuffer = events.firstIndex(of: .captureFirstBuffer)
+        let firstChunk = events.firstIndex { event in
+            if case .pcmChunk = event { return true }
+            return false
+        }
+        #expect(firstBuffer != nil, "没有上报首个 buffer：\(events)")
+        #expect(firstChunk != nil)
+        if let firstBuffer, let firstChunk {
+            #expect(firstBuffer < firstChunk, "顺序反了：房间要的是「交付了」发生在第一块之前")
+        }
+        #expect(
+            events.filter { $0 == .captureFirstBuffer }.count == 1,
+            "这条事件的含义是「**第一次**」，报多次就是撒谎"
+        )
+
+        await engine.beginManualSpeech()
+        let second = await collect(stream, stoppingAt: .speechEnded)
+        #expect(!second.contains(.captureFirstBuffer), "第二轮又报了一次")
+    }
+
     /// 替身的会话认领也必须**配对**。
     ///
     /// `startCapture` 里的 `preparePlaybackSession` 在生产里是一次 `claim(.playback)` 租约；

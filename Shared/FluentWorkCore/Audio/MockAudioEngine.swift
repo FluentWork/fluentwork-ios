@@ -114,6 +114,8 @@ public actor MockAudioEngine: AudioEngineProtocol {
     private var isSpeaking = false
     /// 正弦相位在块之间连续，拼起来才是一个音而不是每 20ms 一个小咔哒。
     private var sampleOffset = 0
+    /// 整条进程只报一次 `.captureFirstBuffer`（与真引擎的 tap 第一次回调同形）。
+    private var hasReportedFirstBuffer = false
 
     public init(
         script: Script,
@@ -203,6 +205,15 @@ public actor MockAudioEngine: AudioEngineProtocol {
 
     private func emitChunk() async {
         guard isSpeaking else { return }
+        // 真引擎的「首个 buffer」来自采集 tap 的第一次回调，而房间的 `.connecting` **等的就是
+        // 它**（`socketReady` 与 `captureLive` 两半都要到，见 `SpeechSessionMachine`）。
+        // 替身没有 tap，它交付的第一个 buffer 就是这一块 —— 不上报这一条，替身模式下房间
+        // 永远停在「连接中」，直到 10 秒的 connectWait 把它判失败：那时驱动看到的是
+        // 「采集没起来」，而真相是**替身没有食言，只是没人告诉房间它交付了**。
+        if !hasReportedFirstBuffer {
+            hasReportedFirstBuffer = true
+            continuation.yield(.captureFirstBuffer)
+        }
         continuation.yield(.pcmChunk(Self.toneChunk(offset: sampleOffset)))
         sampleOffset += Self.samplesPerChunk
     }

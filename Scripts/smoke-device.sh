@@ -10,18 +10,20 @@
 #      failable）就是这样从腿 1 漏过去的，只有腿 2 抓到；
 #   2. 应用能在真机上安装并启动，且 `[Tracker]` 遥测能被采到（stdout 经 `--console`）。
 #
-# **不证明**（要人点屏幕，见下面的「已知缺口」）：
-#   - 会话类别真的落到了系统（要起一个练习会话才走 `claim(.fullDuplex)`）；
-#   - 「房间在跑时每日一读不拆 input route」的端到端（要两次 UI 交互）；
+# **不证明**：
 #   - barge-in 与断线重连（`iOS-S0-3`，需要一次 >5 秒的回复）。
 #
-# ## 已知缺口（也是这张票的副产品发现）
+# ## `SCENARIO` 与替身的**边界**（别再让这两件事互相打脸）
 #
-# 仓里**已经有** `DebugBootstrapConfiguration.configureLaunchArgumentOverride()` 定义了
-# `--speaking-room-first` 等参数，但它**零调用点**（从没接进启动流程）；而 feature flag
-# 的 `DebugProvider` 是纯内存的，没有 env / UserDefaults 种子。
-# ⇒ 目前**没有任何办法**让人不碰屏幕就起一个会话，于是每次真机验证都要人守着。
-# 这是下一张小票（F6-c）该做的事，本脚本只把「不需要人」的那一半自动化掉。
+# 替身模式（`FW_MOCK_MIC=1`，本脚本默认开）下，房间认领的是 **`.playback`**
+# （`MockAudioEngine.startCapture` 刻意不走 record 路径 —— 否则系统会全程显示麦克风在用）。
+# 所以驱动里「采集开始后类别必须是 `playAndRecord`」那条判据**在替身模式下不可能成立**，
+# 它现在按 `MockDeviceMode` 推导期望的路线（`AudioRoute`），两种模式都自洽。
+# 要验生产那条 `.playAndRecord`，把 `FW_MOCK_MIC` 关掉跑（那就需要有人对着手机说话）。
+#
+# 驱动的第 ③ 步派的是 `.sessionStartTap`（=「开始 / 重新开始」按钮），**能自己起会话** ——
+# 它以前派的是 `.manualSpeechBegin`，于是永远停在 `.idle`，而判据还把这件事报成
+# 「30 秒内没有进入采集」。那次 FAIL 的根因是派 action 的人，不是被测对象。
 #
 # 用法：
 #   Scripts/smoke-device.sh                 # 默认 60 秒观察窗（只验「能起来」）

@@ -100,7 +100,12 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     private let removeCaptureTap: @Sendable (AVAudioEngine) -> Void
 
     public init(
-        sessionOwner: any AudioSessionOwning = SharedAudioSessionOwner(),
+        // **没有默认值**：默认值会凭空造出第二个主人，而它带着**自己的**锁
+        // （`SharedAudioSessionOwner.gate` 是实例属性）—— 两个主人之间没有任何互斥，
+        // 而「说的房间与每日一读在不同线程上认领同一个进程级对象」正是那把锁存在的理由。
+        // 「唯一」在文件层有守卫（`AudioSessionOwnershipGuardTests`），在实例层靠这里：
+        // 想拿一个主人，必须从容器里取。
+        sessionOwner: any AudioSessionOwning,
         decoder: any WSAudioFrameDecoder = RawPCM16FrameDecoder(),
         interruptionObserver: any AudioInterruptionObserving = AudioInterruptionObserver(),
         requestMicrophonePermission: @escaping @Sendable () async -> Bool = {

@@ -17,8 +17,19 @@ import Testing
 /// 所以这里把「唯一」变成机器可判的：配置会话的两条 API 只许出现在主人文件里。
 @Suite struct AudioSessionOwnershipGuardTests {
 
-    /// 两条**会改变进程级会话**的调用。它们是事故的直接手段。
-    private static let configuringCalls = ["setCategory(", "setActive("]
+    /// **全部会改变进程级会话的调用**。它们都是事故的手段，不只是当初那两条。
+    ///
+    /// 第一版只钉了 `setCategory` / `setActive`。其余几个同样能改会话（`setMode` 会换掉
+    /// 加工方式、`setPreferred*` 会换掉硬件格式），而它们当时不在针脚里 ——
+    /// 名单里的豁免文件因此可以「从第二条守卫下面绕过去」。
+    private static let configuringCalls = [
+        "setCategory(",
+        "setActive(",
+        "setMode(",
+        "setPreferredSampleRate(",
+        "setPreferredIOBufferDuration(",
+        "overrideOutputAudioPort(",
+    ]
 
     /// 仍然直接取共享会话对象的文件，以及**为什么它那样做不构成所有权**。
     ///
@@ -65,6 +76,31 @@ import Testing
             这些文件直接引用了 `AVAudioSession.sharedInstance()`，但不在豁免名单里：
             \(offenders.joined(separator: "\n"))
             要么改成走主人，要么在名单里写下「为什么这不构成所有权」。
+            """
+        )
+    }
+
+    /// **唯一主人只许在容器里被造出来。**
+    ///
+    /// 上面两条守卫管的是**文件**层的唯一（谁可以碰 `AVAudioSession`）；这一条管**实例**层：
+    /// `SharedAudioSessionOwner` 带着自己的锁（`gate` 是实例属性），所以两个实例之间
+    /// 没有任何互斥 —— 而「说的房间与每日一读在不同线程上认领同一个进程级对象」
+    /// 正是那把锁存在的理由。
+    ///
+    /// 两个消费者（`LiveAudioEngine` / `DailyReadAudioPlayer`）的构造器原本各有一个
+    /// `= SharedAudioSessionOwner()` 默认值，那就是「凭空造第二个主人」的入口。
+    /// 默认值已经删掉（强制从容器取），这条守卫防的是它悄悄回来。
+    @Test func theOwnerIsOnlyConstructedByTheContainer() throws {
+        let offenders = try Self.offenders(for: ["SharedAudioSessionOwner("], allowed: [
+            "Shared/FluentWorkCore/Dependencies/AppDependencies.swift": "唯一注册点",
+        ].keys.map { $0 })
+
+        #expect(
+            offenders.isEmpty,
+            """
+            这些文件自己造了一个会话主人，而它带着**自己的**锁：
+            \(offenders.joined(separator: "\n"))
+            请从容器取（`container.audioSessionOwner()`）—— 两个主人之间没有任何互斥。
             """
         )
     }
