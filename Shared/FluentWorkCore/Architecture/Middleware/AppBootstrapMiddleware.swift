@@ -216,9 +216,11 @@ public func reviewMiddleware(container: Container) -> Middleware<AppState, AppAc
         case let .review(.acceptRefineCardTapped(cardID)):
             guard let sessionID = store.state.review.sessionID,
                   !sessionID.isEmpty,
-                  // 按**学员看得见的那几张**查卡，不按产出的原文：被丢弃的卡连请求都不该发，
-                  // 否则它一边从眼前消失、一边出现在语料库里（D2「可丢弃」）。
-                  let card = store.state.review.visibleRefineCards.first(where: { $0.id == cardID }),
+                  // 按**学员看得见的那一张**取卡，不按产出的原文：被丢弃的卡连请求都不该发
+                  // （否则它一边从眼前消失、一边出现在语料库里），而且要取**草稿**那一版
+                  // （否则学员改完点入库，进语料库的还是原话）。`forKey:` 用的是稳定键 ——
+                  // 卡自己的 id 是内容派生的，编辑之后就不再是它了。
+                  let entry = store.state.review.visibleRefineCard(forKey: cardID),
                   !store.state.review.acceptingRefineCardIDs.contains(cardID),
                   !store.state.review.acceptedRefineCardIDs.contains(cardID)
             else {
@@ -235,7 +237,7 @@ public func reviewMiddleware(container: Container) -> Middleware<AppState, AppAc
                     do {
                         let response = try await corpusClient.batchAccept(
                             sourceSessionID: sessionID,
-                            cards: [card]
+                            cards: [entry.card]
                         )
                         guard !Task.isCancelled else { return nil }
                         return .review(

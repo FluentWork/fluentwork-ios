@@ -414,6 +414,189 @@ import TGReduxKitTesting
     #expect(store.state.review.acceptedRefineCardIDs.isEmpty)
 }
 
+// MARK: - D2 · 可编辑（PRD §7.2 D2）
+
+/// 编辑之后，学员看到的就是改过的那一版。
+@Test func editingACardChangesWhatTheLearnerSees() throws {
+    let payload = try makeReadyPayload()
+    let card = try #require(payload.refineCards.first)
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+    store.send(.review(.applyPoll(ReviewPollResponse(sessionID: "s-1", status: .ready, review: payload))))
+
+    store.send(.review(.refineCardEditChanged(
+        cardID: card.id,
+        field: .expressionEN,
+        value: "I'll circle back with the team tomorrow."
+    )))
+
+    let shown = try #require(store.state.review.visibleRefineCards.first)
+    #expect(shown.card.expressionEN == "I'll circle back with the team tomorrow.")
+    #expect(shown.isEdited, "改过之后没有标记 —— 学员看不出这一张是自己动过的")
+    #expect(shown.card.intentZH == card.intentZH, "只改了英文，中文意图被顺手改掉了")
+    #expect(store.state.review.payload?.refineCards.first?.expressionEN == card.expressionEN,
+            "编辑改写了服务端给的产出")
+}
+
+/// **稳定键在编辑之后必须还是原来那个。**
+///
+/// 这是这一笔最容易踩空的地方：`RefineCard.id` 是**内容派生**的
+/// （`expressionEN-anchorUserSaid`），所以改一个字它就换一个。视图拿「编辑后的卡自己的 id」
+/// 去回派（入库、再编辑、撤回），改完第一个字符就再也找不到自己了 —— 而这条路上没有任何
+/// 东西会报错，学员只会发现按钮失灵。
+@Test func theStableKeySurvivesAnEdit() throws {
+    let payload = try makeReadyPayload()
+    let card = try #require(payload.refineCards.first)
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+    store.send(.review(.applyPoll(ReviewPollResponse(sessionID: "s-1", status: .ready, review: payload))))
+
+    store.send(.review(.refineCardEditChanged(cardID: card.id, field: .expressionEN, value: "Edited.")))
+    store.send(.review(.refineCardEditChanged(cardID: card.id, field: .anchorUserSaid, value: "Edited too.")))
+
+    let shown = try #require(store.state.review.visibleRefineCards.first)
+    #expect(shown.key == card.id, "稳定键被编辑改掉了：\(shown.key)")
+    #expect(shown.id == card.id, "视图用的身份必须是稳定键")
+    #expect(shown.card.id != card.id, "编辑没有真的落到内容上")
+    #expect(store.state.review.discardedRefineCardIDs.isEmpty)
+
+    // 按稳定键仍然找得到（这是接收入口要走的那条路）。
+    #expect(store.state.review.visibleRefineCard(forKey: card.id)?.card.expressionEN == "Edited.")
+    // 再改一次仍然命中同一个草稿，而不是又建一份。
+    store.send(.review(.refineCardEditChanged(cardID: card.id, field: .expressionEN, value: "Edited twice.")))
+    #expect(store.state.review.visibleRefineCards.count == 1)
+    #expect(store.state.review.visibleRefineCard(forKey: card.id)?.card.expressionEN == "Edited twice.")
+}
+
+/// 放弃编辑：回到服务端给的那一版。
+@Test func revertingAnEditRestoresTheOriginal() throws {
+    let payload = try makeReadyPayload()
+    let card = try #require(payload.refineCards.first)
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+    store.send(.review(.applyPoll(ReviewPollResponse(sessionID: "s-1", status: .ready, review: payload))))
+    store.send(.review(.refineCardEditChanged(cardID: card.id, field: .intentZH, value: "改过的意图")))
+
+    store.send(.review(.refineCardEditReverted(cardID: card.id)))
+
+    let shown = try #require(store.state.review.visibleRefineCards.first)
+    #expect(shown.card == card, "放弃之后内容没回到原样")
+    #expect(shown.isEdited == false, "放弃之后还标着「已修改」")
+}
+
+/// 给一张**不存在的卡**改字段：静默忽略，**不许留下草稿**。
+///
+/// 草稿表若接受任意名字，一个拼错的 id 会留下永远清不掉、也永远看不见的垃圾条目 ——
+/// 而 `.ready` 的剪枝只按 `validIDs` 走，所以它连被清掉的机会都没有，会一直跟着这份回顾。
+@Test func editingACardThatDoesNotExistLeavesNoDraft() throws {
+    let payload = try makeReadyPayload()
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+    store.send(.review(.applyPoll(ReviewPollResponse(sessionID: "s-1", status: .ready, review: payload))))
+
+    store.send(.review(.refineCardEditChanged(cardID: "并不存在的卡", field: .expressionEN, value: "x")))
+
+    #expect(store.state.review.refineCardDrafts.isEmpty, "草稿表收下了一张不存在的卡：\(store.state.review.refineCardDrafts.keys)")
+}
+
+/// 丢弃的卡也不许被编辑。
+@Test func editingADiscardedCardIsIgnored() throws {
+    let payload = try makeReadyPayload()
+    let card = try #require(payload.refineCards.first)
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+    store.send(.review(.applyPoll(ReviewPollResponse(sessionID: "s-1", status: .ready, review: payload))))
+    store.send(.review(.discardRefineCardTapped(cardID: card.id)))
+
+    store.send(.review(.refineCardEditChanged(cardID: card.id, field: .expressionEN, value: "x")))
+
+    #expect(store.state.review.refineCardDrafts.isEmpty, "已经丢掉的卡还能被编辑")
+}
+
+/// 草稿**不许跨回顾存活** —— 理由与丢弃同：卡的名字是内容派生的，两份不同的回顾可能撞出
+/// 同一个名字，于是上一份里改过的英文会**静默改写**这一份里那张同名的卡。
+@Test func draftsDoNotOutliveTheirReview() throws {
+    let payload = try makeReadyPayload()
+    let card = try #require(payload.refineCards.first)
+    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+    store.send(.review(.applyPoll(ReviewPollResponse(sessionID: "s-1", status: .ready, review: payload))))
+    store.send(.review(.refineCardEditChanged(cardID: card.id, field: .expressionEN, value: "Edited.")))
+
+    store.send(.review(.loadRequested(sessionID: "s-2")))
+    #expect(store.state.review.refineCardDrafts.isEmpty, "草稿跟着学员跨了会话：\(store.state.review.refineCardDrafts.keys)")
+
+    var seeded = AppState.initial
+    seeded.review.sessionID = "s-1"
+    seeded.review.refineCardDrafts = [card.id: card]
+    let second = TestStore(initialState: seeded, reducer: appReducer)
+    second.send(.review(.applyPoll(ReviewPollResponse(sessionID: "s-1", status: .ready, review: payload))))
+    // 这一份产出里有同名卡，所以草稿**留得住** —— 剪枝只剪产出里已经没有的名字。
+    #expect(second.state.review.refineCardDrafts.keys.sorted() == [card.id])
+
+    var stale = AppState.initial
+    stale.review.sessionID = "s-1"
+    stale.review.refineCardDrafts = ["产出里已经没有的卡": card]
+    let third = TestStore(initialState: stale, reducer: appReducer)
+    third.send(.review(.applyPoll(ReviewPollResponse(sessionID: "s-1", status: .ready, review: payload))))
+    #expect(third.state.review.refineCardDrafts.isEmpty, "上一份回顾的草稿粘在了新产出上：\(third.state.review.refineCardDrafts.keys)")
+}
+
+/// **入库的是编辑后的那一份。**
+///
+/// 这条落在中间件：`CorpusBatchAcceptBlockRequest` 本来就带全部五个字段（所以编辑不需要改
+/// 接口），而接收入口若仍按 `payload.refineCards` 取卡，学员改完点入库，进语料库的还是原话 ——
+/// 编辑形同虚设，且没有任何提示。
+@MainActor
+@Test func theEditedCardIsWhatGetsSentToTheCorpus() async throws {
+    let payload = try makeReadyPayload()
+    let card = try #require(payload.refineCards.first)
+    let captured = EditedCardCapture()
+
+    let container = Container()
+    container.corpusClient.register {
+        RecordingAcceptCorpusClient { _, cards in
+            captured.record(cards)
+            return try makeBatchAcceptResponse(acceptedCount: 1)
+        }
+    }
+
+    var initialState = AppState.initial
+    initialState.review.sessionID = "s-1"
+    initialState.review.phase = .ready
+    initialState.review.payload = payload
+
+    let store = AppStoreFactory.make(container: container, initialState: initialState)
+    store.dispatch(.review(.refineCardEditChanged(
+        cardID: card.id,
+        field: .expressionEN,
+        value: "I'll circle back with the team tomorrow."
+    )))
+    store.dispatch(.review(.acceptRefineCardTapped(cardID: card.id)))
+
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
+        store.state.review.acceptedRefineCardIDs.contains(card.id)
+    }
+
+    let sent = try #require(captured.cards?.first)
+    #expect(
+        sent.expressionEN == "I'll circle back with the team tomorrow.",
+        "入库的还是原话，学员的编辑被丢掉了：\(sent.expressionEN)"
+    )
+    #expect(sent.intentZH == card.intentZH, "没改的字段被顺手带偏了")
+}
+
+private final class EditedCardCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [RefineCard]?
+
+    func record(_ cards: [RefineCard]) {
+        lock.lock()
+        defer { lock.unlock() }
+        storage = cards
+    }
+
+    var cards: [RefineCard]? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+}
+
 private final class AcceptCallCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var value = 0
