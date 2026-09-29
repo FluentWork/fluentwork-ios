@@ -620,15 +620,35 @@ public extension Container {
     }
 
     var corpusCacheStore: Factory<CorpusCacheStoreProtocol> {
-        self { JSONCorpusCacheStore() }.cached
+        self {
+            // 测试进程一律内存版：三个语料库存储与下面两个缓存同一条理由 ——
+            // 不加这一条，测试会把快照写进开发者**真实的**
+            // `~/Library/Application Support/FluentWork/CorpusState/`，于是上一个测试
+            // 存下的东西被下一个测试读到。实测症状是「别的测试偶尔红」
+            // （2026-09-29：一个 `phase == .ready` 的等待在网络还没跑完时就满足了）。
+            if TestProcess.isRunning {
+                return InMemoryCorpusCacheStore()
+            }
+            return JSONCorpusCacheStore()
+        }.cached
     }
 
     var corpusOutboxStore: Factory<CorpusOutboxStoreProtocol> {
-        self { JSONCorpusOutboxStore() }.cached
+        self {
+            if TestProcess.isRunning {
+                return InMemoryCorpusOutboxStore()
+            }
+            return JSONCorpusOutboxStore()
+        }.cached
     }
 
     var corpusSyncMetadataStore: Factory<CorpusSyncMetadataStoreProtocol> {
-        self { JSONCorpusSyncMetadataStore() }.cached
+        self {
+            if TestProcess.isRunning {
+                return InMemoryCorpusSyncMetadataStore()
+            }
+            return JSONCorpusSyncMetadataStore()
+        }.cached
     }
 
     var sessionHistoryCacheStore: Factory<SessionHistoryCacheStoreProtocol> {

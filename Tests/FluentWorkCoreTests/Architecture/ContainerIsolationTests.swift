@@ -35,30 +35,58 @@ import Testing
 /// The guard asserts the *property* rather than any single factory's type, so
 /// it keeps holding as factories are added.
 @MainActor
-@Test func freshContainersDoNotShareCachedState() {
+@Test func freshContainersDoNotShareCachedState() async throws {
     let first = Container()
     first.reset()
     let second = Container()
     second.reset()
 
-    // Two independent containers must build two independent objects. If they
-    // resolve to the same instance, something one of them built is visible to
-    // the other — which is the leak, whatever leaked.
-    #expect(
-        (first.corpusCacheStore() as? JSONCorpusCacheStore)
-            !== (second.corpusCacheStore() as? JSONCorpusCacheStore),
-        "corpusCacheStore is shared across containers"
+    // 断言写成**行为**（写进一个容器、另一个读不到），不写成具体类型的身份比较。
+    //
+    // 原来那版是 `as? JSONCorpusCacheStore !== ...`，它只比「是不是同一个实例」。
+    // 这比它看起来更弱：两个新建容器的 JSON 存储是**不同实例却共用同一个磁盘目录**，
+    // 写一个另一个照样读得到 —— 而身份比较对这一类共享完全无感。
+    // （2026-09-29 变异验出来的：去掉测试进程判别、让存储退回 JSON 版，
+    // 行为断言当场红，身份断言仍是绿的。）
+    //
+    // 行为版同时守住两件事：`.cached` 若退回 `.singleton`（同一实例 ⇒ 写读相通），
+    // 以及测试进程里必须解析成内存版（磁盘版共享同一目录 ⇒ 同样相通）。
+    try await first.corpusCacheStore().saveSnapshot(
+        CachedCorpusSnapshot(items: [], nextCursor: "isolation-probe"),
+        scope: "isolation-probe"
     )
     #expect(
-        (first.corpusOutboxStore() as? JSONCorpusOutboxStore)
-            !== (second.corpusOutboxStore() as? JSONCorpusOutboxStore),
-        "corpusOutboxStore is shared across containers"
+        try await second.corpusCacheStore().loadSnapshot(scope: "isolation-probe") == nil,
+        "另一个容器读到了这个容器写进去的东西（同一实例，或同一磁盘目录）"
+    )
+
+    try await first.corpusOutboxStore().saveItems(
+        [
+            CorpusOutboxItem(
+                id: "isolation-probe",
+                blockID: "b-1",
+                operation: .favorite,
+                payload: CorpusOutboxItem.Payload(isFavorite: true),
+                retryCount: 0,
+                createdAt: "2026-09-29T00:00:00Z"
+            )
+        ],
+        scope: "isolation-probe"
     )
     #expect(
-        (first.corpusSyncMetadataStore() as? JSONCorpusSyncMetadataStore)
-            !== (second.corpusSyncMetadataStore() as? JSONCorpusSyncMetadataStore),
-        "corpusSyncMetadataStore is shared across containers"
+        try await second.corpusOutboxStore().loadItems(scope: "isolation-probe").isEmpty,
+        "另一个容器读到了这个容器写进去的 outbox 条目"
     )
+
+    try await first.corpusSyncMetadataStore().save(
+        CorpusSyncMetadata(listCursor: "isolation-probe"),
+        scope: "isolation-probe"
+    )
+    #expect(
+        try await second.corpusSyncMetadataStore().load(scope: "isolation-probe") == nil,
+        "另一个容器读到了这个容器写进去的同步元数据"
+    )
+
     #expect(
         (first.networkMonitor() as? NWPathNetworkMonitor)
             !== (second.networkMonitor() as? NWPathNetworkMonitor),
