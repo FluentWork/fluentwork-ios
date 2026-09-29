@@ -347,14 +347,14 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .connecting
     }
 
     #expect(store.state.speakingRoom.phase == .connecting)
 
     makeSessionLive(store)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
     #expect(store.state.speakingRoom.phase == .aiSpeaking)
@@ -380,7 +380,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .connecting
     }
 
@@ -392,7 +392,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     // The tap's first buffer is the half that does.
     audioEngine.emit(.captureFirstBuffer)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
     #expect(store.state.speakingRoom.phase == .aiSpeaking)
@@ -443,18 +443,18 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     // 会话一：起来、变活。
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .connecting
     }
     makeSessionLive(store)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
     #expect(store.state.speakingRoom.phase == .aiSpeaking)
 
     // 引擎报一次失败。取 `:895` 的原文：一条**每帧**守卫，不是终局宣告。
     audioEngine.emit(.failed("playback engine is not running; dropped frame"))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .failed
     }
     // 这一半必须保持：失败要被报出来。
@@ -464,7 +464,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     store.dispatch(.speakingRoom(.enterRoom(continueFrom: nil)))
     #expect(store.state.speakingRoom.phase == .idle)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .connecting
     }
 
@@ -475,14 +475,14 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     // 另一半只能由泵交付——正是 `captureFirstBufferOpensTheSession` 钉住的那条。
     audioEngine.emit(.captureFirstBuffer)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
     #expect(store.state.speakingRoom.phase == .aiSpeaking)
 
     // 上行本身：用户开口必须仍然上线。
     audioEngine.emit(.speechStarted)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await speechClient.snapshotBoundaries() == [true]
     }
     #expect(await speechClient.snapshotBoundaries() == [true])
@@ -502,17 +502,17 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     let store = AppStoreFactory.make(container: container)
 
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .connecting
     }
     makeSessionLive(store)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
     #expect(store.state.speakingRoom.phase == .aiSpeaking)
 
     audioEngine.emit(.speechStarted)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .failed
     }
     #expect(store.state.speakingRoom.phase == .failed)
@@ -520,7 +520,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     store.dispatch(.speakingRoom(.enterRoom(continueFrom: nil)))
     #expect(store.state.speakingRoom.phase == .idle)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .connecting
     }
     store.dispatch(.speakingRoom(.session(.socketReady)))
@@ -528,7 +528,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(store.state.speakingRoom.phase == .connecting)
 
     audioEngine.emit(.captureFirstBuffer)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
     #expect(store.state.speakingRoom.phase == .aiSpeaking)
@@ -555,11 +555,11 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .connecting
     }
     makeSessionLive(store)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
 
@@ -628,11 +628,11 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .connecting
     }
     makeSessionLive(store)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
 
@@ -707,7 +707,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await speechClient.snapshotStartCalls() == 1
     }
 
@@ -717,7 +717,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
         tier: .soft,
         turnID: "turn-1"
     )))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.lastBadge == "表达自然"
     }
 
@@ -765,12 +765,12 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await speechClient.snapshotStartCalls() == 1
     }
 
     speechClient.emit(.control(frame))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.lastBadge == "Let's ship it."
     }
 
@@ -808,12 +808,12 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await speechClient.snapshotStartCalls() == 1
     }
 
     speechClient.emit(.control(frame))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.lastBadge == "表达自然"
     }
 
@@ -836,7 +836,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
 
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .failed
     }
 
@@ -855,7 +855,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await audioEngine.snapshotStartCalls() == 1
     }
 
@@ -863,7 +863,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     let frame = WSAudioFrame(sequence: 7, payload: Data([0x01, 0x02]))
     speechClient.emit(.audio(frame))
 
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await audioEngine.snapshotPlayedPCM().count == 1
     }
     #expect(await audioEngine.snapshotPlayedPCM() == [frame.payload])
@@ -888,7 +888,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await audioEngine.snapshotStartCalls() == 1
     }
 
@@ -912,7 +912,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
         .control(.aiTTSEnd(turnID: "turn-9", completionStatus: "ok", durationMs: 40, turnRef: nil))
     )
 
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await audioEngine.snapshotPlayedPCM().count == 2
     }
 
@@ -942,17 +942,17 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await speechClient.snapshotStartCalls() == 1
     }
 
     makeSessionLive(store)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
 
     speechClient.emit(.stateChanged(.disconnected))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.session.isReconnecting
     }
 
@@ -971,49 +971,48 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .connecting
     }
     makeSessionLive(store)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
 
     // First turn: VAD start/stop → boundary should carry "turn-1".
     audioEngine.emit(.speechStarted)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .recording
     }
     audioEngine.emit(.speechEnded)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await speechClient.snapshotBoundaries() == [true, false]
     }
     let turnIDsAfterFirst = await speechClient.snapshotBoundaryTurnIDs()
     #expect(turnIDsAfterFirst == [nil, "turn-1"])
     #expect(store.state.speakingRoom.session.userTurnCount == 1)
 
-    // Drive the machine to `waitingForEvaluation` so a second turn can start.
+    // Drive the machine so a second turn can start.
+    //
+    // 这里原来等的是 `processingStage == .evaluation`，它**等不到**：`aiTurnEnd(outcome: nil)`
+    // 之后没有 badge，机器不进评估。`try?` 把超时吞掉，所以这条等待从来没起作用、
+    // 测试也照样绿（2026-09-29 用一次性插桩 `[WAIT-TIMEOUT]` 找出来的）。
+    // 换成 `.processing` 也不行 —— 那是个**瞬时态**，`Task.yield()` 看得见、10ms 轮询
+    // 抓不到，等它同样是碰运气。所以这里不再猜中间态：下面的 `boundaries` 断言才是
+    // 这条测试真正要钉的东西，而它带 10s 预算。
     speechClient.emit(.control(.aiTTSStart(turnID: "turn-1", voiceID: "mock_voice_01", sampleRate: 16_000, codec: "pcm", turnRef: nil)))
     let frame = WSAudioFrame(sequence: 1, payload: Data([0x01]))
     speechClient.emit(.audio(frame))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        store.state.speakingRoom.phase == .aiSpeaking
-    }
     speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: nil, logID: nil)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        store.state.speakingRoom.processingStage == .evaluation
-    }
 
-    // Second turn → "turn-2". VAD from waitingForEvaluation starts the next recording.
+    // Second turn → "turn-2".
     audioEngine.emit(.speechStarted)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        store.state.speakingRoom.phase == .recording
-    }
     audioEngine.emit(.speechEnded)
-    // Wait for the userTurnCount increment to land — boundary count races
-    // with the dispatch of `.vadSpeechEnd(turnID:)` in the audio loop.
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
-        store.state.speakingRoom.session.userTurnCount == 2
+    // 等 boundary **数出来**为止 —— 它和音频循环里 `.vadSpeechEnd(turnID:)` 的派发是竞速的。
+    // 原来等的是 `userTurnCount == 2`，而那个数**不由 VAD 轮次驱动**（探针实测：第二轮
+    // 已经成立、boundaries 已经是 4 条时它仍然是 1），所以那条等待同样是死的。
+    try? await waitUntil {
+        await speechClient.snapshotBoundaries() == [true, false, true, false]
     }
     #expect(await speechClient.snapshotBoundaries() == [true, false, true, false])
     let turnIDsAfterSecond = await speechClient.snapshotBoundaryTurnIDs()
@@ -1033,20 +1032,20 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .connecting
     }
     makeSessionLive(store)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
 
     audioEngine.emit(.speechStarted)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .recording
     }
     audioEngine.emit(.speechEnded)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.session.userTurnCount == 1
     }
 
@@ -1071,12 +1070,12 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await speechClient.snapshotStartCalls() == 1
     }
 
     store.dispatch(.speakingRoom(.session(.endTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .ended
             && store.state.speakingRoom.lastSessionID == "s-1"
     }
@@ -1096,19 +1095,19 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await speechClient.snapshotStartCalls() == 1
     }
 
     store.dispatch(.speakingRoom(.session(.endTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .ended
     }
 
     // Host-level restart path: reset snapshot back to idle, then start tap.
     store.dispatch(.speakingRoom(.applySession(.initial)))
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await speechClient.snapshotStartCalls() == 2
             && store.state.speakingRoom.phase == .connecting
     }
@@ -1128,20 +1127,20 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await speechClient.snapshotStartCalls() == 1
     }
     makeSessionLive(store)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
 
     audioEngine.emit(.speechStarted)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .recording
     }
     audioEngine.emit(.speechEnded)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.timeline.last?.status == .listening
     }
 
@@ -1149,7 +1148,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
         text: "server transcript",
         turnID: "volc-turn-1"
     )))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.timeline.last?.text == "server transcript"
     }
 
@@ -1169,7 +1168,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         let audioStartCalls = await audioEngine.snapshotStartCalls()
         let sessionStartCalls = await speechClient.snapshotStartCalls()
         return audioStartCalls == 1 && sessionStartCalls == 1
@@ -1179,25 +1178,25 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(await speechClient.snapshotStartCalls() == 1)
 
     makeSessionLive(store)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
 
     audioEngine.emit(.speechStarted)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .recording
     }
     #expect(store.state.speakingRoom.phase == .recording)
     #expect(await speechClient.snapshotBoundaries() == [true])
 
     audioEngine.emit(.pcmChunk(Data([0x01, 0x02, 0x03])))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await speechClient.snapshotAudioPayloads() == [Data([0x01, 0x02, 0x03])]
     }
     #expect(await speechClient.snapshotAudioPayloads() == [Data([0x01, 0x02, 0x03])])
 
     audioEngine.emit(.speechEnded)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .processing
     }
     #expect(store.state.speakingRoom.phase == .processing)
@@ -1206,14 +1205,14 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     speechClient.emit(.control(.aiTTSStart(turnID: "turn-7", voiceID: "mock_voice_01", sampleRate: 16_000, codec: "pcm", turnRef: nil)))
     let frame = WSAudioFrame(sequence: 7, payload: Data([0x01, 0x02]))
     speechClient.emit(.audio(frame))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
     #expect(await audioEngine.snapshotPlayedPCM() == [frame.payload])
     #expect(store.state.speakingRoom.phase == .aiSpeaking)
 
     speechClient.emit(.control(.aiTurnEnd(turnID: "turn-7", outcome: nil, logID: nil)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.processingStage == .evaluation
     }
     #expect(store.state.speakingRoom.phase == .processing)
@@ -1245,11 +1244,11 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .connecting
     }
     makeSessionLive(store)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
 
@@ -1262,11 +1261,11 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     // 2. Inside an utterance: forwarded, unchanged.
     audioEngine.emit(.speechStarted)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .recording
     }
     audioEngine.emit(.pcmChunk(Data([0x01, 0x02, 0x03])))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await speechClient.snapshotAudioPayloads() == [Data([0x01, 0x02, 0x03])]
     }
     #expect(await speechClient.snapshotAudioPayloads() == [Data([0x01, 0x02, 0x03])])
@@ -1275,7 +1274,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     //    `user.speech.end` has already been sent, so anything forwarded from
     //    here is transcribed into the next turn.
     audioEngine.emit(.speechEnded)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .processing
     }
     audioEngine.emit(.pcmChunk(Data([0xBE, 0xEF])))
@@ -1294,17 +1293,17 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await speechClient.snapshotStartCalls() == 1
     }
 
     makeSessionLive(store)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
 
     store.dispatch(.speakingRoom(.session(.holdStart)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         let engineInterrupts = await audioEngine.snapshotInterruptCalls()
         let clientInterrupts = await speechClient.snapshotInterruptCalls()
         return engineInterrupts == 1 && clientInterrupts == 1
@@ -1338,17 +1337,17 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await speechClient.snapshotStartCalls() == 1
     }
 
     makeSessionLive(store)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
 
     audioEngine.emit(.speechStarted)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .recording
     }
     // `.sendInterrupt` 是 fire-and-forget，得给它落地的时间——否则这条测试会在
@@ -1384,12 +1383,12 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await speechClient.snapshotStartCalls() == 1
     }
 
     makeSessionLive(store)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
 
@@ -1400,19 +1399,19 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
         )
     )
     speechClient.emit(.audio(WSAudioFrame(sequence: 1, payload: Data([0x01, 0x02]))))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await audioEngine.snapshotPlayedPCM().count == 1
     }
 
     // 轮次结束，但音频还在播。userTurnCount 仍是 0，所以落到 `.waitingUser`。
     speechClient.emit(.control(.aiTurnEnd(turnID: "turn-1", outcome: nil, logID: nil)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .waitingUser
     }
 
     let interruptsBefore = await audioEngine.snapshotInterruptCalls()
     audioEngine.emit(.speechStarted)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .recording
     }
     // `.stopPlayback` 是 fire-and-forget，给它落地的时间。
@@ -1436,10 +1435,10 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
 
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .failed
     }
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         let stopCalls = await audioEngine.snapshotStopCalls()
         let endCalls = await speechClient.snapshotEndCalls()
         return stopCalls == 1 && endCalls == 1
@@ -1466,11 +1465,11 @@ private func makeRescueHintStore() async -> (Store<AppState, AppAction>, StubSpe
 
     let store = AppStoreFactory.make(container: container)
     store.dispatch(.speakingRoom(.session(.sessionStartTap)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .connecting
     }
     makeSessionLive(store)
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .aiSpeaking
     }
     return (store, speechClient)
@@ -1483,10 +1482,10 @@ private func makeRescueHintStore() async -> (Store<AppState, AppAction>, StubSpe
     #expect(store.state.speakingRoom.isRescueHintAvailable == false)
 
     speechClient.emit(.control(.aiTurnEnd(turnID: "bootstrap", outcome: .ok, logID: nil)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .waitingUser
     }
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.isRescueHintAvailable
     }
 
@@ -1501,14 +1500,14 @@ private func makeRescueHintStore() async -> (Store<AppState, AppAction>, StubSpe
     let (store, speechClient) = await makeRescueHintStore()
 
     speechClient.emit(.control(.aiTurnEnd(turnID: "bootstrap", outcome: .ok, logID: nil)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.isRescueHintAvailable
     }
     #expect(store.state.speakingRoom.isRescueHintAvailable)
 
     store.dispatch(.speakingRoom(.rescueHintTapped))
 
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         await speechClient.snapshotRescueRequestCalls() == 1
     }
     #expect(
@@ -1530,13 +1529,13 @@ private func makeRescueHintStore() async -> (Store<AppState, AppAction>, StubSpe
     let (store, speechClient) = await makeRescueHintStore()
 
     speechClient.emit(.control(.aiTurnEnd(turnID: "bootstrap", outcome: .ok, logID: nil)))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.isRescueHintAvailable
     }
     #expect(store.state.speakingRoom.isRescueHintAvailable)
 
     store.dispatch(.speakingRoom(.manualSpeechBegin))
-    try? await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+    try? await waitUntil {
         store.state.speakingRoom.phase == .recording
     }
 
