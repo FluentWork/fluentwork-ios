@@ -302,7 +302,14 @@ public enum SpeechSessionMachine {
         case (_, .endSessionConfirmCancelled) where state.phase.isActive:
             effects.append(.resumePlayback)
 
-        case (_, .failed(let message)) where state.phase != .ended:
+        // 已经失败过就**不许改写成因**，也不许再拆一次会话。
+        //
+        // `.failed` 的效果里有 `.endSession`，它会把 socket 停掉；停掉这个动作本身又会造出
+        // 后来的失败（接收回路的 `NSPOSIXErrorDomain 57`、`user.speech.end` 发不出去……）。
+        // 如果它们能改写 `failureReason`，屏幕上的就永远是「我们自己拆 socket 的回声」，而
+        // 真正的原因（音/权限）只剩在 tracker 里 —— 2026-09-29 真机进房间显示 57 正是如此。
+        // 出口是重试：`.sessionStartTap` 会清掉 `failureReason`。
+        case (_, .failed(let message)) where state.phase != .ended && state.phase != .failed:
             state.phase = .failed
             state.failureReason = message
             state.isReconnecting = false

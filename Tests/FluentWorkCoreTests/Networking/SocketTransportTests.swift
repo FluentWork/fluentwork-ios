@@ -209,6 +209,50 @@ private actor ScriptedMessageSource: SocketMessageSource {
     }
 }
 
+/// 一个以**真实 socket 错误**失败、并且可以被停在 `receive()` 里的源。
+///
+/// 两件事必须由它来演，缺一不可：
+///
+/// - 错误是 `NSPOSIXErrorDomain 57`，**不是** `CancellationError`。真实 iOS 就长这样：
+///   任务被取消时 `URLSessionWebSocketTask.receive()` 交给我们的正是这个 NSError，
+///   所以回路里那条 `catch is CancellationError` 分支接不住它 —— 这是本缺陷的前提。
+/// - `enteredStream` 让测试**确定**回路已经进到 `receive()` 里（而不是靠 sleep 猜），
+///   否则「取消发生在进入之前还是之后」会决定这条判据是真的还是随机的。
+private actor GatedFailureSource: SocketMessageSource {
+    static let socketNotConnected = NSError(
+        domain: NSPOSIXErrorDomain,
+        code: 57,
+        userInfo: [NSLocalizedDescriptionKey: "Socket is not connected"]
+    )
+
+    private let enteredContinuation: AsyncStream<Void>.Continuation
+    let enteredStream: AsyncStream<Void>
+    private let gateContinuation: AsyncStream<Void>.Continuation
+    private let gateStream: AsyncStream<Void>
+
+    init() {
+        let entered = AsyncStream<Void>.makeStream()
+        self.enteredStream = entered.stream
+        self.enteredContinuation = entered.continuation
+        let gate = AsyncStream<Void>.makeStream()
+        self.gateStream = gate.stream
+        self.gateContinuation = gate.continuation
+    }
+
+    func receive() async throws -> URLSessionWebSocketTask.Message {
+        enteredContinuation.yield()
+        for await _ in gateStream { break }
+        throw Self.socketNotConnected
+    }
+
+    /// 放行 `receive()`，让它按真实 socket 的方式失败。
+    ///
+    /// 元素是**缓冲**的（`AsyncStream` 默认 unbounded），所以在进 `receive()` 之前先开门也不丢。
+    nonisolated func openTheGate() {
+        gateContinuation.yield()
+    }
+}
+
 /// Pulls the single `receiveLatency` sample out of a loop run.
 private func receiveLatencySample(
     in events: [SocketTransportEvent]
@@ -360,6 +404,63 @@ private func eventsFromScriptedReceiveLoop(
 
     #expect(events.contains(.stateChanged(.disconnected)))
     #expect(events.contains { if case .failure = $0 { return true } else { return false } })
+}
+
+/// socket 自己死掉时，失败**必须**报出来，而且必须带上 domain + code。
+///
+/// 这条同时钉住 57 那个字符串的产地：`[NSPOSIXErrorDomain 57] Socket is not connected`
+/// 全仓只有这里会生成（`mapError(_:receivePhase: true)`）。2026-09-29 真机进房间屏幕上
+/// 显示的就是它 —— 而它其实是我们自己拆 socket 的回声，见下一条。
+@Test func aSourceDyingOnItsOwnStillReportsTheSocketError() async {
+    let source = GatedFailureSource()
+    source.openTheGate()
+
+    let events = await eventsFromScriptedReceiveLoop(source)
+
+    #expect(events.contains(.stateChanged(.disconnected)))
+    #expect(
+        events.contains {
+            if case let .failure(.network(detail)) = $0 {
+                return detail.contains("NSPOSIXErrorDomain") && detail.contains("57")
+            }
+            return false
+        },
+        "失败文案丢了 domain + code，真机上就分不出「socket 被取消」与「帧协议违约」：\(events)"
+    )
+}
+
+/// **我们自己取消的接收回路，不许把 socket 的死亡当成失败上报。**
+///
+/// `disconnect()` 会 `cancel` 掉接收任务，而挂着的 `receive()` 不会抛 `CancellationError`，
+/// 它抛的是 `NSPOSIXErrorDomain 57` —— 于是回路每条拆连接的动作都会派一条假失败：
+///
+/// 1. 说房间的失败流程（`.failed` → `.endSession` → `disconnect()`）：假失败会**顶掉**真正的原因；
+/// 2. 重连（`connect()` 先 `disconnect()` 旧的）：旧 socket 的回声会被映射成
+///    `.networkLost` / `.failed`，**砸在刚建立的新会话上**。
+///
+/// 判据是「取消之后一条事件都不许有」，因为这类回声唯一的正确数量是零。
+@Test func aReceiveLoopWeCancelledOurselvesReportsNothing() async {
+    let source = GatedFailureSource()
+    var stream: AsyncStream<SocketTransportEvent>!
+    do {
+        let transport = URLSessionSocketTransport()
+        stream = transport.events
+
+        let loop = Task { await transport.receiveLoop(source) }
+        var entered = source.enteredStream.makeAsyncIterator()
+        _ = await entered.next()
+        loop.cancel()
+        source.openTheGate()
+        await loop.value
+    }
+
+    var collected: [SocketTransportEvent] = []
+    for await event in stream { collected.append(event) }
+
+    #expect(
+        collected.isEmpty,
+        "取消之后的回声被上报了（它会被映射成 networkLost / failed，砸在下一个会话上）：\(collected)"
+    )
 }
 
 /// 缺必需字段的致命失败，文案里必须点名字段。

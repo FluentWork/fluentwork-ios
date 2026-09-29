@@ -675,6 +675,47 @@ import Testing
     #expect(effects.contains(.endSession))
 }
 
+/// **后到的失败不许顶掉先到的原因。**
+///
+/// `.failed` 的效果里有 `.endSession`，它会把 socket 关掉；而挂着的接收回路**必然**以
+/// `NSPOSIXErrorDomain 57`（我们自己取消的任务）返回，于是又派一条 `.failed("…57…")`。
+/// 之前这条兜底无条件改写 `failureReason`，屏幕上于是只剩「我们自己拆 socket 的回声」——
+/// 真正的原因（音/权限）只在 tracker 里。2026-09-29 真机「进房间报 57」就是这个形状。
+///
+/// 顺带钉住第二件事：已经失败过就**不许再拆一次会话**（socket 已经没了，`session.end`
+/// 只会是第二条回声）。
+@Test func aSecondFailureDoesNotOverwriteTheFirst() {
+    var state = SpeechSessionState(phase: .connecting)
+    _ = SpeechSessionMachine.reduce(&state, event: .failed("无法访问麦克风，请在系统设置中允许 FluentWork 使用麦克风。"))
+
+    let effects = SpeechSessionMachine.reduce(
+        &state,
+        event: .failed("[NSPOSIXErrorDomain 57] Socket is not connected")
+    )
+
+    #expect(
+        state.failureReason == "无法访问麦克风，请在系统设置中允许 FluentWork 使用麦克风。",
+        "后到的失败顶掉了原发原因：\(state.failureReason ?? "nil")"
+    )
+    #expect(state.phase == .failed)
+    #expect(effects.isEmpty, "已经失败过就不该再拆一次会话：\(effects)")
+}
+
+/// 重试必须能重新报错 —— 「第一条胜出」不能变成「这一辈子只报第一条」。
+///
+/// 宿主的重试路径是 `applySession(.initial)`（清干净）再 `.sessionStartTap`
+/// （`HostRootView.restartOrStartSpeakingSession`），而 `.sessionStartTap` 自己也会清
+/// `failureReason`：这条钉的就是后者，因为「第一条胜出」一旦没有出口，第二次报错就永远看不见。
+@Test func aNewSessionClearsThePreviousFailureReason() {
+    var state = SpeechSessionState(phase: .idle, failureReason: "第一次")
+
+    _ = SpeechSessionMachine.reduce(&state, event: .sessionStartTap)
+    #expect(state.failureReason == nil)
+
+    _ = SpeechSessionMachine.reduce(&state, event: .failed("第二次"))
+    #expect(state.failureReason == "第二次")
+}
+
 @Test func degradedTextLoopKeepsPhaseOnSendAndReply() {
     var state = SpeechSessionState(phase: .degradedText)
     let sendEffects = SpeechSessionMachine.reduce(&state, event: .textMessageSent)

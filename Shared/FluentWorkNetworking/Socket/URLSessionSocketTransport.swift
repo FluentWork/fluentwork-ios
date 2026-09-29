@@ -246,6 +246,13 @@ public actor URLSessionSocketTransport: SocketTransportProtocol {
             } catch is CancellationError {
                 break
             } catch {
+                // 我们自己取消的回路，它的错误不是信息。
+                //
+                // `disconnect()` 会 cancel 掉这个任务，而挂着的 `receive()` 不抛
+                // `CancellationError` —— 它抛 `NSPOSIXErrorDomain 57`。上报它等于每条拆连接
+                // 的动作都发一条假失败：说房间失败时它会顶掉真正的原因，重连时它会砸在刚建立的
+                // 新会话上。回归判据 `aReceiveLoopWeCancelledOurselvesReportsNothing`。
+                guard !Task.isCancelled else { break }
                 emit(.failure(mapError(error, receivePhase: true)))
                 emit(.stateChanged(.disconnected))
                 break
