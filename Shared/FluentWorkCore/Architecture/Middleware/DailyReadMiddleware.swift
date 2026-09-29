@@ -134,6 +134,7 @@ public func dailyReadMiddleware(container: Container) -> Middleware<AppState, Ap
 /// trigger like `.appLaunched`.
 public func dailyReadAudioObserver(container: Container) -> Middleware<AppState, AppAction> {
   let audioPlayer = container.dailyReadAudioPlayer()
+  let tracker = container.tracker()
   let startedBox = ObserverStartedBox()
 
   return { store, action, next in
@@ -155,6 +156,16 @@ public func dailyReadAudioObserver(container: Container) -> Middleware<AppState,
           case .finished:
             await dispatchBox.dispatch(.dailyRead(.audioFinished))
           case .failed(let message):
+            // 播放失败**要留痕**，不能只到屏幕（评审 R10 的同一条纪律）。
+            // origin 把「每日一读的播放器」与「说的房间的音频栈」分开：
+            // 两者的 message 形状很像，事后读日志时唯一的区别就是这一维。
+            //
+            // detail 用**屏幕上看的那一句**：两份不同的文案会各自漂移，
+            // 而这里要的是「事后能读到用户当时看到了什么」。
+            tracker.track(
+              event: "dailyRead_audio_failed",
+              properties: ["origin": "dailyRead.audio", "detail": message]
+            )
             await dispatchBox.dispatch(.dailyRead(.audioFailed(message)))
           }
         }

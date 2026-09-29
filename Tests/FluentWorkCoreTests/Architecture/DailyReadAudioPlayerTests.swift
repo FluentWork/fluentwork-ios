@@ -1,5 +1,6 @@
 import FactoryKit
 import FluentWorkCore
+import FluentWorkDiagnostics
 import FluentWorkNetworking
 import Foundation
 import TGReduxKitTesting
@@ -28,6 +29,51 @@ import Testing
   try await waitUntil(timeoutNanoseconds: 2_000_000_000) {
     store.state.dailyRead.audioPhase == .playing
   }
+}
+
+/// 每日一读的播放失败**必须留下记录**，而不只是屏幕上一句人话。
+///
+/// 这是 R10 的同一条纪律在另一条链路：说的房间走 `session_failed`（传输）与
+/// `audio_engine_failed`（引擎），而每日一读的播放器有自己的事件流 —— 在补这条之前，
+/// 它 `.failed` 之后**一个字都没记**，事后只能问用户看到了什么。
+///
+/// 判据三半：有记录、带 origin、detail 与屏幕读的是同一句。
+@MainActor
+@Test func dailyReadPlaybackFailureIsRecordedWithItsOrigin() async throws {
+  let api = StubDailyReadAPIClient(responses: [.ready(makeDailyRead())])
+  let client = StubDailyReadClient(api: api)
+  let player = StubDailyReadAudioPlayer()
+  let tracker = RecordingTracker()
+
+  let container = Container()
+  container.reset()
+  container.dailyReadClient.register { client }
+  container.dailyReadAudioPlayer.register { player }
+  container.tracker.register { tracker }
+
+  var initial = AppState.initial
+  initial.dailyRead.phase = .ready
+  initial.dailyRead.dailyRead = makeDailyRead()
+  initial.dailyRead.audioPhase = .idle
+
+  let store = AppStoreFactory.make(container: container, initialState: initial)
+  store.dispatch(AppAction.dailyRead(.playTapped))
+  try await waitUntil(timeoutNanoseconds: 2_000_000_000) {
+    store.state.dailyRead.audioPhase == .playing
+  }
+
+  player.emit(.failed("音频解码失败，请重试"))
+
+  try await waitUntil(timeoutNanoseconds: 2_000_000_000) {
+    tracker.events.contains { $0.0 == "dailyRead_audio_failed" }
+  }
+  let hit = tracker.events.first { $0.0 == "dailyRead_audio_failed" }
+  #expect(hit != nil, "每日一读的播放失败没有留下任何记录：\(tracker.events.map(\.0))")
+  #expect(hit?.1["origin"] == "dailyRead.audio")
+  #expect(
+    hit?.1["detail"] == "音频解码失败，请重试",
+    "记录必须与屏幕读同一句话，否则两份文案会各自漂移"
+  )
 }
 
 @MainActor
@@ -290,4 +336,25 @@ private func makeDailyRead() -> DailyRead {
     sourceRefs: [:],
     readScore: nil
   )
+}
+/// 本文件自己的记录型 tracker。
+///
+/// 不用 `CapturingTracker`：那个替身不在本 target 的作用域里，而这里要断言的只是
+/// 「有一条事件、带 origin、detail 与屏幕读同一句」——需要一个能取回事件的最小件，
+/// 不需要把别的 target 的测试装置拖过来。
+private final class RecordingTracker: TrackerClientProtocol, @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage: [(String, [String: String])] = []
+
+  func track(event: String, properties: [String: String]) {
+    lock.lock()
+    defer { lock.unlock() }
+    storage.append((event, properties))
+  }
+
+  var events: [(String, [String: String])] {
+    lock.lock()
+    defer { lock.unlock() }
+    return storage
+  }
 }
