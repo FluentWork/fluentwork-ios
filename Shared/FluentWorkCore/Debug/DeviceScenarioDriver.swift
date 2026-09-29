@@ -95,7 +95,7 @@ public enum DeviceScenarioDriver {
             if afterCapture.mode != AudioSessionMode.voiceChat.rawValue {
                 failures.append("采集开始后模式是 \(afterCapture.mode)，期望 \(AudioSessionMode.voiceChat.rawValue)")
             }
-            if !afterCapture.looksActive {
+            if !afterCapture.reportsASampleRate {
                 failures.append("采集开始后采样率是 0 —— 会话没被激活")
             }
         } else {
@@ -157,7 +157,7 @@ public enum DeviceScenarioDriver {
         let snapshot = SharedAudioSessionPort().snapshot()
         let occupancy = AudioSessionOccupancy.derive(from: snapshot)
         log(
-            "session@\(label) holder=\(occupancy.holder.label) live=\(occupancy.isLive)"
+            "session@\(label) holder=\(occupancy.holder.label) live=\(occupancy.reportsASampleRate)"
                 + " \(snapshot.telemetrySummary)"
         )
         return snapshot

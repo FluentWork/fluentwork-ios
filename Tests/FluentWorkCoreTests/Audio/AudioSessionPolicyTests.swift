@@ -122,7 +122,7 @@ import Testing
             from: AudioSessionSnapshot(category: "", mode: "", sampleRate: 0, otherAudioPlaying: false)
         )
         #expect(occupancy.holder == .noOne)
-        #expect(occupancy.isLive == false)
+        #expect(occupancy.reportsASampleRate == false)
     }
 
     /// 我们没设过的类别要**如实报出来**，但不能被当成「别人占着」。
@@ -181,7 +181,7 @@ import Testing
             )
         )
         #expect(occupancy.holder == .claimed(.fullDuplex))
-        #expect(occupancy.isLive == false)
+        #expect(occupancy.reportsASampleRate == false)
     }
 
     /// 遥测那一行的字段表**只有一份**（这里钉住它）。
@@ -240,18 +240,65 @@ import Testing
         }
     }
 
-    /// 但**采集路线**占着时必须让路 —— 包括还没上线的发音评测（`.capture`）。
+    /// 房间占着（`.playAndRecord`）时让路：类别不动、只激活 —— `AVPlayer` 在它下面照样能放。
+    @Test func dailyReadDoesNotStealFromTheSpeakingRoom() {
+        #expect(
+            AudioSessionPolicy.claim(for: .playback, given: occupancy(holder: .claimed(.fullDuplex)))
+                == .keepCategory(heldBy: .claimed(.fullDuplex))
+        )
+    }
+
+    /// **让路之前先问「让了之后还听不听得到」。**
     ///
-    /// 它现在没有生产调用方，所以这条判据是它唯一的保护：将来接上它的时候，
-    /// 「它也会挡住每日一读」这件事已经被写下来了，不用重新发现一次。
-    @Test func dailyReadDoesNotStealFromACaptureSession() {
-        for holder: AudioSessionHolder in [.claimed(.fullDuplex), .claimed(.capture)] {
-            #expect(
-                AudioSessionPolicy.claim(for: .playback, given: occupancy(holder: holder))
-                    == .keepCategory(heldBy: holder),
-                "占用者 \(holder.label) 时每日一读不该动类别 —— 那会拆掉 input route"
-            )
+    /// 旧判据把 `.claimed(.capture)` 也归进「让路」，理由是「那会拆掉 input route」——
+    /// 理由对，结论错：`.record` 是 input-only，在它下面播什么都听不见，所以「让路」
+    /// 等于**静默**。而静音是本项目唯一不可接受的失败。
+    ///
+    /// `.capture` 今天没有生产调用方（票里写明了），但这条判据是它唯一的保护：
+    /// 接上发音评测那天，「不能偷偷播」这件事已经被写下来了。
+    @Test func dailyReadRefusesRatherThanPlaySilentlyUnderAnInputOnlyHolder() {
+        #expect(
+            AudioSessionPolicy.claim(for: .playback, given: occupancy(holder: .claimed(.capture)))
+                == .refuseBecauseTheHolderHasNoOutputRoute(heldBy: .claimed(.capture)),
+            "input-only 的占用者被当成「让路」处理 —— 那就成了播了但没声"
+        )
+    }
+
+    /// 「有没有输出路线」是一张**推导表**，不是一个名单：能出声的只有那两个播放得了的类别。
+    @Test func onlyCategoriesThatCanPlayHaveAnOutputRoute() {
+        #expect(AudioSessionHolder.claimed(.capture).hasOutputRoute == false)
+        for holder: AudioSessionHolder in [
+            .claimed(.fullDuplex), .claimed(.playback), .noOne,
+            .notOurClaim(category: "AVAudioSessionCategorySoloAmbient"),
+        ] {
+            #expect(holder.hasOutputRoute, "\(holder.label) 被当成了不能出声")
         }
+
+        let withoutOutput = AudioRoute.allCases.filter {
+            AudioSessionHolder.claimed($0).hasOutputRoute == false
+        }
+        #expect(withoutOutput == [.capture], "能出声的路线集合变了：\(withoutOutput)")
+    }
+
+    /// **采样率非 0 ≠ 会话活着**（真机反证，钉住这份读数本身）。
+    ///
+    /// 2026-09-28 那次真机运行的 `[Scenario] session@after-bootstrap` 行：
+    /// 我们**从没认领过**的会话（`notOurClaim(SoloAmbient)`）报
+    /// `sampleRate=48000 otherAudio=true`。所以这个布尔只能叫「系统报了个硬件采样率」，
+    /// 不能叫「会话活着」—— 判据把那个读数**原样**放在这里，免得下一个人又拿它去断言
+    /// 「会话被激活了」（F6 的验收判据 1 就是这么写的）。
+    @Test func aNonZeroSampleRateIsNotEvidenceThatTheSessionIsActive() {
+        let asMeasuredOnDevice = AudioSessionOccupancy.derive(
+            from: AudioSessionSnapshot(
+                category: "AVAudioSessionCategorySoloAmbient",
+                mode: "AVAudioSessionModeDefault",
+                sampleRate: 48_000,
+                otherAudioPlaying: true
+            )
+        )
+
+        #expect(asMeasuredOnDevice.holder == .notOurClaim(category: "AVAudioSessionCategorySoloAmbient"))
+        #expect(asMeasuredOnDevice.reportsASampleRate, "这一行就是反证：没人认领、采样率却是 48000")
     }
 
     @Test func dailyReadTakesTheCategoryWhenItIsFreeOrAlreadyOurs() {
@@ -402,6 +449,6 @@ import Testing
     }
 
     private func occupancy(holder: AudioSessionHolder) -> AudioSessionOccupancy {
-        AudioSessionOccupancy(holder: holder, isLive: true, otherAudioPlaying: false)
+        AudioSessionOccupancy(holder: holder, reportsASampleRate: true, otherAudioPlaying: false)
     }
 }

@@ -164,6 +164,36 @@ import os
         )
     }
 
+    /// **拒绝要抛出去，而且一个字节都不许碰会话、不许留名册。**
+    ///
+    /// 返回一个 `.refuse…` 而调用方把它丢掉，就是又一次静默失败 —— 所以主人抛。
+    /// 抛之前的两次「不许」同样重要：不切类别（那会拆掉对方的采集）、不激活、
+    /// 不在名册上留名字（否则那次会话永远归还不掉）。
+    @Test func isRefusedWhenTheHolderHasNoOutputRouteAndNothingIsTouched() throws {
+        let port = ScriptedAudioSessionPort(
+            snapshot: .active(category: .record, mode: .measurement)
+        )
+        let owner = SharedAudioSessionOwner(port: port)
+
+        do {
+            _ = try owner.claim(.playback)
+            Issue.record("占用者是 input-only 时应当拒绝")
+        } catch let error as AudioEngineError {
+            guard case .audioSessionRefusedByAnInputOnlyHolder(let holder) = error else {
+                Issue.record("抛错了 case：\(error)")
+                return
+            }
+            #expect(holder == .claimed(.capture))
+            #expect(error.errorDescription?.contains("麦克风") == true)
+        } catch {
+            Issue.record("抛了非 AudioEngineError：\(error)")
+        }
+
+        #expect(port.calls.applied.isEmpty, "拒绝时动了类别")
+        #expect(port.calls.activeChanges.isEmpty, "拒绝时激活了会话")
+        #expect(try owner.release(from: .playback) == .keep(heldBy: .claimed(.capture)))
+    }
+
     /// 认领失败要**带着它失败在哪一步**、以及系统给的 domain + code。
     ///
     /// 这两件事以前都丢了：`apply` 的错原样抛出（连 `AudioEngineError` 都不是，中间件那条

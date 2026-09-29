@@ -1141,7 +1141,7 @@ final class ThrowingSessionOwner: AudioSessionOwning, @unchecked Sendable {
     }
 
     func occupancy() -> AudioSessionOccupancy {
-        AudioSessionOccupancy(holder: .noOne, isLive: false, otherAudioPlaying: false)
+        AudioSessionOccupancy(holder: .noOne, reportsASampleRate: false, otherAudioPlaying: false)
     }
 
     var didClaimFullDuplex: Bool {
@@ -1166,7 +1166,7 @@ final class PermissiveSessionOwner: AudioSessionOwning, @unchecked Sendable {
     }
 
     func occupancy() -> AudioSessionOccupancy {
-        AudioSessionOccupancy(holder: .noOne, isLive: true, otherAudioPlaying: false)
+        AudioSessionOccupancy(holder: .noOne, reportsASampleRate: true, otherAudioPlaying: false)
     }
 
     var didClaimFullDuplex: Bool {
@@ -1194,7 +1194,7 @@ final class RecordingSessionOwner: AudioSessionOwning, @unchecked Sendable {
     }
 
     func occupancy() -> AudioSessionOccupancy {
-        AudioSessionOccupancy(holder: .claimed(.fullDuplex), isLive: true, otherAudioPlaying: false)
+        AudioSessionOccupancy(holder: .claimed(.fullDuplex), reportsASampleRate: true, otherAudioPlaying: false)
     }
 
     var claimCalls: [AudioRoute] { queue.sync { claims } }

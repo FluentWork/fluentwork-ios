@@ -129,16 +129,18 @@ public struct AudioSessionSnapshot: Equatable, Sendable {
         AudioSessionCategory(rawValue: category)
     }
 
-    /// 活动性的**代理**，不是 API。
+    /// 系统**报了一个硬件采样率**。就这一件事。
     ///
-    /// 别把它读成 `isActive`：`AVAudioSession` 没有那个 getter，而自己维护一个标志位
-    /// 正是 F6 拆掉的那个东西 —— 一个只在 `configure()` 里被置真的 `active` 标志位，
-    /// 而它的「关」那条路径在生产里没有调用者，所以它会**永远**报「房间还活着」，
-    /// 照它做判断会静默禁掉每日一读的音频（`meta 70_/27_`）。
+    /// ⚠️ **它不是活动性。** 名字是改出来的：原来叫 `looksActive`，注释写着「一个被
+    /// deactivate 的会话报告零采样率」—— 而真机反证就在 `.tmp/smoke-device/console.log`
+    /// （2026-09-28 那次）：我们**从没认领过**的会话（`notOurClaim(SoloAmbient)`）报
+    /// `sampleRate=48000 otherAudio=true`。SDK 头文件对 `sampleRate` 的定义也只是
+    /// 「当前**硬件**采样率」（`AVAudioSession.h:400`），没有「停用即 0」的语义。
     ///
-    /// 一个被 deactivate 的会话报告零采样率。**类别与模式在 deactivate 之后存活**，
-    /// 所以「类别像采集会话、采样率为 0」是一个真实且可读的状态，不是矛盾。
-    public var looksActive: Bool { sampleRate > 0 }
+    /// 于是：数值照旧上报（它是那一行遥测里最要紧的读数之一），但**名字与判据都不许再声称
+    /// 它是活动性** —— 一个在 App 启动时就为真的「活着」判据，比没有判据更坏。
+    /// 「谁在占」由类别（`AudioSessionOccupancy`）与租约名册回答，两者都不需要它。
+    public var reportsASampleRate: Bool { sampleRate > 0 }
 
     /// 供真机失败归因的一行。
     ///
@@ -193,6 +195,24 @@ public enum AudioSessionHolder: Equatable, Sendable {
         }
     }
 
+    /// 这个占用者的类别**能不能出声**。
+    ///
+    /// `.capture`（`.record`）是 input-only：它没有输出路线，所以在它下面放 `AVPlayer`
+    /// 什么都听不到 —— 而切走类别又会拆掉对方的采集。两个都不能做，于是请求必须被**明确拒绝**
+    /// 而不是静默降级（「静音」是本项目唯一不可接受的失败）。
+    ///
+    /// `.fullDuplex`（`.playAndRecord`）与 `.playback` 都有输出。
+    /// 两个「没被认领」的档没有占用者要保护，一律当作有输出 —— 走那条路的请求本来就是
+    /// `reconfigure`，用不上这个判断。
+    public var hasOutputRoute: Bool {
+        switch self {
+        case .claimed(.capture):
+            false
+        case .claimed(.fullDuplex), .claimed(.playback), .noOne, .notOurClaim:
+            true
+        }
+    }
+
     /// 遥测用的短名。
     public var label: String {
         switch self {
@@ -205,13 +225,16 @@ public enum AudioSessionHolder: Equatable, Sendable {
 
 public struct AudioSessionOccupancy: Equatable, Sendable {
     public var holder: AudioSessionHolder
-    /// 采样率的代理（见 `AudioSessionSnapshot.looksActive`）。
-    public var isLive: Bool
+    /// 系统报了一个硬件采样率（见 `AudioSessionSnapshot.reportsASampleRate`）。
+    ///
+    /// **不是活动性**：真机上我们从没认领过的会话也报非零值，所以它在 App 启动时就是真的。
+    /// 它进遥测、不进判据。
+    public var reportsASampleRate: Bool
     public var otherAudioPlaying: Bool
 
-    public init(holder: AudioSessionHolder, isLive: Bool, otherAudioPlaying: Bool) {
+    public init(holder: AudioSessionHolder, reportsASampleRate: Bool, otherAudioPlaying: Bool) {
         self.holder = holder
-        self.isLive = isLive
+        self.reportsASampleRate = reportsASampleRate
         self.otherAudioPlaying = otherAudioPlaying
     }
 
@@ -237,7 +260,7 @@ public struct AudioSessionOccupancy: Equatable, Sendable {
         }
         return AudioSessionOccupancy(
             holder: holder,
-            isLive: snapshot.looksActive,
+            reportsASampleRate: snapshot.reportsASampleRate,
             otherAudioPlaying: snapshot.otherAudioPlaying
         )
     }
@@ -256,6 +279,12 @@ public enum AudioSessionClaim: Equatable, Sendable {
     /// 切走类别会拆掉 input route，让正在跑的 `AVAudioEngine` 自己停，
     /// 而它**一行我们的代码都不执行**，所以 `isRunning` 变 false 时没有任何栈可读。
     case keepCategory(heldBy: AudioSessionHolder)
+    /// 占用者的类别**没有输出路线**：照原样放什么都听不见，而切走它又会拆掉对方的采集。
+    /// 两个都不能做 ⇒ 明确拒绝。
+    ///
+    /// 这一档存在本身就是一条判据：以前这种情形会被归进「让路」，于是每日一读
+    /// **静默地播了但没声**（而在 `.capture` 上线发音评测那天之前，没人会察觉）。
+    case refuseBecauseTheHolderHasNoOutputRoute(heldBy: AudioSessionHolder)
 }
 
 /// 一次归还该做什么。
@@ -293,6 +322,13 @@ public enum AudioSessionPolicy {
         // 前者只保护真正会被拆坏的东西，而那个集合是 `usesTheInputRoute` 算出来的 ——
         // 将来加路线时，忘了想这件事的后果是判据红，不是静默多一条抢夺路径。
         if occupancy.holder.usesTheInputRoute {
+            // 带 input route 的占用者里，只有 `.playAndRecord` **同时**有输出路线。
+            // `.record` 是 input-only（SDK 头文件：Record = "when recording audio"，
+            // 与 PlayAndRecord 的 "recording and playing back" 相对），在它下面
+            // `AVPlayer` 没有输出路线 —— 这时候「让路」等于「静默」。所以拒绝。
+            guard occupancy.holder.hasOutputRoute else {
+                return .refuseBecauseTheHolderHasNoOutputRoute(heldBy: occupancy.holder)
+            }
             return .keepCategory(heldBy: occupancy.holder)
         }
         return .reconfigure(.playback)
@@ -482,6 +518,11 @@ public final class SharedAudioSessionOwner: AudioSessionOwning, @unchecked Senda
             // 它在锁**内**：否则两个并发认领会拿同一份陈旧快照各做各的决策，
             // 后进锁的那个按陈旧决策去动类别 —— 锁就白加了（2026-09-24 那条路依然可达）。
             let decision = AudioSessionPolicy.claim(for: route, given: occupancy())
+            // 拒绝必须**抛**出去：调用方（每日一读）拿到 `.refuse…` 只会把它丢掉，
+            // 那就是又一次静默失败。抛出去它才走 `audioFailed` 那条已有的响亮路径。
+            if case .refuseBecauseTheHolderHasNoOutputRoute(let holder) = decision {
+                throw AudioEngineError.audioSessionRefusedByAnInputOnlyHolder(holder)
+            }
             if case .reconfigure(let target) = decision {
                 // 两个阶段各自包一层：失败的**哪一步**与系统的 domain+code 一样重要。
                 // 之前 `apply` 的错是原样抛出去的（连 `AudioEngineError` 都不是），

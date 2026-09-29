@@ -14,6 +14,11 @@ public enum AudioEngineError: Error {
     /// 「配置失败」与「激活失败」说成同一件事，而这两件事的处置完全不同
     /// （一个是我们自己传错了东西，另一个是别人正占着系统资源）。见 `AudioSessionClaimFailure`。
     case audioSessionClaimFailed(AudioSessionClaimFailure)
+    /// 占用者的类别没有输出路线（`.record`），照原样播是静音、切走类别会拆掉它的采集。
+    ///
+    /// 拒绝而不是降级：**静音是本项目唯一不可接受的失败**，而这条路上「悄悄播了但没声」
+    /// 正是它的样子。
+    case audioSessionRefusedByAnInputOnlyHolder(AudioSessionHolder)
 }
 
 /// 一次会话认领失败时，系统到底说了什么。
@@ -106,6 +111,8 @@ extension AudioEngineError: LocalizedError {
             return "无法启动麦克风采集，请检查麦克风权限或输入设备后重试"
         case .audioSessionConflict:
             return "音频会话被系统占着，暂时无法开始练习，请稍后重试"
+        case .audioSessionRefusedByAnInputOnlyHolder:
+            return "另一个功能正在使用麦克风，朗读暂时无法播放"
         case .audioSessionClaimFailed(let failure):
             return failure.errorDescription
         }
@@ -116,6 +123,8 @@ extension AudioEngineError: LocalizedError {
         switch self {
         case let .invalidFormat(message), let .audioSessionConflict(message):
             return message
+        case let .audioSessionRefusedByAnInputOnlyHolder(holder):
+            return "refused: input-only holder=\(holder.label)"
         case let .audioSessionClaimFailed(failure):
             return failure.telemetrySummary
         }
