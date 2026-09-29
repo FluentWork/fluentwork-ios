@@ -697,14 +697,22 @@ private func audioEventPump(
                     // instead of transcribing silence.
                     await dispatchBox.dispatch(.speakingRoom(.session(.captureLive)))
     
-                case let .failed(message):
+                case let .failed(message), let .failedWithDetail(message, _):
                     // 带**来源**：这个事件名有八个产地（+Playback 的五处、+Capture:89、
                     // LiveAudioEngine:383/397/404、+Interruption:34），只有一句 message 时
                     // 事后只能读文案去猜是哪一层。`origin` 至少把「音频栈」与
                     // 「传输栈」（`session_failed`）分开。
+                    //
+                    // `detail` 与 `message` 分开登记：message 是屏幕上的那句（可能只是
+                    // 一句系统的桥接话），detail 是事后唯一能查的东西。没有自带 detail 的
+                    // 事件退回 message —— 宁可重复，也不要一个空字段（R10-b）。
                     timings.mark(
                         event: "audio_engine_failed",
-                        properties: ["origin": "audio.engine", "message": message]
+                        properties: [
+                            "origin": "audio.engine",
+                            "message": message,
+                            "detail": event.failureDetail ?? message,
+                        ]
                     )
                     // Close the gate first. The session is over, so nothing more
                     // may be forwarded — and a closed gate is also what makes the

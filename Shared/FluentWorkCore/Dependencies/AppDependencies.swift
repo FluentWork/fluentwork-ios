@@ -116,6 +116,24 @@ public enum AudioEngineEvent: Equatable, Sendable {
     /// for, and the reason this event exists rather than a comment.
     case captureKick(started: Bool, detail: String)
     case failed(String)
+    /// A failure whose **诊断** has nowhere else to go.
+    ///
+    /// `message` is what the learner sees; `detail` is what a log needs. Two fields
+    /// rather than one because the halves follow different rules: the copy is a
+    /// product decision, while domain/code must survive verbatim or the failure
+    /// cannot be reproduced afterwards. Before this case the capture path carried
+    /// only `localizedDescription`, which for a non-`LocalizedError` Swift error is
+    /// the synthesised "The operation couldn't be completed. (…)" — an address that
+    /// points nowhere (R10-b).
+    case failedWithDetail(message: String, detail: String)
+}
+
+extension AudioEngineEvent {
+    /// 日志要的那份 detail：只有 `failedWithDetail` 自带，其余没有。
+    var failureDetail: String? {
+        if case let .failedWithDetail(_, detail) = self { return detail }
+        return nil
+    }
 }
 
 /// How `LiveAudioEngine` decides user-speech start/end.

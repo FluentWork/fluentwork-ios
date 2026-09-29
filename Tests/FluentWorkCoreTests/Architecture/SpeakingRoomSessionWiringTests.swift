@@ -708,7 +708,7 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
         ("timing_audio_route_changed", ["reason"]),
         ("timing_audio_engine_configuration_changed", ["is_running"]),
         ("timing_speech_endpointed", ["reason", "window_ms", "trailing_silence_ms"]),
-        ("timing_audio_engine_failed", ["origin", "message"]),
+        ("timing_audio_engine_failed", ["origin", "message", "detail"]),
     ]
 
     for (name, keys) in expected {

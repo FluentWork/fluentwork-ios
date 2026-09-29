@@ -86,7 +86,14 @@ extension LiveAudioEngine {
             continuation.yield(.pcmChunk(pcm))
             updateSpeechState(using: pcm)
         } catch {
-            continuation.yield(.failed(error.localizedDescription))
+            // `message` 保持原样（改用户可见文案是产品决定，见 R5-b 的先例），
+            // `detail` 带上系统给的那对 domain/code：采集 tap 内部的错对用户没有可读的
+            // 说法，而 domain/code 是事后唯一能把它对回系统文档的东西（R10-b）。
+            let failure = error as NSError
+            continuation.yield(.failedWithDetail(
+                message: error.localizedDescription,
+                detail: "capture [\(failure.domain) \(failure.code)]: \(error.localizedDescription)"
+            ))
         }
     }
 
