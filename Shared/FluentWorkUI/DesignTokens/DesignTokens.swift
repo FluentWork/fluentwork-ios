@@ -124,6 +124,63 @@ public enum DesignTokens {
         public static let minTargetSpacing: CGFloat = 8
         public static let focusRingWidth: CGFloat = 2
         public static let iconStrokeWidth: CGFloat = 1.5
+        /// 图标名义边长。每张图的 SVG 是 24×24 的 `viewBox`（见稿子），
+        /// 且 `preserves-vector-representation` 打开，所以它不是位图尺寸、可以任意放大。
+        public static let iconPointSize: CGFloat = 24
+    }
+
+    /// 稿子里的 26 个 app 图标（值就是 asset catalog 名）。
+    ///
+    /// 资产由 `Scripts/generate-icons.py` 从稿子快照生成，**不要手抄也不要手改** ——
+    /// 逐字保真由 `IconAssetTests` 盯着（改一个坐标点会被抓）。
+    ///
+    /// **命名规则是机械的**，这样「调用点的 case」到「稿子里的 symbol」可以反推：
+    ///
+    /// 1. 去掉稿子的 `i-` 前缀；
+    /// 2. `chev-l` / `chev-r` / `chev-d` 展开成 `chevronLeft` / `chevronRight` /
+    ///    `chevronDown` —— 单个字母当方向名在调用点读不出来；
+    /// 3. 其余原样。`star4` 是**四角星**这个名字本身，不是「第 4 个 star」。
+    ///
+    /// 视图写 `DesignTokens.Icon.home`，不要写 `"i-home"` 字面量：asset 名写错
+    /// 在编译期与 asset catalog 里都不报错，只在运行期画不出东西。
+    public enum Icon: String, CaseIterable, Sendable {
+        case book = "i-book"
+        case check = "i-check"
+        case chevronDown = "i-chev-d"
+        case chevronLeft = "i-chev-l"
+        case chevronRight = "i-chev-r"
+        case clock = "i-clock"
+        case copy = "i-copy"
+        case doc = "i-doc"
+        case drill = "i-drill"
+        case flag = "i-flag"
+        case gear = "i-gear"
+        case home = "i-home"
+        case info = "i-info"
+        case ladder = "i-ladder"
+        case library = "i-library"
+        case mic = "i-mic"
+        case pause = "i-pause"
+        case play = "i-play"
+        case replay = "i-replay"
+        case search = "i-search"
+        case shield = "i-shield"
+        case star4 = "i-star4"
+        case talk = "i-talk"
+        case trash = "i-trash"
+        case wave = "i-wave"
+        case x = "i-x"
+    }
+}
+
+public extension DesignTokens.Icon {
+    /// 图标本体。
+    ///
+    /// 资源带 `template-rendering-intent: template`，所以它跟随 `foregroundStyle`；
+    /// 稿子里写的是 `stroke="currentColor"`，语义与之一致（生成时归一化成 `#000`
+    /// 只是为了给蒙版一个不透明描边，颜色由调用方决定）。
+    var image: Image {
+        Image(rawValue, bundle: .module)
     }
 }
 

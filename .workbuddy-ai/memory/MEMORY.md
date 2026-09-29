@@ -43,6 +43,12 @@
    「路径数据里有 `a` 弧线命令」变成「有  弧线命令」）。**提交信息一律用
    `git commit -F - <<'EOF'`（带引号的 heredoc）** —— 引号阻止一切展开。
    已经落盘的提交不要为改信息去 force-push（改写共享历史比一句话更贵）。
+4d. ⚠️ **别把一次性脚本的 stdout 管给 `head`**：`head` 读够就退出 ⇒ SIGPIPE ⇒ **脚本被杀在半路，
+   它末尾的清理步骤永远不会执行**。2026-09-29 实测：一个造了残留文件的变异驱动脚本，
+   `| head -20` 让它的 `rm -rf` 没跑，残留留了下来 —— 于是后面每次运行**都多出一条看起来
+   像判据缺陷的红**（守卫正确地点名了那个残留），我花了几轮才查出根因在脚手架而非判据。
+   ⇒ 脚本输出**重定向到文件再读**；非要截断就明确接受「脚本可能不完整执行」。
+   ⇒ 更一般的教训：**变异验证的结果里出现「与期望不符的红」时，先怀疑脚手架**。
 5. **落地门禁现在有脚本：`./Scripts/gate.sh`（2026-09-29 建）。** 两腿：腿 1 `swift test`、
    腿 2 `FluentWorkHost` Debug 构建；任一腿红 ⇒ `GATE FAILED` + `exit 1`（**两条腿都跑完再汇总**，
    不是第一步红就停）。**别再手敲那条命令** —— 下面是脚本内部用的形状，仅供排障参考：
@@ -264,25 +270,59 @@
   `aiTurnEnd(outcome: nil)` 之后机器停在 `.processing` / `.asr`（**没有 badge 就不进评估**）；
   `userTurnCount` **不由 VAD 轮次驱动**（第二轮已成立、boundaries 已有 4 条时它仍是 1）。
 
-## 设计资产 / 图标（2026-09-29 起，做 F7 前先读）
+## 设计资产 / 图标（2026-09-29 起，改图标或加图标前先读）
 
-- **图标来源是稿子快照**：`docs/design/2026-09-26-prd-v16-ux/index.html` 里有 **29 个内联
-  `<symbol>`** —— **26 个是 app 图标**（`i-home`/`i-drill`/`i-library`/`i-mic`/…/`i-copy`），
-  另 3 个（`i-sig`/`i-wifi`/`i-batt`）是**状态栏系统字形**，不属于 app 图标集。
-  旧清单写的「24 个」是错的。
+**已交付**（F7，2026-09-29）。链路是单向的，别逆着走：
+
+```
+稿子快照 docs/design/2026-09-26-prd-v16-ux/index.html   ← 设计权威（26 个 app <symbol>）
+        ↓  Scripts/generate-icons.py（幂等，拥有 catalog 下的 *.imageset）
+Shared/FluentWorkUI/Resources/Assets.xcassets/          ← 编译吃的东西（26 个 *.imageset）
+        ↓  DesignTokens.Icon（case 名 = 去掉 i- 前缀；chev-l/r/d → chevronLeft/Right/Down）
+视图：DesignTokens.Icon.home.image                        ← 不要写 "i-home" 字面量
+        ↓  Tests/.../UI/IconAssetTests.swift（7 条，逐字比对几何）
+```
+
+- **图标来源是稿子快照**：`index.html` 里有 **29 个内联 `<symbol>`** —— **26 个是 app 图标**，
+  另 3 个（`i-sig`/`i-wifi`/`i-batt`）是**状态栏系统字形**，不导出。旧清单写的「24 个」是错的
+  （漏了 `i-chev-r` 与 `i-doc`，`DESIGN.md` §7 已改）。
 - ⚠️ **图标路径数据里用到了 `a` 弧线命令**（`i-home` 的圆角就是）与 `rect rx` / `circle`
-  ⇒ 若走「自己把 SVG 解析成 SwiftUI `Path`」那条路，得自己写 arc→Bézier 转换。
-  **不要走那条路**（wheel reinvention）。
-- ✅ **asset catalog 路线已实测可行**（2026-09-29 探针，跑完已撤销）：
-  `FluentWorkUI` target 加 `resources: [.process("Resources")]`，把 `.xcassets` 放进
-  `Shared/FluentWorkUI/Resources/`，`swift build` 就会调 **actool**：
-  ```
-  .build/out/Products/Debug/FluentWorkIOS_FluentWorkUI.bundle/Contents/Resources/Assets.car
-  ```
-  imageset 的 `Contents.json` 要 `preserves-vector-representation` +
-  `template-rendering-intent: template`（可着色、24pt 精确渲染）。
-- ⚠️ 注意：`FluentWorkUI` 目前**没有** `Resources` 目录，`Package.swift` 也**没有**声明资源
-  —— 这两处是 F7 要先补的。仓里现在**没有任何 `.xcassets`**。
+  ⇒ 「自己把 SVG 解析成 SwiftUI `Path`」那条路要自己写 arc→Bézier。**不要走**（wheel reinvention）。
+  实际走的是 asset catalog 里的 SVG 矢量图。
+- 每个 imageset 必须带 `preserves-vector-representation`（否则放大是位图拉伸）+
+  `template-rendering-intent: template`（否则图标是用 `#000` 画的死黑色；稿子写的是
+  `stroke="currentColor"`，即跟随文字色）。生成器把 `currentColor` 归一化成 `#000`。
+- ✅ 两条腿都实测过资产真的进包：`swift build` → `.build/out/Products/Debug/
+  FluentWorkIOS_FluentWorkUI.bundle/Contents/Resources/Assets.car`；宿主 `xcodebuild` →
+  `.app/FluentWorkIOS_FluentWorkUI.bundle/Assets.car`。
+- `Package.swift` 的 `FluentWorkUI` target 声明了 `resources: [.process("Resources")]`。
+  **`OTHER_SWIFT_FLAGS` 那种全局改动不用碰**。
+- ⚠️ **别手改 catalog 里的 SVG**：生成器每次运行会先清掉全部 `*.imageset` 再重写，
+  手改会消失，而且 `IconAssetTests` 当场红。改图标 = 改稿子快照（或在生成器里加归一化规则）。
+
+### 判据设计：一条「没咬」的变异暴露了判据的真实弱点
+
+对照图判据的第一版只断言「必须包含每个图标的 SVG」。变异（手改图中一个坐标）**没咬** ——
+因为每个图标在对照图里出现 **3 次**（三种配色/尺寸），改掉 1 份后 `contains` 在别处仍为真。
+**部分篡改落在覆盖之外**，判据是装饰。
+
+改成不依赖出现次数的形状：**把所有已知 SVG 逐份删掉，再断言剩下的文本里没有 `<svg`**
+（= 图中每个 SVG 都必须逐字等于 catalog 里的某一个）。改完三条变异全部咬住
+（部分篡改 / 源改了没重跑生成器 / 塞外来 `<svg>`）。
+
+⇒ **判据的形状别依赖「不会变的布局细节」**（几份拷贝、顺序、缩进）。
+⇒ **「没咬」是信息**：要么判据没牙，要么变异没到点子上 —— 两种都要查清，
+别把变异加强就宣布通过。
+
+### 「哪些是 app 图标」是推导，不是名单
+
+判据与生成器都用**同一条结构规则**：`<symbol>` 声明了 `stroke=` ⇒ app 图标（线性描边）；
+只有 `fill="currentColor"` ⇒ 系统字形（实心）。这 29 个在属性上分得很干净。
+
+**为什么不用一张硬编码的名单**：名单会静默过期（稿子换了字形它不说话）。推导不会过期，
+代价是规则要写清楚 —— 而规则的边界由另一条判据封住：
+「稿子里**实心** symbol 恰好是那 3 个已知系统字形」，多了少了都红。
+⇒ 新增一个实心图标会被抓住（那时要改的是推导规则），而不是被悄悄跳过。
 
 ## 复盘习惯
 

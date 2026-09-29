@@ -26,7 +26,8 @@
 | `F11` 等待的形状 | ✅ **已完成** | 两件事，同一类毛病。① **预算**：`SpeakingRoomSessionWiringTests` 里 **88 处**把 1s 显式重述了一遍（`Await.swift` 顶部那段「预算不是延迟断言」正是在骂这个），负载高的 runner 上不够用 ⇒ 全改成共享默认（10s）。② **等的是瞬时态**：同文件 `speechSessionMiddlewareForwardsTurnIDToSpeechBoundary` 里有 **3 条等待永远等不到**（`processingStage == .evaluation`、`userTurnCount == 2`、`.aiSpeaking`），`try?` 把超时吞掉所以测试照样绿 —— 那 3 条等待是纯装饰。删掉后该测试 **20s → 0.05s**，重复 14 次全绿 |
 | `F9-b` 测试进程写真实磁盘 | ✅ **已完成** | 语料库三件套补上 `TestProcess.isRunning` 判别（与既有四处同形）；新增判据 `LocalStoreResolutionTests` 钉住五个存储「测试进程里必须是内存版」；`ContainerIsolationTests` 的隔离断言从**类型身份**改成**行为**（写进一个容器、另一个读不到）。**实测**：全量跑完，开发者目录内容与时间戳一字未变（那三个残留文件是修之前写的） |
 | `F8-b` XcodeGen ⇄ SwiftPM 一致性 | ✅ **已完成** | `project.yml` 的源路径与 product 引用此前**无人校验**（CI 不跑 `xcodegen`，门禁腿 2 构建的是已提交的 `.xcodeproj`）⇒ `RepositoryLayoutTests` 新增一条：每个 `path:` 必须存在、每个 `product:` 必须在 `Package.swift` 的 `products:` 里声明。变异 2 条全咬（改源路径 / 改 product 名） |
-| `F6`、`F7` | ⏳ 未开始 | F6 需真机（与 iOS-S0-3 合并）；F7 设计资产（**26** 个图标 + 动态字体） |
+| `F7` 图标资产 | ✅ **已完成** | 26 个图标（稿子快照 → `generate-icons.py` → asset catalog SVG 矢量图）+ `DesignTokens.Icon` + 对照图 `icon-gallery.html` + **8 条判据**（几何逐字比对）。图标集是**按结构推导**的（声明了 `stroke=` 的才是 app 图标），推导的边界由「实心符号恰好是那 3 个系统字形」封住。**顺带更正**：清单里写的「24 个」是错的，实为 26（漏了 `i-chev-r`/`i-doc`）；`DESIGN.md` §7 一并改正。**动态字体拆成 F7-b** |
+| `F6`、`F7-b` | ⏳ 未开始 | F6 需真机（与 iOS-S0-3 合并）；F7-b 动态字体（130% 不破版需视觉验证） |
 
 ---
 
@@ -43,7 +44,8 @@
 | **F4** | **DI 收紧**：去掉可选注入的默认值 | `?? Container.shared` **10 处**，`Container.shared` 共 17 处【实测】；清单原文「10 处」这条**数字是对的** | 去掉默认值让 container 必传（或引入显式 `AppContainer`） | 全量测试绿；构造点不再有「忘了传就静默拿单例」的路径 | F1 |
 | **F5** | **并发隔离口径**（先量再定） | actor **15** / `@MainActor` **20** / `OSAllocatedUnfairLock` **14**【实测】。⚠️ 清单原文写「17 actor / 5 `@MainActor` / 11 锁」——**三个数全变了**（代码在演进）。「三种策略并存、无统一规则」是【推断】 | 一份「谁该用哪种」的口径（IO 边界 → actor；UI 状态 → `@MainActor`；窄临界区 → `OSAllocatedUnfairLock`），**只对新代码生效**，不做全仓迁移 | 口径写进 `AGENTS.md`；新代码不再出现第四种 | — |
 | **F6** | **`AVAudioSession` 所有权**（高风险路径） | 两个实现点，`DailyReadAudioPlayer` 曾绕过 owner（局部已修）；**结构问题仍开着**；现有 `isActive` 是**永不取假的判据**【读码】 | 单一 owner 类型 + 可查询的「谁在占用」真值 | 真机验证（与 iOS-S0-3 合并做） | — |
-| **F7** | **设计资产落地** | 稿子 §2.5 的 **24 个线性图标（1.5pt 描边）未交付**，现在用 SF Symbols 顶替，描边与圆角都不一致；**动态字体未接**（130% 不破版未验证）【实测 `DESIGN.md` §7/§8】 | 图标集 + `DesignTokens.Icon` 映射；已迁移的屏接 `@ScaledMetric` | 图标描边/圆角与稿子一致；动态字体 130% 截图不破版 | — |
+| **F7** ✅ | **设计资产落地（图标那一半）** | 稿子 §2.5 的线性图标**没交付**（且早先记的「24 个」是错的，实为 **26** 个——漏了 `i-chev-r`/`i-doc`）；现在用 SF Symbols 顶替，描边与圆角都不一致【实测】 | 稿子快照里的 26 个 `<symbol>` → `Scripts/generate-icons.py` → asset catalog 的 SVG 矢量图；`DesignTokens.Icon` 做名称映射（视图不写字符串）；判据 7 条逐字比对几何 | **图标资产已交付**（`Assets.car` 进 `FluentWorkHost.app`，两条腿实测） | — |
+| **F7-b** | **动态字体** | 令牌给的是 pt 绝对值，`Font.system(size:)` 不随 Dynamic Type 缩放；**130% 不破版未验证**。图标那一半已具备条件（矢量随尺寸放大不糊），字号那一半未接【实测 `DESIGN.md` §8.4】 | 已迁移的屏接 `@ScaledMetric` | 动态字体 130% 截图不破版 | F7 |
 | **F8** | **CI 结构断言改成真的** | `ios-ci.yml` 断言 `App / Modules / Services / Resources / Tests`，而仓里只有 `App / Shared / Tests / Scripts` ⇒ **每次推送必失败**【实测】 | 改成断言真实骨架；并让 CI 至少跑 `swift test` | CI 在 main 上不再结构性失败 | — |
 | **F8-b** ✅ | **XcodeGen 清单与 SwiftPM 的一致性**（F8 查出的空档） | `project.yml` 的 `sources: - path: App/FluentWorkHost` 与 `dependencies: product: FluentWorkCore/FluentWorkUI` **没有任何东西校验**：CI 不跑 `xcodegen`，而门禁腿 2 构建的是**已提交的** `.xcodeproj` ⇒ project.yml 与 Package.swift 不一致时谁都不说话，直到有人重新生成工程才发现【实测】 | 判据：project.yml 的每个源路径存在、每个 product 在 Package.swift 的 `products:` 里已声明 | 改 `App/` 目录名或 product 名 ⇒ 红 | F8 |
 | **F9** ✅ | **离线缓存补齐** | `Storage/` 只有语料库三件套（`CorpusCacheStore` / `CorpusOutboxStore` / `CorpusSyncMetadataStore`）+ `SecureStorage`。稿子 §07 场景 06 原文：「弱网浏览 —— 语料库 **/ 历史 / 每日一读** 走本地缓存，右上角轻量「离线模式」标识，不留空白页。」⇒ **只做了 1/3**【实测】 | 历史与每日一读的缓存层 | 断网进历史/每日一读不留白页；有判据 | F1 |

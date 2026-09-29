@@ -57,7 +57,13 @@ let package = Package(
         .target(
             name: "FluentWorkUI",
             dependencies: ["FluentWorkCore"],
-            path: "Shared/FluentWorkUI"
+            path: "Shared/FluentWorkUI",
+            resources: [
+                // 26 个图标（稿子 → asset catalog）。声明在这里 `swift build`
+                // 才会调 actool —— 实测过：产 `FluentWorkIOS_FluentWorkUI.bundle/Contents/Resources/Assets.car`。
+                // 内容由 `Scripts/generate-icons.py` 生成，**不要手改**。
+                .process("Resources"),
+            ]
         ),
         // Objective-C, and only for one thing: `FWTryCatch`. Swift cannot catch
         // `NSException`, and `AVAudioPlayerNode.play()` raises instead of

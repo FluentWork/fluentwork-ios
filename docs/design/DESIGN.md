@@ -144,6 +144,7 @@ iOS `DesignTokens.swift`（蓝色板 `#0B0F14` / `#3D8BFF`，`6dcabd0`，2026-08
 | 相邻目标间距 | `Component.minTargetSpacing` | ≥ 8pt |
 | 焦点环 | `Component.focusRingWidth` | 强调色 2pt 描边 |
 | 图标描边 | `Component.iconStrokeWidth` | 1.5pt 线性描边、圆头端点 |
+| 图标尺寸 | `Component.iconPointSize` | 24pt 名义边长（SVG 的 `viewBox` 就是 24×24；矢量，可任意放大） |
 
 组件形态（细节见稿子 §2.4）：
 
@@ -167,15 +168,57 @@ iOS `DesignTokens.swift`（蓝色板 `#0B0F14` / `#3D8BFF`，`6dcabd0`，2026-08
 
 ---
 
-## 7. 图标（待办，尚未落地）
+## 7. 图标（**已交付**，2026-09-29）
 
-稿子 §2.5 给出一套**线性描边图标**（1.5pt 描边、圆头端点），共 24 个：
+稿子 §2.5 给出一套**线性描边图标**（`fill="none"`、1.5pt 描边、圆头端点），
+**26 个**（不是早先记的 24 —— 名单里漏了 `i-chev-r` 与 `i-doc`，数量也少算了）：
+
 `i-home` `i-drill` `i-library` `i-mic` `i-play` `i-pause` `i-replay` `i-wave` `i-star4` `i-ladder`
 `i-search` `i-book` `i-talk` `i-gear` `i-clock` `i-flag` `i-shield` `i-trash` `i-copy` `i-info`
-`i-chev-l` `i-chev-d` `i-check` `i-x`。
+`i-chev-l` `i-chev-r` `i-chev-d` `i-check` `i-x` `i-doc`。
 
-Tab、场景、状态灯、徽章共用同一套；**不使用 emoji 充当功能图标**。当前 iOS 侧用 SF Symbols 顶替，
-描边宽度与圆角与稿子不一致 —— 记为设计债，等图标资产交付后统一替换。
+Tab、场景、状态灯、徽章共用同一套；**不使用 emoji 充当功能图标**。
+
+### 资产从哪来、由谁守
+
+| | |
+|---|---|
+| 设计权威 | 稿子快照 `docs/design/2026-09-26-prd-v16-ux/index.html` 里的 26 个 `<symbol>` |
+| 编译吃的东西 | `Shared/FluentWorkUI/Resources/Assets.xcassets/`（26 个 `*.imageset`） |
+| 生成 | `Scripts/generate-icons.py`（幂等；脚本**拥有**这个 catalog 下的 `*.imageset`，别手改） |
+| 肉眼比对 | `docs/design/icon-gallery.html`（同一次生成，26 个图标 × 三色三尺寸） |
+| 判据 | `Tests/.../UI/IconAssetTests.swift`（8 条，逐字比对几何） |
+
+交付形式是 **asset catalog 里的 SVG 矢量图**，不是 SwiftUI `Path`：路径数据用到了 `a`
+弧线命令与 `rect rx`，自己写 SVG→Path 解析器（含 arc→Bézier）是自造轮子。
+实测过两条腿都能编：`swift build` 与宿主 `xcodebuild` 都产出
+`FluentWorkIOS_FluentWorkUI.bundle/Assets.car`（宿主那条已确认落在 `FluentWorkHost.app` 里）。
+
+每个 imageset 带两个属性，都不是可选的：
+
+- `preserves-vector-representation` —— 不打开，图标放大就是位图拉伸，而 1.5pt 描边
+  必须随尺寸线性变化才不糊；
+- `template-rendering-intent: template` —— 不打开，图标会是用 `#000` 画的死黑色。
+  稿子里写的是 `stroke="currentColor"`，语义是「跟随文字颜色」，template 渲染与之一致。
+
+### 代码怎么用
+
+`DesignTokens.Icon`（case 名 = 去掉 `i-` 前缀；`chev-l/r/d` 展开成 `chevronLeft/Right/Down`；
+`star4` 是「四角星」这个名字本身）。视图写：
+
+```swift
+DesignTokens.Icon.home.image     // 24pt，跟随 foregroundStyle
+```
+
+**不要写 `"i-home"` 字面量**：asset 名写错在编译期与 asset catalog 里都不报错，
+只在运行期画不出东西。
+
+### 排除的 3 个
+
+稿子里另有 `i-sig` / `i-wifi` / `i-batt`（状态栏信号 / Wi-Fi / 电量），**不导出**：
+它们是系统字形（属性上是纯 `fill="currentColor"`，与 app 图标的描边形状干净可分）。
+判据里有一条专门断言「稿子的实心 symbol 恰好是这 3 个」—— 多了少了都红，
+这样「按结构推导」这条规则本身不会静默过期。
 
 ---
 
@@ -184,8 +227,11 @@ Tab、场景、状态灯、徽章共用同一套；**不使用 emoji 充当功�
 1. **视图一处都没用令牌。** `Shared/FluentWorkUI/` 的 10 个视图全部走系统语义色
    （`.secondary` ×32、`.red` ×5、`Color.blue` ×4、`Color.orange` ×3 …）。
    迁移按**每屏各自的 ticket** 走，不做全量覆盖 —— 每屏还有自己的状态矩阵（稿子 §06/§07）要对。
-2. **图标资产未交付**（见第 7 节）。
+2. **图标资产已交付，但尚未被视图采用**（见第 7 节）：26 个图标进了 asset catalog，
+   而现存的视图仍在用 SF Symbols 顶替 —— 描边宽度与圆角与稿子不一致。换掉是**逐屏**的事，
+   跟第 1 条同一批 ticket 一起做。
 3. **浅色主题未做**，且 `21_` §2.1 的对比度验收在浅色底上很可能不达标，属 V1.1。
 4. **动态字体未接**：令牌给的是 pt 绝对值，`Font.system(size:)` 不随 Dynamic Type 缩放。
-   130% 不破版这条**尚未验证**。
+   130% 不破版这条**尚未验证**（图标那一半已具备条件：矢量图随尺寸放大不糊，
+   但字号那一半仍未接）。
 5. **订阅页（屏 13）后置**：`21_` §4.8 明确 MVP 期入口隐藏，服务端远程开关，V1.1 一键放出。
