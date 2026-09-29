@@ -98,6 +98,41 @@ there with a stated purpose. Adding a file to that list is a deliberate act; tha
 the whole point. The `private actor` half is **not** machine-checked and is not pretended
 to be — it is prose plus three named instances.
 
+## Audio State Boundary
+
+Where audio state lives is not a matter of taste. The store holds what can be equated, replayed
+and read by a screen; real-time or process-level facts stay behind a port. The rule and its two
+exceptions were both derived from device runs -- and the exceptions are written down because the
+next person's instinct is to add a third.
+
+**In the store** (a pure reducer decides, a middleware applies the effect):
+
+- The room's phase and its two "ready" halves (`socketReady`, `captureLive`) --
+  `SpeechSessionMachine.reduce`. Audio *events* are its input, not a side channel:
+  `SpeechSessionEvent.swift:26` names `audioEventPump` as the producer of `.captureFirstBuffer`.
+- Daily read's playback phase (`DailyReadState.audioPhase`, `DailyReadFeature.swift:51`), with its
+  transitions in the reducer (`:204-224`) and one action per fact the player reports.
+- Every engine-to-action hop goes through `audioEventPump` (`SpeechSessionMiddleware.swift:456`)
+  or the transport router (`TransportEventRouter.swift`). **Services never import the store.**
+
+**Outside the store, deliberately** -- turning these into actions is the failure mode:
+
+- `SharedAudioSessionOwner`'s lock and lease roster (`AudioSessionOwnership.swift:490`): a
+  process-level resource that needs real mutual exclusion, and `AVAudioSession` cannot say *who is
+  borrowing* -- see R2 in `.workbuddy-ai/reviews/2026-09-29-f6-review.md`. That is why "who holds
+  the session" had to become a roster the owner keeps, not state the store could hold.
+- The engine's graph, capture tap, ring buffer, `AudioSink` / `RecordingSink`, and the VAD energy
+  state machine (`LiveAudioEngineSupport.swift:179-214`): a 20 ms signal. One action per frame is
+  one main-thread hop per frame.
+
+**Registered exceptions -- the phase has two homes:**
+
+- `SessionPhaseBox` (`SpeechSessionMiddleware.swift:271`) and `SpeechCaptureGate` (`:298`) mirror
+  state the store already owns. They exist because the pump must know the phase **synchronously,
+  before it dispatches** (`:265-270`), and a `@MainActor` read is not available from the audio
+  loop. That is the entire justification; anything else wanting a second home for the phase needs
+  an argument at least that strong.
+
 ## High-Risk Paths
 
 1. `Shared/FluentWorkCore/Audio/` — capture and playback; `AVAudioPlayerNode.play()`
