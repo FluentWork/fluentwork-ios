@@ -21,7 +21,9 @@
 | `F4` DI 收紧 | ✅ **已完成** | 10 处 `?? Container.shared` **→ 0**；9 个 middleware 工厂 + `AppStoreFactory.make` 的 container 改成必传；新增 `AppStoreFactory.makeShared()` 作为**唯一有名字的组合根入口**；`Tests/.../Architecture/DependencyInjectionGuardTests.swift` 三条判据（生产代码零回落 / `Container.shared` 只在白名单 / **白名单无过期条目**）。变异 3 条全咬，且**白名单双向判据在真实修复过程中天然咬了一次**（第一版 `makeShared` 用了 `.shared` 简写） |
 | `F8` CI 结构断言 | ✅ **已完成** | `ios-ci.yml` 断言的 `Modules/Services/Resources` **本仓从来没有过** ⇒ 每次推送必红；改成真实骨架（`App/Shared/Tests/Scripts` + `Package.swift` + `project.yml` + `Scripts/gate.sh` 可执行）。**实测对照**：拿 HEAD 的旧版 shell 跑 → `EXIT=1`，新版 → `EXIT=0`。另加 `Tests/.../Repository/RepositoryLayoutTests.swift`：CI 里每条 `test -d/-f/-x` 必须指到真实路径（棘轮下限 9） |
 | `F5` 并发口径 | ✅ **已完成** | `AGENTS.md` 新增 `## Concurrency Isolation`（Local Rule 8）：四行表按「这份状态需要怎么被访问」选策略，**封闭清单** + 三条禁用写法。新增 `Tests/.../Architecture/ConcurrencyPolicyTests.swift`（`NSLock`/`NSRecursiveLock`/`DispatchSemaphore` 零容忍；`DispatchQueue` 6 个文件登记 + 双向过期检测）+ `Support/RepositoryScan.swift`（扫描工具收敛，避免重造 F2 消掉的重复）。变异 3 条全咬。**顺带修掉 `AGENTS.md` 里已过期的 Known Drift #3**（CI 那条已修，换成 F8-b） |
-| `F6`、`F7`、`F9` | ⏳ 未开始 | 顺位：F6（`AVAudioSession` 所有权，需真机）→ F7（设计资产）→ F9（离线缓存） |
+| `F9` 离线缓存 | ✅ **已完成** | 语料库那套机制抽成 `Storage/SnapshotCacheStore.swift`（`JSONSnapshotStore` + `InMemorySnapshotStore`），三域各自薄薄一层；新增历史与每日一读的只读展示缓存；中间件读穿 + 成功后存快照；reducer 新增 `hydrateFromCache`，且**失败时不接管已有内容**（每日一读那条是新修的）。判据 10 条。变异 3 条全咬 |
+| `F6`、`F7` | ⏳ 未开始 | F6 需真机（与 iOS-S0-3 合并）；F7 设计资产（24 图标 + 动态字体） |
+| `F9-b` | ❌ 新查出 | **测试进程会写到开发者真实的 `~/Library/Application Support`**。新的两个缓存已用 `TestProcess.isRunning` 挡掉；语料库三个存储仍走 JSON（实测留下 `corpus-sync-user_42.json`），因为 `ContainerIsolationTests` 把具体 JSON 类型钉住了，要一并调整那条测试。**这条路会让测试互相污染**，且症状是「别的测试偶尔红」 |
 
 
 ---
@@ -42,7 +44,8 @@
 | **F7** | **设计资产落地** | 稿子 §2.5 的 **24 个线性图标（1.5pt 描边）未交付**，现在用 SF Symbols 顶替，描边与圆角都不一致；**动态字体未接**（130% 不破版未验证）【实测 `DESIGN.md` §7/§8】 | 图标集 + `DesignTokens.Icon` 映射；已迁移的屏接 `@ScaledMetric` | 图标描边/圆角与稿子一致；动态字体 130% 截图不破版 | — |
 | **F8** | **CI 结构断言改成真的** | `ios-ci.yml` 断言 `App / Modules / Services / Resources / Tests`，而仓里只有 `App / Shared / Tests / Scripts` ⇒ **每次推送必失败**【实测】 | 改成断言真实骨架；并让 CI 至少跑 `swift test` | CI 在 main 上不再结构性失败 | — |
 | **F8-b** | **XcodeGen 清单与 SwiftPM 的一致性**（F8 本轮查出的空档） | `project.yml` 的 `sources: - path: App/FluentWorkHost` 与 `dependencies: product: FluentWorkCore/FluentWorkUI` **没有任何东西校验**：CI 不跑 `xcodegen`，而门禁腿 2 构建的是**已提交的** `.xcodeproj` ⇒ project.yml 与 Package.swift 不一致时谁都不说话，直到有人重新生成工程才发现【实测】 | 判据：project.yml 的每个源路径存在、每个 product 在 Package.swift 的 `products:` 里已声明 | 改 `App/` 目录名或 product 名 ⇒ 红 | F8 |
-| **F9** | **离线缓存补齐** | `Storage/` 只有语料库三件套（`CorpusCacheStore` / `CorpusOutboxStore` / `CorpusSyncMetadataStore`）+ `SecureStorage`。稿子 §07 场景 06 要求「语料库 **/ 历史 / 每日一读** 走本地缓存」⇒ **只做了 1/3**【实测】 | 历史与每日一读的缓存层（沿用语料库的既有形状，不新立一套） | 断网进历史/每日一读不留白页；有判据 | F1 |
+| **F9** ✅ | **离线缓存补齐** | `Storage/` 只有语料库三件套（`CorpusCacheStore` / `CorpusOutboxStore` / `CorpusSyncMetadataStore`）+ `SecureStorage`。稿子 §07 场景 06 原文：「弱网浏览 —— 语料库 **/ 历史 / 每日一读** 走本地缓存，右上角轻量「离线模式」标识，不留空白页。」⇒ **只做了 1/3**【实测】 | 历史与每日一读的缓存层 | 断网进历史/每日一读不留白页；有判据 | F1 |
+| **F9-b** | **测试进程写真实磁盘**（F9 本轮查出的隐患） | 新增缓存时发现：测试里 `container.xxxCacheStore()` 解析到 JSON 版 ⇒ 写进开发者真实的 `~/Library/Application Support/FluentWork/CorpusState/`。实测症状：上一个测试存的快照被下一个测试 hydrate 到，一个 `phase == .ready` 的等待在网络还没跑完时就满足了。新的两个缓存已用 `TestProcess.isRunning` 挡掉；**语料库三个存储仍会写**（残留 `corpus-sync-user_42.json`），因为 `ContainerIsolationTests` 把具体 JSON 类型钉住了 | 三个存储也加测试进程判别，并把 `ContainerIsolationTests` 改成不依赖具体实现类型 | 测试进程内不再出现任何真实磁盘写入 | F9 |
 
 **治理项（不是我在仓内能修的，挂账）**：远端 `main` 的分支保护要求 PR + 3 项状态检查，与
 `AGENTS.md`「在 `main` 上开发、不开 PR」冲突（= iOS-S0-5）⇒ **需要仓库管理员**。

@@ -605,6 +605,29 @@ public extension Container {
         self { JSONCorpusSyncMetadataStore() }.cached
     }
 
+    var sessionHistoryCacheStore: Factory<SessionHistoryCacheStoreProtocol> {
+        self {
+            // 测试进程一律内存版：这两个缓存是**新加的**，加进来时才发现
+            // 默认走 JSON 会让测试写到开发者真实的 Application Support 目录里，
+            // 于是上一个测试存下的快照会被下一个测试 hydrate 到（实测：一个
+            // `phase == .ready` 的等待因此在网络还没跑完时就满足了）。缓存跨测试
+            // 泄漏比它看起来难查，因为症状是「别的测试偶尔红」。
+            if TestProcess.isRunning {
+                return InMemorySessionHistoryCacheStore()
+            }
+            return JSONSessionHistoryCacheStore()
+        }.cached
+    }
+
+    var dailyReadCacheStore: Factory<DailyReadCacheStoreProtocol> {
+        self {
+            if TestProcess.isRunning {
+                return InMemoryDailyReadCacheStore()
+            }
+            return JSONDailyReadCacheStore()
+        }.cached
+    }
+
     var networkMonitor: Factory<NetworkMonitorProtocol> {
         self { NWPathNetworkMonitor() }.cached
     }

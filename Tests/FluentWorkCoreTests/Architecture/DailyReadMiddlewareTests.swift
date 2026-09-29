@@ -297,3 +297,59 @@ private actor ObserverStartedSuccessCounter {
   private(set) var value = 0
   func increment() { value += 1 }
 }
+
+// MARK: - 只读展示缓存（F9）
+
+/// 稿子 §07 场景 06：弱网浏览**不留白页**。
+///
+/// 与历史不同的是这里多一条断言：屏幕上的日期必须是**这份内容自己的日期**。
+/// 跨了一天又连不上服务端，只把昨天的正文端上来、日期却写今天，就是让缓存说谎。
+@MainActor
+@Test func cachedContentShowsWithItsOwnDateWhenTheNetworkIsDown() async throws {
+  let client = ThrowingDailyReadClient()
+  let cache = InMemoryDailyReadCacheStore()
+
+  let container = Container()
+  container.reset()
+  container.dailyReadClient.register { client }
+  container.dailyReadCacheStore.register { cache }
+
+  try await cache.saveSnapshot(
+    CachedDailyReadSnapshot(genDate: "2026-08-31", dailyRead: makeDailyRead()),
+    scope: cacheScope(for: AppState.initial)
+  )
+
+  let store = AppStoreFactory.make(container: container, initialState: AppState.initial)
+  store.dispatch(AppAction.dailyRead(.loadTriggered))
+
+  try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
+    store.state.dailyRead.dailyRead != nil
+  }
+  #expect(store.state.dailyRead.phase == .ready, "有内容可读就不该是错误页")
+  #expect(store.state.dailyRead.genDate == "2026-08-31", "日期必须是这份内容自己的日期")
+  #expect(store.state.dailyRead.dailyRead?.id == "dr-001")
+  #expect(store.state.dailyRead.lastErrorMessage != nil, "同时仍要告知这次没取到")
+}
+
+/// 拉到新内容后要把快照存下来（含 `genDate`），否则下次离线没有东西可显示。
+@MainActor
+@Test func aReadyResponseIsStoredForTheNextOfflineOpen() async throws {
+  let api = StubDailyReadAPIClient(responses: [.ready(makeDailyRead())])
+  let cache = InMemoryDailyReadCacheStore()
+
+  let container = Container()
+  container.reset()
+  container.dailyReadClient.register { StubDailyReadClient(api: api) }
+  container.dailyReadCacheStore.register { cache }
+
+  let store = AppStoreFactory.make(container: container, initialState: AppState.initial)
+  store.dispatch(AppAction.dailyRead(.loadTriggered))
+
+  try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
+    store.state.dailyRead.phase == .ready
+  }
+
+  let snapshot = try await cache.loadSnapshot(scope: cacheScope(for: store.state))
+  #expect(snapshot?.genDate == "2026-09-01")
+  #expect(snapshot?.dailyRead.id == "dr-001")
+}

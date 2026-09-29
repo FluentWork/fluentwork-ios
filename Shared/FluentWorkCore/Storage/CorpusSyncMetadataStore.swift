@@ -83,11 +83,3 @@ public actor InMemoryCorpusSyncMetadataStore: CorpusSyncMetadataStoreProtocol {
         metadataByScope.removeValue(forKey: scope)
     }
 }
-
-func defaultCorpusStateDirectoryURL() -> URL {
-    let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-        ?? FileManager.default.temporaryDirectory
-    return root
-        .appendingPathComponent("FluentWork", isDirectory: true)
-        .appendingPathComponent("CorpusState", isDirectory: true)
-}

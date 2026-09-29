@@ -14,11 +14,13 @@ public enum AppTaskID {
     public static let corpusLoadMore: CancellationID = "corpus.load-more"
     public static let corpusReplayOutbox: CancellationID = "corpus.replay-outbox"
     public static let corpusMergeRebuild: CancellationID = "corpus.merge-rebuild"
+    public static let dailyReadHydrate: CancellationID = "daily-read.hydrate"
     public static let dailyReadLoad: CancellationID = "daily-read.load"
     public static let dailyReadPoll: CancellationID = "daily-read.poll"
     public static let dailyReadFollowRead: CancellationID = "daily-read.follow-read"
     public static let dailyReadAudio: CancellationID = "daily-read.audio"
     public static let dailyReadAudioObserver: CancellationID = "daily-read.audio-observer"
+    public static let sessionHistoryHydrate: CancellationID = "session-history.hydrate"
     public static let sessionHistoryLoad: CancellationID = "session-history.load"
     public static let sessionHistoryLoadMore: CancellationID = "session-history.load-more"
     public static let sessionHistoryDetail: CancellationID = "session-history.detail"
@@ -304,7 +306,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
     return { store, action, next in
         switch action {
         case .corpus(.appear):
-            let scope = corpusCacheScope(for: store.state)
+            let scope = cacheScope(for: store.state)
             return .merge(
                 next(action),
                 .task(id: AppTaskID.corpusHydrate) {
@@ -371,7 +373,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
             )
 
         case .corpus(.refreshRequested):
-            let scope = corpusCacheScope(for: store.state)
+            let scope = cacheScope(for: store.state)
             let currentItems = store.state.corpus.items
             let currentListCursor = store.state.corpus.nextCursor
             let currentSyncCursor = store.state.corpus.syncCursor
@@ -408,7 +410,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
             else {
                 return next(action)
             }
-            let scope = corpusCacheScope(for: store.state)
+            let scope = cacheScope(for: store.state)
             let currentItems = store.state.corpus.items
             let currentSyncCursor = store.state.corpus.syncCursor
             let base = next(action)
@@ -454,7 +456,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
 
         case let .corpus(.favoriteToggled(blockID, isFavorite, pinned)):
             guard !store.state.network.isConnected else {
-                let scope = corpusCacheScope(for: store.state)
+                let scope = cacheScope(for: store.state)
                 let currentItems = store.state.corpus.items
                 let currentNextCursor = store.state.corpus.nextCursor
                 let base = next(action)
@@ -491,7 +493,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
                 retryCount: 0,
                 createdAt: iso8601String(from: clock.now())
             )
-            let scope = corpusCacheScope(for: store.state)
+            let scope = cacheScope(for: store.state)
             let existing = store.state.corpus.outbox
             return .merge(
                 next(action),
@@ -510,7 +512,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
 
         case let .corpus(.deleteTapped(blockID)):
             guard !store.state.network.isConnected else {
-                let scope = corpusCacheScope(for: store.state)
+                let scope = cacheScope(for: store.state)
                 let items = store.state.corpus.items.filter { $0.id != blockID }
                 let currentNextCursor = store.state.corpus.nextCursor
                 let base = next(action)
@@ -539,7 +541,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
                 retryCount: 0,
                 createdAt: iso8601String(from: clock.now())
             )
-            let scope = corpusCacheScope(for: store.state)
+            let scope = cacheScope(for: store.state)
             let remainingItems = store.state.corpus.items.filter { $0.id != blockID }
             let existing = store.state.corpus.outbox
             let currentNextCursor = store.state.corpus.nextCursor
@@ -566,7 +568,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
             guard store.state.network.isConnected, !store.state.corpus.outbox.isEmpty else {
                 return next(action)
             }
-            let scope = corpusCacheScope(for: store.state)
+            let scope = cacheScope(for: store.state)
             let pendingItems = store.state.corpus.outbox
             let base = next(action)
             return .merge(
@@ -615,7 +617,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
             )
 
         case .auth(.mergedIntoRegistered):
-            let oldScope = corpusCacheScope(for: store.state)
+            let oldScope = cacheScope(for: store.state)
             let newScope = mergeTargetCorpusScope(for: action, fallbackState: store.state)
             guard oldScope != newScope else {
                 return next(action)
@@ -674,7 +676,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
     }
 }
 
-private func corpusCacheScope(for state: AppState) -> String {
+func cacheScope(for state: AppState) -> String {
     state.auth.currentUserID ?? state.auth.mode.rawValue
 }
 
@@ -807,7 +809,7 @@ private func iso8601String(from date: Date) -> String {
 
 private func mergeTargetCorpusScope(for action: AppAction, fallbackState: AppState) -> String {
     guard case let .auth(.mergedIntoRegistered(userID, _)) = action else {
-        return corpusCacheScope(for: fallbackState)
+        return cacheScope(for: fallbackState)
     }
     return userID
 }

@@ -98,6 +98,8 @@ public struct DailyReadState: Equatable, Sendable, State {
 public enum DailyReadAction: Equatable, Sendable, Action {
   /// Trigger initial load of today's daily read.
   case loadTriggered
+  /// Apply the last content that was on screen, read from the local cache.
+  case hydrateFromCache(CachedDailyReadSnapshot?)
   /// Apply server poll response.
   case applyResponse(DailyReadTodayResponse)
   /// Network / decoding failure.
@@ -149,6 +151,20 @@ public let dailyReadReducer: Reducer<DailyReadState, DailyReadAction> = { state,
     state.dailyRead = nil
     state.genDate = nil
 
+  case .hydrateFromCache(let snapshot):
+    /// 只读展示缓存：弱网下进屏不留白页（稿子 §07 场景 06）。
+    ///
+    /// `genDate` 跟着内容一起上屏，所以屏幕上写的日期是**这份内容自己的日期**。
+    /// 跨了一天又连不上服务端时，用户看到的是「29 日的每日一读」并被如此告知，
+    /// 而不是把昨天的内容当成今天的端上来 —— 缓存可以旧，但不能说谎。
+    ///
+    /// 已经有内容就什么都不做：那说明网络结果先落地了，缓存此刻已无话可说。
+    guard state.dailyRead == nil, let snapshot else { break }
+    state.dailyRead = snapshot.dailyRead
+    state.genDate = snapshot.genDate
+    state.phase = .ready
+    state.lastErrorMessage = nil
+
   case .applyResponse(let response):
     state.genDate = response.genDate
     switch response.status {
@@ -172,8 +188,13 @@ public let dailyReadReducer: Reducer<DailyReadState, DailyReadAction> = { state,
     state.followReadPhase = .idle
 
   case .loadFailed(let message):
-    state.phase = .failed
     state.lastErrorMessage = message
+    // 屏幕上已经有可以读的内容（刚刚从缓存上屏，或上一次成功拉到的）时不接管整屏：
+    // 把能读的正文换成一张错误页，等于把「弱网」变成「打不开」——那正是
+    // 稿子 §07 场景 06 要避免的空白页。失败仍然记在 `lastErrorMessage` 里。
+    if state.dailyRead == nil {
+      state.phase = .failed
+    }
 
   case .playTapped:
     guard state.dailyRead?.audioURL?.isEmpty == false else {

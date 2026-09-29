@@ -26,16 +26,32 @@ public func dailyReadMiddleware(container: Container) -> Middleware<AppState, Ap
 
     let client = container.dailyReadClient()
     let audioPlayer = container.dailyReadAudioPlayer()
+    let cacheStore = container.dailyReadCacheStore()
 
     switch dailyReadAction {
     case .loadTriggered:
+      let scope = cacheScope(for: store.state)
       let base = next(action)
       let dispatchBox = DailyReadDispatchBox(dispatch: { store.dispatch($0) })
       return .merge(
         base,
+        .task(id: AppTaskID.dailyReadHydrate) {
+          do {
+            let snapshot = try await cacheStore.loadSnapshot(scope: scope)
+            guard !Task.isCancelled else { return nil }
+            return .dailyRead(.hydrateFromCache(snapshot))
+          } catch is CancellationError {
+            return nil
+          } catch {
+            guard !Task.isCancelled else { return nil }
+            return .dailyRead(.hydrateFromCache(nil))
+          }
+        },
         .task(id: AppTaskID.dailyReadLoad) {
           await pollDailyReadUntilReady(
             client: client,
+            cacheStore: cacheStore,
+            scope: scope,
             dispatchBox: dispatchBox
           )
         }
@@ -174,6 +190,8 @@ internal final class ObserverStartedBox: Sendable {
 
 private func pollDailyReadUntilReady(
   client: DailyReadClientProtocol,
+  cacheStore: DailyReadCacheStoreProtocol,
+  scope: String,
   dispatchBox: DailyReadDispatchBox
 ) async -> AppAction? {
   for attempt in 0..<dailyReadMaxPollAttempts {
@@ -190,7 +208,20 @@ private func pollDailyReadUntilReady(
         try? await Task.sleep(for: dailyReadPollInterval)
         guard !Task.isCancelled else { return nil }
         continue
-      case .ready, .failed:
+      case .ready:
+        // 存快照的时机与语料库一致：在加载 task 里、成功动作回派之前。
+        // `genDate` 一起存，所以下次离线时屏幕上写的日期是这份内容自己的日期。
+        //
+        // 缓存写失败不许让加载失败：内容是真的、马上就要上屏，缓存的全部价值只是
+        // 让下一次进来好看一点；磁盘满了不应该把能看的列表变成错误页。
+        if let dailyRead = response.dailyRead {
+          try? await cacheStore.saveSnapshot(
+            CachedDailyReadSnapshot(genDate: response.genDate, dailyRead: dailyRead),
+            scope: scope
+          )
+        }
+        return .dailyRead(.applyResponse(response))
+      case .failed:
         return .dailyRead(.applyResponse(response))
       }
     } catch is CancellationError {

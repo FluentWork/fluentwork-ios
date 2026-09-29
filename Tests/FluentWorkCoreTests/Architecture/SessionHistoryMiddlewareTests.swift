@@ -334,3 +334,127 @@ private func makeStore(
     }
     #expect(store.state.sessionHistory.detail.phase.errorMessage != nil)
 }
+
+// MARK: - 只读展示缓存（F9）
+
+/// 与 `makeStore` 同一个形状，只是多注册一个缓存存储 —— 缓存要能在断言里被读到，
+/// 所以它由测试持有，而不是从全局容器里捞。
+@MainActor
+private func makeStoreWithCache(
+    client: StubSessionHistoryClient,
+    cache: SessionHistoryCacheStoreProtocol,
+    state: SessionHistoryState = SessionHistoryState()
+) -> Store<AppState, AppAction> {
+    let container = Container()
+    container.reset()
+    container.sessionHistoryClient.register { client }
+    container.sessionHistoryCacheStore.register { cache }
+    var initialState = AppState.initial
+    initialState.sessionHistory = state
+    return AppStoreFactory.make(container: container, initialState: initialState)
+}
+
+/// 稿子 §07 场景 06：弱网浏览**不留白页**。
+///
+/// 这条是缓存存在的唯一理由。断了网还要看到上次的列表，并且**同时**被告知这次
+/// 没取到 —— 只显示列表不说失败，等于把旧内容冒充成新的。
+@MainActor
+@Test func anOfflineOpenShowsTheCachedPageInsteadOfABlankOne() async throws {
+    let cache = InMemorySessionHistoryCacheStore()
+    let client = StubSessionHistoryClient(responder: { _ in throw SessionHistoryStubFailure() })
+
+    try await cache.saveSnapshot(
+        CachedSessionHistorySnapshot(
+            items: [makeSessionItem("cached-1"), makeSessionItem("cached-2")],
+            nextCursor: "c-cached"
+        ),
+        scope: cacheScope(for: AppState.initial)
+    )
+
+    let store = makeStoreWithCache(
+        client: client,
+        cache: cache,
+        state: SessionHistoryState()
+    )
+
+    store.dispatch(.sessionHistory(.appear))
+
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
+        store.state.sessionHistory.items.count == 2
+    }
+    #expect(store.state.sessionHistory.phase == .ready)
+    #expect(store.state.sessionHistory.items.map(\.sessionID) == ["cached-1", "cached-2"])
+    #expect(store.state.sessionHistory.nextCursor == "c-cached")
+    #expect(
+        store.state.sessionHistory.errorMessage != nil,
+        "显示缓存的同时必须仍然告知这次没取到"
+    )
+}
+
+/// 存下来的快照是**整张列表**，不是最后那一页 —— 第二页只存它自己，
+/// 下次离线进来就只剩一页了。
+@MainActor
+@Test func pagingStoresTheWholeListNotJustTheNewPage() async throws {
+    let cache = InMemorySessionHistoryCacheStore()
+    let client = StubSessionHistoryClient(responder: { cursor in
+        if cursor == nil {
+            return SessionHistoryPage(items: [makeSessionItem("s-1")], nextCursor: "c1", size: 20)
+        }
+        return SessionHistoryPage(items: [makeSessionItem("s-2")], nextCursor: nil, size: 20)
+    })
+    let store = makeStoreWithCache(client: client, cache: cache)
+
+    store.dispatch(.sessionHistory(.appear))
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
+        store.state.sessionHistory.items.count == 1
+    }
+
+    store.dispatch(.sessionHistory(.loadMoreRequested))
+    try await waitUntil(timeoutNanoseconds: 5_000_000_000) {
+        store.state.sessionHistory.items.count == 2
+    }
+
+    let snapshot = try await cache.loadSnapshot(scope: cacheScope(for: store.state))
+    #expect(snapshot?.items.map(\.sessionID) == ["s-1", "s-2"])
+    #expect(snapshot?.nextCursor == nil)
+}
+
+/// 缓存只在屏幕上还空着的时候说话。
+///
+/// 这条测的是 reducer 而不是中间件：两个动作谁先落地取决于网络快慢，
+/// 而「谁先落地都不许让旧内容盖住新内容」是 reducer 的职责。
+@Test func aCachedPageNeverOverwritesWhatIsAlreadyOnScreen() {
+    var state = SessionHistoryState()
+    sessionHistoryReducer(
+        &state,
+        .loadSucceeded(
+            SessionHistoryPage(items: [makeSessionItem("fresh")], nextCursor: nil, size: 20),
+            appending: false
+        )
+    )
+
+    sessionHistoryReducer(
+        &state,
+        .hydrateFromCache(
+            CachedSessionHistorySnapshot(items: [makeSessionItem("stale")], nextCursor: "c-old")
+        )
+    )
+
+    #expect(state.items.map(\.sessionID) == ["fresh"])
+    #expect(state.nextCursor == nil)
+}
+
+/// 空快照不许把已经写好的失败态换成「就绪」——
+/// 那等于用一条旧信息掩盖一条新错误。
+@Test func anEmptyCachedPageLeavesAFailureAlone() {
+    var state = SessionHistoryState()
+    sessionHistoryReducer(&state, .loadFailed("offline"))
+
+    sessionHistoryReducer(
+        &state,
+        .hydrateFromCache(CachedSessionHistorySnapshot(items: [], nextCursor: nil))
+    )
+
+    #expect(state.phase == .failed("offline"))
+    #expect(state.items.isEmpty)
+}

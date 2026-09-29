@@ -106,6 +106,7 @@ public enum SessionHistoryAction: Equatable, Sendable, Action {
     case appear
     case refreshRequested
     case loadMoreRequested
+    case hydrateFromCache(CachedSessionHistorySnapshot?)
     case loadSucceeded(SessionHistoryPage, appending: Bool)
     case loadFailed(String)
     case detailRequested(sessionID: String)
@@ -139,6 +140,17 @@ public let sessionHistoryReducer: Reducer<SessionHistoryState, SessionHistoryAct
         guard state.hasMore, !state.isLoadingMore else { return }
         state.isLoadingMore = true
         state.errorMessage = nil
+
+    case let .hydrateFromCache(snapshot):
+        // 缓存只是「上次看到的」，它不许盖掉更新的东西：屏幕上有内容说明网络
+        // 结果已经先落地（快网就是这个顺序），这时缓存已经无话可说。
+        //
+        // 只有拿到内容才动 phase。空快照（比如上次拉到的就是空列表）什么都不改：
+        // 把一个已经写好的失败态换成「空列表就绪」，等于用旧信息掩盖新错误。
+        guard state.items.isEmpty, let snapshot, !snapshot.items.isEmpty else { return }
+        state.items = snapshot.items
+        state.nextCursor = snapshot.nextCursor
+        state.phase = .ready
 
     case let .loadSucceeded(page, appending):
         state.items = appending ? state.items + page.items : page.items
