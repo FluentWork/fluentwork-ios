@@ -105,6 +105,56 @@
 - 收敛前的实测数字（写在这里是为了**别再照抄旧清单**）：`waitUntil` **8 份实现 / 158 调用点**，
   等待助手共 **14 个声明 / 10 个文件**，测试错误类型 **15 个定义**（其中 `TimeoutError` **7 份**）。
 
+## 仓级守卫（2026-09-29 起，写新守卫/改白名单前先读）
+
+本仓现有四条**文本扫描型**守卫，都在 `swift test` 里跑，形状是同一套：
+
+| 守卫 | 守什么 |
+|---|---|
+| `Tests/.../UI/DesignTokensTests.swift` | `#RRGGBB` 只许出现在 `DesignTokens.swift` |
+| `Tests/.../Networking/OpenAPIContractTests.swift` | `FluentWorkAPI` 每个 case 的 path/method 在契约里 |
+| `Tests/.../Networking/OpenAPIFieldContractTests.swift` | 客户端读的每个键，契约必须声明（20 个模型的手写映射） |
+| `Tests/.../Architecture/DependencyInjectionGuardTests.swift` | `?? Container.shared` 零容忍 + `Container.shared` 只在白名单 |
+| `Tests/.../Architecture/ConcurrencyPolicyTests.swift` | `NSLock` 三兄弟零容忍 + `DispatchQueue` 需登记 |
+| `Tests/.../Repository/RepositoryLayoutTests.swift` | CI 里每条 `test -d/-f/-x` 必须指到真实路径 |
+
+**扫描工具是共享的**：`Tests/FluentWorkCoreTests/Support/RepositoryScan.swift`
+（`productionSources()` / `codeLines(of:)` / `occurrences(of:)` / `repositoryRoot`）。
+**不要再各写一份** —— 那就是 F2 刚收敛掉的重复。
+
+四条经验，每条都有实测代价：
+
+1. **白名单要双向**：条目**过期**（文件不再引用它、或改了名）必须红。
+   没有这一条，白名单会随时间变成「免检名单」，而且**没有任何外部信号**提示它已失效。
+2. **必须有反空洞下限**：目录改名/正则失配时结果是空数组，而**「空数组」与「全部合格」
+   在断言那里长得一样**。下限同时兼作棘轮（断言只许多不许少）。
+3. **剥离注释只剥整行**（`trimmingCharacters` 后以 `//` 开头），不做行内剥离 ——
+   后者要处理字符串里的 `//`（URL 就是），截错了会变成**漏报**。
+4. ⚠️ **写完发现是死的判据要删掉**。F8 里我写过「`Package.swift` 每个 `path:` 都落在
+   真实目录」，变异发现 SwiftPM 在**加载清单**阶段就报 `invalid custom path`，
+   测试根本跑不起来 ⇒ 这条永远不可能独立开火。**工具链已经保证的不变量不要重复写一遍**，
+   但要在注释里写明「为什么不写」，否则下一个人会再加一次。
+
+> 📌 **还原变异不要用 `git checkout <file>`。** 改动还没提交时，它会把整个文件退回 HEAD ——
+> 我这么做把 `DailyReadMiddleware.swift` 的 F4 改动整份弄没了，只能重做一遍。
+> 变异一律用 Edit / 带断言的脚本改回去，改完 grep 复核。
+
+## 存储层（2026-09-29 起）
+
+- 快照缓存的机制只有一份：`Storage/SnapshotCacheStore.swift` 的
+  `JSONSnapshotStore<Snapshot>` / `InMemorySnapshotStore<Snapshot>`。
+  三个域（语料库 / 历史 / 每日一读）各是薄薄一层，只声明「快照长什么样」+「文件前缀」。
+  **新加第四个域时用它，不要再抄一份 JSON 读写。**
+- 目录仍是 `~/Library/Application Support/FluentWork/CorpusState/`（名字记的是历史，不是范围；
+  改名会让既有安装的语料库快照变孤儿）。
+- `JSONSnapshotStore` **不注入 `FileManager`**：它非 `Sendable`，交给 actor 会被 Swift 6
+  判成 `sending 'fileManager' risks causing data races`。
+- ⚠️ **缓存是只读展示用的，不是写回合并**。语料库那套 outbox / tombstone / merge 是
+  「本地也改了、两边要对账」才需要的；历史与每日一读不做，也不该做。
+- ⚠️ **测试进程里缓存必须是内存版**（`AppDependencies` 用 `TestProcess.isRunning` 判别）。
+  不加这一条，测试会写进开发者**真实的**应用支持目录，于是上一个测试存的快照被下一个
+  hydrate 到 —— 症状是「别的测试偶尔红」，极难查。**语料库三个存储仍有这个问题（F9-b）**。
+
 ## 设计令牌（2026-09-29 起）
 
 > **本阶段的票在哪**：`.scratch/issues/2026-09-29-design-phase/README.md` ——
