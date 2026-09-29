@@ -411,18 +411,44 @@ public struct DefaultNetworkPluginFactory: NetworkPluginFactoryProtocol {
 /// - `dailyReadAudioPlayer`：测试拿到真播放器，而它直接操作真 `AVAudioSession`。
 /// - `backgroundTaskPort`：iOS 上测试拿到 `UIKitBackgroundTaskPort`。
 ///
-/// 改判「XCTest 是否被加载」：`swift test` 经由 `swiftpm-testing-helper` 运行、
-/// `xcodebuild test` 经由 XCTest 运行器运行，两者都能解析出 `XCTestCase`；
-/// 生产 app 不链接 XCTest，所以为 `nil`。
+/// 「这个进程是不是在跑测试」。
 ///
-/// 两条都留着：环境变量那条覆盖「运行器在、但类还没加载」的极早时刻。
-/// 钉住它的是 `AudioEngineResolutionTests`。
+/// 判据**不能依赖运行器长什么样**。本机 `swift test` 经 `swiftpm-testing-helper` 运行、
+/// XCTest 被加载 ⇒ `XCTestCase` 能解析；而 GitHub 的 macOS runner 上 SwiftPM 生成的是
+/// 一个普通可执行文件（`.build/…/FluentWorkIOSPackageTests.derived/runner.swift`），
+/// XCTest 没被加载、`XCTestConfigurationFilePath` 也没设 ⇒ 两条判据**同时落空**，
+/// `isRunning` 判成 false，测试就去构造真的 `AVAudioEngine` 了。
+///
+/// 这个缺口是 CI 报出来的：`AudioEngineResolutionTests` 与 `MockAudioEngineTests`
+/// 在 runner 上红、在本机绿（2026-09-29）。**守卫是对的，环境假设是错的。**
+///
+/// 所以由**跑测试的那一方显式表态**（CI 的 `swift test` 步骤设
+/// `FLUENTWORK_TEST_PROCESS=1`），而不是让代码猜运行器是谁。生产 app 不会带这个变量。
 enum TestProcess {
     static var isRunning: Bool {
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+        isTestProcess(
+            environment: ProcessInfo.processInfo.environment,
+            xctestIsLoaded: NSClassFromString("XCTestCase") != nil
+        )
+    }
+
+    /// 两个外部输入都从参数进来。
+    ///
+    /// 这不是为了好看：如果直接读 `ProcessInfo` / `NSClassFromString`，这条判据在
+    /// **测试进程里永远是绿的** —— 本机 XCTest 已加载，任何入参都会落到最后那条
+    /// `return xctestIsLoaded` 上。实测过：把整条 `FLUENTWORK_TEST_PROCESS` 分支删掉，
+    /// 判据照样通过 ⇒ 那是假判据（本函数的第一版就是这么写的，被自己的变异验出来了）。
+    static func isTestProcess(
+        environment: [String: String],
+        xctestIsLoaded: Bool
+    ) -> Bool {
+        if environment["FLUENTWORK_TEST_PROCESS"] != nil {
             return true
         }
-        return NSClassFromString("XCTestCase") != nil
+        if environment["XCTestConfigurationFilePath"] != nil {
+            return true
+        }
+        return xctestIsLoaded
     }
 }
 

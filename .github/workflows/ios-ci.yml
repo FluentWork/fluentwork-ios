@@ -57,4 +57,16 @@ jobs:
         run: swift build
 
       - name: Run package tests
+        # 显式声明「这个进程在跑测试」。
+        #
+        # 不能靠猜运行器：本机 `swift test` 经 `swiftpm-testing-helper` 运行、XCTest 被
+        # 加载，而这里 SwiftPM 生成的是一个普通可执行文件
+        # （`.build/…/FluentWorkIOSPackageTests.derived/runner.swift`）——
+        # `XCTestCase` 解析不出来、`XCTestConfigurationFilePath` 也没设，于是测试进程
+        # 会被当成生产进程，去构造真的 `AVAudioEngine`（2026-09-29 实测：
+        # `AudioEngineResolutionTests` 与 `MockAudioEngineTests` 在本机绿、在这里红）。
+        #
+        # 这一行让判据从「猜运行器」变成「运行测试的人自己说」。
+        env:
+          FLUENTWORK_TEST_PROCESS: "1"
         run: swift test

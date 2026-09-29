@@ -36,3 +36,37 @@ import Testing
         """
     )
 }
+
+/// 判据从「猜运行器」改成「跑测试的人自己说」之后，钉住这条契约。
+///
+/// CI 的 `swift test` 步骤设 `FLUENTWORK_TEST_PROCESS=1`，因为它那里的 SwiftPM 生成的是
+/// 普通可执行文件、XCTest 没被加载 —— `AudioEngineResolutionTests` 在 runner 上红、
+/// 在本机绿，就是这条分支缺失的直接后果（2026-09-29）。
+///
+/// ⚠️ 两个输入都是**参数**，这不只是风格：第一版只注入环境、`XCTestCase` 仍在函数里
+/// 现查，于是**删掉整条 `FLUENTWORK_TEST_PROCESS` 分支判据照样绿**（本机 XCTest 已加载，
+/// 落点永远在最后那条 `return`）—— 一条本机无法转红的假判据。自己的变异把它验出来了。
+@Test func theTestProcessPredicateReadsAllThreeSignals() {
+    // 生产：三个信号都没有 ⇒ 不是测试进程。这一侧以前根本没法断言。
+    #expect(
+        TestProcess.isTestProcess(environment: [:], xctestIsLoaded: false) == false,
+        "没有任何信号时不许判成测试进程，否则生产会拿到替身音频引擎"
+    )
+    // CI：显式表态。
+    #expect(
+        TestProcess.isTestProcess(
+            environment: ["FLUENTWORK_TEST_PROCESS": "1"],
+            xctestIsLoaded: false
+        ),
+        "CI 显式说「我在跑测试」，就必须为真"
+    )
+    // `xcodebuild test` 的运行器：XCTest 在。
+    #expect(TestProcess.isTestProcess(environment: [:], xctestIsLoaded: true))
+    // 本机 `swift test` 的极早时刻：类还没加载，但变量已设。
+    #expect(
+        TestProcess.isTestProcess(
+            environment: ["XCTestConfigurationFilePath": "/tmp/probe.xctestconfiguration"],
+            xctestIsLoaded: false
+        )
+    )
+}
