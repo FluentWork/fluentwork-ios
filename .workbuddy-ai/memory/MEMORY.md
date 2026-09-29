@@ -107,6 +107,7 @@
 
 ## 仓级守卫（2026-09-29 起，写新守卫/改白名单前先读）
 
+
 本仓现有四条**文本扫描型**守卫，都在 `swift test` 里跑，形状是同一套：
 
 | 守卫 | 守什么 |
@@ -221,6 +222,31 @@
 - 二进制音频帧：`[4B 大端 sequence] + payload`，**没有 `turn_id`**（这就是 D7 与 Stage 3）。
 - 埋点是**字符串字面量**，不是符号——改名或删键编译通过、测试全绿，而真机日志里那行没了。
   `70_/24_` 已为上行 11 条建断言。
+
+## CI 与等待（2026-09-29 起，改 CI / 改测试等待前先读）
+
+- **CI 的 `swift test` 步骤必须设 `FLUENTWORK_TEST_PROCESS=1`**。GitHub 的 macOS runner 上
+  SwiftPM 生成的是**普通可执行文件**（`.build/…/FluentWorkIOSPackageTests.derived/runner.swift`），
+  不是 `swiftpm-testing-helper` ⇒ XCTest 没被加载、`XCTestConfigurationFilePath` 也没设。
+  不加这个变量，`TestProcess.isRunning` 判成 false，测试会去构造**真的** `LiveAudioEngine`
+  （真的 `AVAudioSession` + 麦克风，`deinit` 还碰输入节点）。
+  判据：`Tests/.../Architecture/AudioEngineResolutionTests.swift` 的
+  `theTestProcessPredicateReadsAllThreeSignals`（四个分支）。
+- **要「本机能验证」一条判断，它的每个外部输入都必须可注入**：`TestProcess` 第一版只把
+  environment 做成参数、`XCTestCase` 仍现查 ⇒ 删掉整条分支判据照样绿（假判据）。
+- ⚠️ **不要拿轮询去等瞬时态**。`SpeechSessionPhase` 的 `.processing` / `.recording`
+  这类状态在有些流程里只停留几毫秒，`Task.yield()` 看得见、10ms 轮询抓不到 ⇒
+  等待永远不成立。等**单调可观测**的东西（如已记录的事件序列）或稳定态。
+- ⚠️ **`try? await waitUntil { ... }` 会把超时吞掉** ⇒ 一条「等不到任何东西」的等待
+  和真判据在代码上长得一模一样。**超时预算不要当延迟断言**（`Await.swift` 顶部有完整论证；
+  仓库里曾有 88 处把 1s 重述了一遍，改用共享默认 10s）。
+- 🔧 **找出「等不到还静默通过」的等待**（比读代码快得多）：给 `Await.swift` 的超时分支
+  临时加一行 `print("[WAIT-TIMEOUT] \(file):\(line) \(label)")`，跑全量，看命中。
+  2026-09-29 用它在 689 条测试里精确定位到唯一一组死等（同一个测试 3 条）。
+  插桩用完要撤，并 `grep WAIT-TIMEOUT` 复核。
+- `processingStage` 与 `session.userTurnCount` 的实测语义（探针得）：
+  `aiTurnEnd(outcome: nil)` 之后机器停在 `.processing` / `.asr`（**没有 badge 就不进评估**）；
+  `userTurnCount` **不由 VAD 轮次驱动**（第二轮已成立、boundaries 已有 4 条时它仍是 1）。
 
 ## 复盘习惯
 
