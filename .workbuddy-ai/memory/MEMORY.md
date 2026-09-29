@@ -259,6 +259,26 @@
   `aiTurnEnd(outcome: nil)` 之后机器停在 `.processing` / `.asr`（**没有 badge 就不进评估**）；
   `userTurnCount` **不由 VAD 轮次驱动**（第二轮已成立、boundaries 已有 4 条时它仍是 1）。
 
+## 设计资产 / 图标（2026-09-29 起，做 F7 前先读）
+
+- **图标来源是稿子快照**：`docs/design/2026-09-26-prd-v16-ux/index.html` 里有 **29 个内联
+  `<symbol>`** —— **26 个是 app 图标**（`i-home`/`i-drill`/`i-library`/`i-mic`/…/`i-copy`），
+  另 3 个（`i-sig`/`i-wifi`/`i-batt`）是**状态栏系统字形**，不属于 app 图标集。
+  旧清单写的「24 个」是错的。
+- ⚠️ **图标路径数据里用到了 `a` 弧线命令**（`i-home` 的圆角就是）与 `rect rx` / `circle`
+  ⇒ 若走「自己把 SVG 解析成 SwiftUI `Path`」那条路，得自己写 arc→Bézier 转换。
+  **不要走那条路**（wheel reinvention）。
+- ✅ **asset catalog 路线已实测可行**（2026-09-29 探针，跑完已撤销）：
+  `FluentWorkUI` target 加 `resources: [.process("Resources")]`，把 `.xcassets` 放进
+  `Shared/FluentWorkUI/Resources/`，`swift build` 就会调 **actool**：
+  ```
+  .build/out/Products/Debug/FluentWorkIOS_FluentWorkUI.bundle/Contents/Resources/Assets.car
+  ```
+  imageset 的 `Contents.json` 要 `preserves-vector-representation` +
+  `template-rendering-intent: template`（可着色、24pt 精确渲染）。
+- ⚠️ 注意：`FluentWorkUI` 目前**没有** `Resources` 目录，`Package.swift` 也**没有**声明资源
+  —— 这两处是 F7 要先补的。仓里现在**没有任何 `.xcassets`**。
+
 ## 复盘习惯
 
 - 修完一处缺陷，**grep 同形状的兄弟**（D14 修完，同文件里还有 3 处逐字同形）。
