@@ -156,7 +156,7 @@ import Testing
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineStartCaptureKeepsTheConfiguredBoundaryMode() async {
     let engine = LiveAudioEngine(
-        sessionManager: PermissiveAudioSessionManager(),
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         requestMicrophonePermission: { true },
         installCaptureTap: { _, _, _ in nil },
@@ -360,7 +360,7 @@ import Testing
 /// pauses to think.
 @Test func liveAudioEngineSpeechBoundaryModeConfiguresTracker() async {
     let engine = LiveAudioEngine(
-        sessionManager: ThrowingAudioSessionManager(),
+        sessionOwner: ThrowingSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         requestMicrophonePermission: { true }
     )
@@ -383,17 +383,17 @@ import Testing
 
 @available(iOS 17, macOS 14, *)
 @Test func liveAudioEngineStartCaptureConfiguresFullDuplexAndPropagatesSessionError() async {
-    let sessionManager = ThrowingAudioSessionManager()
+    let sessionOwner = ThrowingSessionOwner()
     let engine = LiveAudioEngine(
-        sessionManager: sessionManager,
+        sessionOwner: sessionOwner,
         decoder: RawPCM16FrameDecoder(),
         requestMicrophonePermission: { true }
     )
 
-    await #expect(throws: ThrowingAudioSessionManager.Failure.expected) {
+    await #expect(throws: ThrowingSessionOwner.Failure.expected) {
         try await engine.startCapture()
     }
-    #expect(sessionManager.didConfigureFullDuplex)
+    #expect(sessionOwner.didClaimFullDuplex)
 }
 
 /// `AudioSink.play(pcm:)` —— 带轮次归属的帧的播放出口。
@@ -739,14 +739,14 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
 /// It runs *before* the format guard, and that is what makes it observable:
 /// CI has no audio input device, so `startCapture()` stops at the guard on
 /// every run and nothing after it executes. Asserting on what happened before
-/// the throw is the same shape as asserting `didConfigureFullDuplex` while the
-/// session manager is throwing — and it is honest about its limit, which is
+/// the throw is the same shape as asserting `didClaimFullDuplex` while the
+/// session owner is throwing — and it is honest about its limit, which is
 /// that the guard is where this test's reach ends.
 @available(iOS 17, macOS 14, *)
 @Test func startCaptureEnablesVoiceProcessingBeforeReadingTheInputFormat() async {
     let recorder = VoiceProcessingRecorder()
     let engine = LiveAudioEngine(
-        sessionManager: PermissiveAudioSessionManager(),
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         requestMicrophonePermission: { true },
         applyVoiceProcessing: { try recorder.record($0) },
@@ -847,7 +847,7 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
 @Test func startCaptureLeavesVoiceProcessingAloneUnlessTheSessionAskedForIt() async {
     let recorder = VoiceProcessingRecorder()
     let engine = LiveAudioEngine(
-        sessionManager: PermissiveAudioSessionManager(),
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         requestMicrophonePermission: { true },
         applyVoiceProcessing: { try recorder.record($0) },
@@ -874,7 +874,7 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
     let recorder = VoiceProcessingRecorder()
     recorder.refuseNextCall()
     let engine = LiveAudioEngine(
-        sessionManager: PermissiveAudioSessionManager(),
+        sessionOwner: PermissiveSessionOwner(),
         decoder: RawPCM16FrameDecoder(),
         requestMicrophonePermission: { true },
         applyVoiceProcessing: { try recorder.record($0) },
@@ -1041,59 +1041,56 @@ private func makeDiscreteFormat(channels: AVAudioChannelCount) -> AVAudioFormat?
 
 // MARK: - Test doubles
 
-final class ThrowingAudioSessionManager: AudioSessionManaging, @unchecked Sendable {
+final class ThrowingSessionOwner: AudioSessionOwning, @unchecked Sendable {
     enum Failure: Error, Equatable {
         case expected
     }
 
-    private let queue = DispatchQueue(label: "com.fluentwork.tests.throwing-audio-session")
-    private var configuredRoute: AudioRoute?
+    private let queue = DispatchQueue(label: "com.fluentwork.tests.throwing-session-owner")
+    private var claimedRoute: AudioRoute?
 
-    func configure(for route: AudioRoute) throws {
+    func claim(_ route: AudioRoute) throws -> AudioSessionClaim {
         queue.sync {
-            configuredRoute = route
+            claimedRoute = route
         }
         throw Failure.expected
     }
 
-    func pause() throws {}
-    func resume() throws {}
-
-    var isActive: Bool {
-        get async { false }
+    func release(from requester: AudioRoute) throws -> AudioSessionRelease {
+        .deactivate
     }
 
-    var didConfigureFullDuplex: Bool {
-        queue.sync {
-            guard case .fullDuplex = configuredRoute else { return false }
-            return true
-        }
+    func occupancy() -> AudioSessionOccupancy {
+        AudioSessionOccupancy(holder: .noOne, isLive: false, otherAudioPlaying: false)
+    }
+
+    var didClaimFullDuplex: Bool {
+        queue.sync { claimedRoute == .fullDuplex }
     }
 }
 
-/// Accepts configuration so a test can drive `startCapture()` past the audio
-/// session and reach the state it sets up. `ThrowingAudioSessionManager` bails
-/// out at `configure`, which is before the engine touches any of that.
-final class PermissiveAudioSessionManager: AudioSessionManaging, @unchecked Sendable {
-    private let queue = DispatchQueue(label: "com.fluentwork.tests.permissive-audio-session")
-    private var configuredRoute: AudioRoute?
+/// Accepts the claim so a test can drive `startCapture()` past the audio
+/// session and reach the state it sets up. `ThrowingSessionOwner` bails out at
+/// `claim`, which is before the engine touches any of that.
+final class PermissiveSessionOwner: AudioSessionOwning, @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.fluentwork.tests.permissive-session-owner")
+    private var claimedRoute: AudioRoute?
 
-    func configure(for route: AudioRoute) throws {
-        queue.sync { configuredRoute = route }
+    func claim(_ route: AudioRoute) throws -> AudioSessionClaim {
+        queue.sync { claimedRoute = route }
+        return .reconfigure(route)
     }
 
-    func pause() throws {}
-    func resume() throws {}
-
-    var isActive: Bool {
-        get async { true }
+    func release(from requester: AudioRoute) throws -> AudioSessionRelease {
+        .deactivate
     }
 
-    var didConfigureFullDuplex: Bool {
-        queue.sync {
-            guard case .fullDuplex = configuredRoute else { return false }
-            return true
-        }
+    func occupancy() -> AudioSessionOccupancy {
+        AudioSessionOccupancy(holder: .noOne, isLive: true, otherAudioPlaying: false)
+    }
+
+    var didClaimFullDuplex: Bool {
+        queue.sync { claimedRoute == .fullDuplex }
     }
 }
 
@@ -1129,7 +1126,7 @@ final class RecordingAudioInterruptionObserver: AudioInterruptionObserving, @unc
 /// Synchronous on purpose: the call it stands in for happens while the audio
 /// graph is being built, so a recorder that needed an `await` could not model
 /// it — the real one has to return before the input format is read. Queue
-/// serialized in the same style as `ThrowingAudioSessionManager`.
+/// serialized in the same style as `ThrowingSessionOwner`.
 final class VoiceProcessingRecorder: @unchecked Sendable {
     /// Stands in for a device that will not hand its audio route to the
     /// voice-processing unit.

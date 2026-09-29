@@ -678,8 +678,13 @@ public extension Container {
         self { NWPathNetworkMonitor() }.cached
     }
 
-    var audioSessionManager: Factory<AudioSessionManaging> {
-        self { DefaultAudioSessionManager() }.cached
+    /// 共享 `AVAudioSession` 的**唯一**主人（F6）。
+    ///
+    /// 它没有状态：占用状态是从真实会话派生的（`AudioSessionOwning.occupancy()`）。
+    /// 谁要动会话都必须经过它 —— 有一条仓级守卫盯着「不许直接拿
+    /// `AVAudioSession.sharedInstance()`」（`AudioSessionOwnershipGuardTests`）。
+    var audioSessionOwner: Factory<any AudioSessionOwning> {
+        self { SharedAudioSessionOwner() }.cached
     }
 
     var backgroundTaskPort: Factory<BackgroundTaskPorting> {
@@ -705,11 +710,11 @@ public extension Container {
                 return MockAudioEngine(
                     script: script,
                     playback: LiveAudioEngine(
-                        sessionManager: self.audioSessionManager(),
+                        sessionOwner: self.audioSessionOwner(),
                         decoder: self.wsAudioFrameDecoder()
                     ),
                     preparePlaybackSession: {
-                        try self.audioSessionManager().configure(for: .playback)
+                        try self.audioSessionOwner().claim(.playback)
                     }
                 )
                 #endif
@@ -727,7 +732,7 @@ public extension Container {
             // Volcengine SDK; the production decoder swap happens behind the
             // I12 decoder factory once B13 main-lines Opus encoding.
             return LiveAudioEngine(
-                sessionManager: self.audioSessionManager(),
+                sessionOwner: self.audioSessionOwner(),
                 decoder: self.wsAudioFrameDecoder()
             )
             #else
@@ -794,7 +799,7 @@ public extension Container {
             if TestProcess.isRunning {
                 return StubDailyReadAudioPlayer()
             }
-            return DailyReadAudioPlayer()
+            return DailyReadAudioPlayer(sessionOwner: self.audioSessionOwner())
         }.shared
     }
 

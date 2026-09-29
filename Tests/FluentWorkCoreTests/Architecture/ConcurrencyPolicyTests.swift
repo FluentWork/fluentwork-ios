@@ -28,8 +28,6 @@ import Testing
             "CapturingTracker 同上（先于口径；只在测试里做 tracker）",
         "Shared/FluentWorkCore/Audio/AudioInterruptionObserver.swift":
             "串行队列护 observers 数组（先于口径，做法与锁等价）",
-        "Shared/FluentWorkCore/Audio/AudioSessionManaging.swift":
-            "不只是护字段：AVAudioSession 的 configure/activate 调用本身必须被序列化，队列同时承担这两件事",
         "Shared/FluentWorkNetworking/NetworkClient.swift":
             "RequestCancellationBox 用串行队列护取消集合（先于口径，做法与锁等价）",
         "Shared/FluentWorkNetworking/NetworkMonitor.swift":

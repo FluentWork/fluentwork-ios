@@ -91,21 +91,11 @@ extension LiveAudioEngine {
     /// 模式就是线索：一个采集会话被期待时，除了 `.playAndRecord`/`.voiceChat` 之外的任何东西
     /// 都意味着这个 App 里的另一个组件把会话拿走了，那是与系统中断不同的 bug，要不同的修法。
     ///
-    /// 这里**没有** `isActive`：`AVAudioSession` 暴露 `setActive` 但**没有** getter，所以活动性
-    /// 不可上报，也不能用管理器自己的标志位伪造（那个标志在生产里从不被清）。
-    ///
-    /// `sampleRate` 代它出场，而它是最要紧的那个读数：类别与模式在 deactivate 之后存活，所以
-    /// 一个已被关掉的会话仍报告 `playAndRecord`/`voiceChat`，而它承载的引擎已经停了。
-    /// 一个被 deactivate 的会话报告**零**采样率。这是代理，不是 API。
+    /// 读的是 `AudioSessionSnapshot` —— 字段表与「为什么是这几项」（尤其采样率是活动性的
+    /// **代理**、以及 `AVAudioSession` 没有 `isActive` getter 这件事）都只有那一份，
+    /// 由 `AudioSessionPolicyTests` 钉住。这里只负责在失败路径上把它取出来。
     nonisolated static func describeSession() -> String {
-        #if os(iOS)
-        let session = AVAudioSession.sharedInstance()
-        return "category=\(session.category.rawValue) mode=\(session.mode.rawValue)"
-            + " sampleRate=\(Int(session.sampleRate)) otherAudio=\(session.isOtherAudioPlaying)"
-            + " duckHint=\(session.secondaryAudioShouldBeSilencedHint)"
-        #else
-        return "session=n/a"
-        #endif
+        SharedAudioSessionPort().snapshot().telemetrySummary
     }
 
     /// 暴露一次模式切换所配置出来的 tracker：收尾 hold 与自动开始都来自模式，所以单元测试必须

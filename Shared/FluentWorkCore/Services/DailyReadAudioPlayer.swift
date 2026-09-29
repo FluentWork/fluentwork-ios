@@ -34,6 +34,13 @@ public enum DailyReadAudioEvent: Equatable, Sendable {
 /// Redux layer.
 public final class DailyReadAudioPlayer: NSObject, DailyReadAudioPlayerProtocol, @unchecked Sendable {
   private let player = AVPlayer()
+  /// 共享会话的**唯一**主人。
+  ///
+  /// 这个播放器**不许**自己碰 `AVAudioSession` —— 那正是 2026-09-24 真机事故的形状：
+  /// 它为了锁屏继续播把类别切成 `.playback`，拆掉 input route，让正在跑的
+  /// `AVAudioEngine` 一行代码都不执行地停了（`meta 70_/27_`）。
+  /// 现在「能不能动类别」由主人按**真实会话**判断，判据见 `AudioSessionPolicyTests`。
+  private let sessionOwner: any AudioSessionOwning
   private var timeObserverToken: Any?
   private var statusObserver: NSKeyValueObservation?
   private var rateObserver: NSKeyValueObservation?
@@ -43,7 +50,8 @@ public final class DailyReadAudioPlayer: NSObject, DailyReadAudioPlayerProtocol,
 
   private var didFinishObserver: NSObjectProtocol?
 
-  public override init() {
+  public init(sessionOwner: any AudioSessionOwning = SharedAudioSessionOwner()) {
+    self.sessionOwner = sessionOwner
     let pair = AsyncStream.makeStream(
       of: DailyReadAudioEvent.self,
       bufferingPolicy: .bufferingNewest(32)
@@ -51,7 +59,6 @@ public final class DailyReadAudioPlayer: NSObject, DailyReadAudioPlayerProtocol,
     self.eventsStream = pair.stream
     self.eventsContinuation = pair.continuation
     super.init()
-    configureForBackgroundPlayback()
     installObservers()
   }
 
@@ -68,7 +75,9 @@ public final class DailyReadAudioPlayer: NSObject, DailyReadAudioPlayerProtocol,
   }
 
   public func load(url: URL) async throws {
-    try configureAudioSessionForPlayback()
+    // 认领播放路线。房间在跑时主人会**保持类别不变**（`AVPlayer` 在 `.playAndRecord`
+    // 下照样能放）—— 这里拿到的结果不需要分支处理，但它是可观察的。
+    try sessionOwner.claim(.playback)
 
     await MainActor.run {
       let asset = AVURLAsset(url: url)
@@ -113,61 +122,13 @@ public final class DailyReadAudioPlayer: NSObject, DailyReadAudioPlayerProtocol,
       self.player.pause()
       self.player.replaceCurrentItem(with: nil)
     }
-    #if os(iOS)
-    try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
-    #endif
+    // 归还 —— 但**只有本播放器占着**才会 deactivate。原来这里是无条件
+    // `setActive(false)`，于是「朗读放完」会把正在跑的说的房间一起关掉：
+    // 与 2026-09-24 那次同类，方向相反。
+    try? sessionOwner.release(from: .playback)
   }
 
   // MARK: - Private
-
-  #if os(iOS)
-  /// Switches the shared session to playback — unless the speaking room is
-  /// holding it.
-  ///
-  /// `AVAudioSession` is one object for the whole process, and two components
-  /// here configure it: `LiveAudioEngine` takes it as `.playAndRecord` +
-  /// `.voiceChat` for the speaking room, while this player wants `.playback` so
-  /// the Daily Read keeps going with the screen locked. Changing the category
-  /// away from `.playAndRecord` tears down the input route, which stops a
-  /// running `AVAudioEngine` without executing a single line of its code. On
-  /// device 2026-09-24 that left a practice session stuck in `.connecting`
-  /// until the 10s watchdog failed it, and nothing in the engine's own logs
-  /// could say why — the engine was confirmed running, then it was not, with no
-  /// stack to read.
-  ///
-  /// `AVPlayer` plays perfectly well under `.playAndRecord`, so the Daily Read
-  /// does not need to win this argument; it only needs to not lose it on the
-  /// room's behalf.
-  ///
-  /// The check reads the real category rather than a flag someone maintains,
-  /// because the only such flag — `DefaultAudioSessionManager.active` — is
-  /// never cleared in production: its `pause()` has no callers outside tests,
-  /// so it would report "the room is live" forever and silently disable Daily
-  /// Read audio instead.
-  private func configurePlaybackCategoryIfUncontested(_ session: AVAudioSession) throws {
-    guard session.category != .playAndRecord else { return }
-    try session.setCategory(.playback, mode: .spokenAudio, options: [])
-  }
-  #endif
-
-  private func configureForBackgroundPlayback() {
-    #if os(iOS)
-    do {
-      let session = AVAudioSession.sharedInstance()
-      try configurePlaybackCategoryIfUncontested(session)
-    } catch {
-      eventsContinuation.yield(.failed(error.localizedDescription))
-    }
-    #endif
-  }
-
-  private func configureAudioSessionForPlayback() throws {
-    #if os(iOS)
-    let session = AVAudioSession.sharedInstance()
-    try configurePlaybackCategoryIfUncontested(session)
-    try session.setActive(true)
-    #endif
-  }
 
   private func installObservers() {
     // Periodic time observer (every 0.25s is enough for the scrubber UX).

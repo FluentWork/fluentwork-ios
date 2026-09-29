@@ -18,10 +18,12 @@ public enum AppFeatureFlag: String, CaseIterable, Codable, Hashable, Sendable, F
     /// `AVAudioInputNode.setVoiceProcessingEnabled(_:)`.
     ///
     /// This is a *different switch* from the session-level `.playAndRecord` +
-    /// `.voiceChat` set by `DefaultAudioSessionManager`. That one configures
-    /// the audio session; on a self-built `AVAudioEngine` graph it does not by
-    /// itself put the processed stream into the graph, which is why the
-    /// engine-level call is the one that decides. See meta `77_` §3.2.
+    /// `.voiceChat` set by `SharedAudioSessionOwner` (the table lives in
+    /// `AudioRoute.configuration`, and `AudioSessionPolicyTests` pins it).
+    /// That one configures the audio session; on a self-built `AVAudioEngine`
+    /// graph it does not by itself put the processed stream into the graph,
+    /// which is why the engine-level call is the one that decides.
+    /// See meta `77_` §3.2.
     ///
     /// Default on (`firstWave`) after the T4 (2026-09-12) and T1 device runs:
     /// with the unit **on**, playback is at a normal speaker level; with it

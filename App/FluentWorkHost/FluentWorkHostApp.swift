@@ -15,6 +15,11 @@ struct FluentWorkHostApp: App {
                 dispatchScenePhase(newPhase)
             }
             #endif
+            #if DEBUG
+            // 真机场景驱动（F6 的验收工具）。没设 `FW_SCENARIO` 时它立刻返回、什么都不做。
+            // 它派的是**视图自己会派的那几条 action**，见 `DeviceScenarioDriver` 的注释。
+            .task { await DeviceScenarioDriver.runIfConfigured(store: store) }
+            #endif
         }
     }
 

@@ -81,7 +81,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     var lastInterruptRequestedAt: ContinuousClock.Instant?
     var isSystemInterrupted = false
 
-    private let sessionManager: any AudioSessionManaging
+    private let sessionOwner: any AudioSessionOwning
     let decoder: any WSAudioFrameDecoder
     let interruptionObserver: any AudioInterruptionObserving
     private let requestMicrophonePermission: @Sendable () async -> Bool
@@ -100,7 +100,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     private let removeCaptureTap: @Sendable (AVAudioEngine) -> Void
 
     public init(
-        sessionManager: any AudioSessionManaging = DefaultAudioSessionManager(),
+        sessionOwner: any AudioSessionOwning = SharedAudioSessionOwner(),
         decoder: any WSAudioFrameDecoder = RawPCM16FrameDecoder(),
         interruptionObserver: any AudioInterruptionObserving = AudioInterruptionObserver(),
         requestMicrophonePermission: @escaping @Sendable () async -> Bool = {
@@ -145,7 +145,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         )
         self.stream = pair.stream
         self.continuation = pair.continuation
-        self.sessionManager = sessionManager
+        self.sessionOwner = sessionOwner
         self.decoder = decoder
         self.interruptionObserver = interruptionObserver
         self.requestMicrophonePermission = requestMicrophonePermission
@@ -170,7 +170,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
             throw AudioEnginePermissionError.microphoneDenied
         }
 
-        try sessionManager.configure(for: .fullDuplex)
+        try sessionOwner.claim(.fullDuplex)
 
         // **先**摸一下 `inputNode`，让图在 `engine.start()` 之前至少挂上一个节点。
         // 没有节点就启动会断言 `inputNode != nullptr || outputNode != nullptr` 并让 App 崩。
@@ -311,7 +311,7 @@ public actor LiveAudioEngine: AudioEngineProtocol {
 
     public func reconfigureForRouteChange() async {
         do {
-            try sessionManager.configure(for: .fullDuplex)
+            try sessionOwner.claim(.fullDuplex)
         } catch {
             // 保留现有的图。因为拔了个耳机就把会话杀掉，比短暂的格式不匹配更糟。
             return
