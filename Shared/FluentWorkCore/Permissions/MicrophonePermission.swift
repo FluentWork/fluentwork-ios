@@ -60,3 +60,21 @@ public enum MicrophonePermission {
     }
     #endif
 }
+
+/// 麦克风权限的**询问面**（端口）。
+///
+/// 抽成端口是为了一条顺序：**权限先问，再开后端会话**。这条顺序的判据必须能让权限返回
+/// 「拒绝」，而在引擎内部问权限（`LiveAudioEngine.startCapture` 那一问）是采不出来的。
+///
+/// 与引擎那一问的关系：这里是**事前**（还没碰网络、还没建会话），那里是**临门一脚**
+/// （采集图能不能起来）。两处都留着，前一处是为了不白白烧掉一个后端会话。
+public protocol MicrophonePermissionRequesting: Sendable {
+    func request() async -> Bool
+}
+
+public struct SystemMicrophonePermission: MicrophonePermissionRequesting {
+    public init() {}
+    public func request() async -> Bool {
+        await MicrophonePermission.request()
+    }
+}

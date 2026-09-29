@@ -121,25 +121,38 @@ public enum SpeakingRoomTransportAction: Equatable, Sendable {
     case networkLost
 }
 
+/// 传输层失败 → 学员读到的一句话。
+///
+/// **口径与 `userFacingErrorText` 一致**：人话在前，机器标识/诊断串进括号。
+/// 之前这里有两处不符合那条口径，而且都真的会到达屏幕：
+///
+/// - `.network(detail)` 直接把诊断串当文案 —— 屏幕上是
+///   `[NSPOSIXErrorDomain 57] Socket is not connected`，学员读不懂，支持却需要它；
+/// - 其余几条是英文（`Invalid speaking-room URL.` / `Handshake failed: …`），
+///   而这个 App 的其余文案全是中文。
+///
+/// 诊断串**不许丢**：它是真机上唯一能分辨「连接被我们自己取消」「帧协议违约」
+/// 「服务端关闭」的东西（`URLSessionSocketTransport.mapError` 特意保留 domain+code）。
+/// 所以它留在括号里，而不是被重述成一句更好听的话。
 extension SocketTransportError {
     public var userFacingMessage: String {
         switch self {
         case .invalidURL:
-            return "Invalid speaking-room URL."
+            return "会话地址无效，请返回重试"
         case .notConnected:
-            return "Speaking room is not connected."
+            return "语音连接已断开，请重试"
         case let .handshakeFailed(detail):
-            return "Handshake failed: \(detail)"
+            return "语音连接握手失败，请重试（\(detail)）"
         case let .encodingFailed(detail):
-            return "Failed to encode frame: \(detail)"
+            return "这条消息没能发出去，请重试（\(detail)）"
         case let .decodingFailed(detail):
-            return "Failed to decode frame: \(detail)"
+            return "语音服务返回了无法识别的内容，请重试（\(detail)）"
         case let .network(detail):
-            return detail
+            return "语音服务连接中断，请重试（\(detail)）"
         case .pingTimedOut:
-            return "Network connection lost."
+            return "网络连接已断开，请重试"
         case .cancelled:
-            return "Connection cancelled."
+            return "连接已取消"
         }
     }
 }

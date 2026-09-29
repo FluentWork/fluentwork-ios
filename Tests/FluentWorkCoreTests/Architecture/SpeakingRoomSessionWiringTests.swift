@@ -259,6 +259,33 @@ private final class StubAudioEngine: AudioEngineProtocol, @unchecked Sendable {
     }
 }
 
+/// 一个在采集前抛「认领失败」的引擎：**系统的 domain+code 要进日志、人话要进屏幕**。
+private final class FailingSessionClaimAudioEngine: AudioEngineProtocol, @unchecked Sendable {
+    private let failure: AudioSessionClaimFailure
+
+    init(code: Int) {
+        self.failure = AudioSessionClaimFailure(
+            stage: .activate,
+            error: NSError(
+                domain: NSOSStatusErrorDomain,
+                code: code,
+                userInfo: [NSLocalizedDescriptionKey: "priority"]
+            )
+        )
+    }
+
+    func startCapture() async throws {
+        throw AudioEngineError.audioSessionClaimFailed(failure)
+    }
+
+    func events() -> AsyncStream<AudioEngineEvent> { AsyncStream { _ in } }
+    func stopCapture() async {}
+    func releaseSessionClaim() async {}
+    func play(pcm: Data) async {}
+    func interruptNow() async {}
+    func discardActiveSpeech() async {}
+}
+
 private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecked Sendable {
     func startCapture() async throws {
         throw AudioEnginePermissionError.microphoneDenied
@@ -846,6 +873,45 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(store.state.speakingRoom.failureReason == "无法访问麦克风，请在系统设置中允许 FluentWork 使用麦克风。")
 }
 
+/// **认领失败：人话进屏幕，系统的 domain+code 进 tracker。**
+///
+/// 以前这条路上屏幕显示的是 NSError 桥接那句
+/// "The operation couldn't be completed. (FluentWorkCore.AudioEngineError error 1.)" ——
+/// 对学员是噪音、对支持是无信息；而 `apply` 阶段的失败连 `AudioEngineError` 都不是，
+/// 中间件那条 typed catch 根本捞不到，于是既没有文案也没有遥测。
+///
+/// 判据两半：屏幕上有人话（且不是桥接那句），tracker 里有 `activate` + domain + code。
+@MainActor
+@Test func aSessionClaimFailureShowsHumanCopyAndKeepsTheSystemCodesInTheLog() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = FailingSessionClaimAudioEngine(code: 5_610_174_409)
+    let speechClient = StubSpeechSessionClient()
+    let tracker = CapturingTracker()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+    container.tracker.register { tracker }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+
+    try? await waitUntil {
+        store.state.speakingRoom.phase == .failed
+    }
+
+    let reason = store.state.speakingRoom.failureReason ?? "nil"
+    #expect(!reason.contains("couldn't be completed"), "屏幕上还是 NSError 桥接的那句：\(reason)")
+    #expect(reason.contains("音频会话") || reason.contains("另一个 App"), "没有人话：\(reason)")
+    #expect(reason.contains("5610174409"), "机器码丢了，支持无从查起：\(reason)")
+
+    // `timings.mark` 上报时统一加 `timing_` 前缀（`SpeechSessionTimingsRecorder.mark`）。
+    let logged = tracker.events.first { $0.name == "timing_audio_engine_failed" }
+    #expect(logged != nil, "认领失败在 tracker 里没有痕迹：\(tracker.events.map(\.name))")
+    let detail = logged?.properties["detail"] ?? ""
+    #expect(detail.contains("activate"), "日志里没说是哪一步失败：\(detail)")
+    #expect(detail.contains("5610174409"), "日志里没有系统的错误码：\(detail)")
+}
+
 @MainActor
 @Test func speechSessionMiddlewareForwardsTransportAudioToAudioEngine() async {
     let container = Container()
@@ -1422,6 +1488,48 @@ private final class FailingPermissionAudioEngine: AudioEngineProtocol, @unchecke
     #expect(
         await audioEngine.snapshotInterruptCalls() == interruptsBefore + 1,
         "用户从 .waitingUser 开口时没有停掉残留音频"
+    )
+}
+
+/// 麦克风权限的桩（`MicrophonePermissionRequesting`）。
+private struct StubMicrophonePermission: MicrophonePermissionRequesting {
+    let granted: Bool
+    func request() async -> Bool { granted }
+}
+
+/// **权限不过时，后端会话一个都不许开。**
+///
+/// 反过来的代价是实打实的：`POST /sessions`、WSS 升级、网关 `sessions/activate`、
+/// Volc duplex 开门都会先发生，然后被拆掉 —— 2026-09-29 真机那条会话在后端日志里留下的
+/// 正是这个形状（handshake ok / activate 200 / duplex `open.done`，紧接着 `connection_closed`）。
+/// 权限是唯一一个**便宜且本地**的前置条件，所以它必须排在最前面。
+///
+/// 三处都钉：后端会话没建、采集没起、屏幕上是那句能照着做的话。
+@MainActor
+@Test func aDeniedMicrophoneStopsBeforeAnyBackendSessionExists() async {
+    let container = Container()
+    container.reset()
+    let audioEngine = StubAudioEngine()
+    let speechClient = StubSpeechSessionClient()
+    container.audioEngine.register { audioEngine }
+    container.speechSessionClient.register { speechClient }
+    container.microphonePermission.register { StubMicrophonePermission(granted: false) }
+
+    let store = AppStoreFactory.make(container: container)
+    store.dispatch(.speakingRoom(.session(.sessionStartTap)))
+
+    try? await waitUntil {
+        store.state.speakingRoom.phase == .failed
+    }
+
+    #expect(
+        await speechClient.snapshotStartCalls() == 0,
+        "权限都没过就开了后端会话 —— 一次注定失败的尝试会先烧掉 POST /sessions、WSS 与一次 duplex 开门"
+    )
+    #expect(await audioEngine.snapshotStartCalls() == 0, "权限都没过就开始采集了")
+    #expect(
+        store.state.speakingRoom.failureReason?.contains("麦克风") == true,
+        "原因不是那句能照着做的话：\(store.state.speakingRoom.failureReason ?? "nil")"
     )
 }
 

@@ -701,6 +701,14 @@ public extension Container {
         self { SharedAudioSessionOwner() }.cached
     }
 
+    /// 麦克风权限的**事前**那一问（端口见 `MicrophonePermissionRequesting`）。
+    ///
+    /// 排在开后端会话之前：一次「没有权限」的尝试不该先烧掉 `POST /sessions`、
+    /// WSS 升级与一次 Volc duplex 开门。
+    var microphonePermission: Factory<any MicrophonePermissionRequesting> {
+        self { SystemMicrophonePermission() }
+    }
+
     var backgroundTaskPort: Factory<BackgroundTaskPorting> {
         self {
             #if os(iOS)

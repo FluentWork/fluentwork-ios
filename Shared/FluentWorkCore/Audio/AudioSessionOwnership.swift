@@ -483,13 +483,23 @@ public final class SharedAudioSessionOwner: AudioSessionOwning, @unchecked Senda
             // 后进锁的那个按陈旧决策去动类别 —— 锁就白加了（2026-09-24 那条路依然可达）。
             let decision = AudioSessionPolicy.claim(for: route, given: occupancy())
             if case .reconfigure(let target) = decision {
-                try port.apply(target.configuration)
+                // 两个阶段各自包一层：失败的**哪一步**与系统的 domain+code 一样重要。
+                // 之前 `apply` 的错是原样抛出去的（连 `AudioEngineError` 都不是），
+                // 中间件那条 `catch let error as AudioEngineError` 捞不到它，
+                // 于是用户读到 NSError 桥接的那句无信息的话。
+                do {
+                    try port.apply(target.configuration)
+                } catch {
+                    throw AudioEngineError.audioSessionClaimFailed(
+                        AudioSessionClaimFailure(stage: .configure, error: error)
+                    )
+                }
             }
             do {
                 try port.setActive(true)
             } catch {
-                throw AudioEngineError.audioSessionConflict(
-                    "Audio session could not be activated. Please close other apps using audio (e.g., music, video) and try again. Underlying error: \(error.localizedDescription)"
+                throw AudioEngineError.audioSessionClaimFailed(
+                    AudioSessionClaimFailure(stage: .activate, error: error)
                 )
             }
             state.leases[route, default: 0] += 1

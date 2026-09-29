@@ -1264,6 +1264,18 @@ private func interpretSpeechSessionSideEffect(
         // .processing from recording — not from createSession.
         return .merge(
             .task {
+                // **权限先问，再开后端会话。**
+                //
+                // 反过来的代价是实打实的：`POST /sessions`、WSS 升级、网关 `sessions/activate`、
+                // Volc duplex 开门都会先发生，然后被拆掉 —— 2026-09-29 真机那条会话在后端日志里
+                // 留下的正是这个形状（handshake ok / activate 200 / duplex `open.done`，紧接着
+                // `connection_closed`）。权限是唯一一个**便宜且本地**的前置条件，所以它排在
+                // 最前面；音频会话本身能不能拿到，只有试过才知道（那部分留在 `startCapture()` 里，
+                // 由它的失败回滚与下面的文案兜住）。
+                guard await container.microphonePermission().request() else {
+                    timings.mark(event: "microphone_permission_denied")
+                    return .speakingRoom(.session(.failed(microphoneDeniedMessage)))
+                }
                 do {
                     timings.mark(event: "session_start_invoked")
                     try await speechClient.startSession(continueFromSessionID: continueFromSessionID)
@@ -1280,27 +1292,14 @@ private func interpretSpeechSessionSideEffect(
                     let message: String
                     switch error {
                     case .microphoneDenied:
-                        message = "无法访问麦克风，请在系统设置中允许 FluentWork 使用麦克风。"
+                        message = microphoneDeniedMessage
                     }
                     return .speakingRoom(.session(.failed(message)))
                 } catch let error as AudioEngineError {
-                    // Logged in full, then shown generically.
-                    //
-                    // `AudioEngineError` is not `LocalizedError`, so
-                    // `localizedDescription` is the synthesized "The operation
-                    // couldn't be completed. (FluentWorkCore.AudioEngineError
-                    // error 0.)" — which means the format facts the new guards
-                    // were written to carry reach nobody at all. Writing
-                    // Chinese copy for them is a product decision; getting them
-                    // into the log is not, and
-                    // a device run that dies at a format guard is unreadable
-                    // without them.
-                    let detail: String
-                    switch error {
-                    case let .invalidFormat(message), let .audioSessionConflict(message):
-                        detail = message
-                    }
-                    timings.mark(event: "audio_engine_failed", properties: ["detail": detail])
+                    // 细节进日志，人话进屏幕。`telemetryDetail` 是三个 case 各自的现场
+                    // （格式、会话遥测、系统的 domain+code），以前只有前两个 case 被记录，
+                    // 于是「认领失败」在 tracker 里是空的 —— 而它恰恰是真机上最常见的那条。
+                    timings.mark(event: "audio_engine_failed", properties: ["detail": error.telemetryDetail])
                     return .speakingRoom(.session(.failed(error.localizedDescription)))
                 } catch {
                     return .speakingRoom(.session(.failed(error.localizedDescription)))
@@ -1568,6 +1567,13 @@ private func processingTimeoutEffects(
 /// on 「连接中」 indefinitely — no timeout, no error, and no way forward but
 /// backing out of the screen. Failing is the honest outcome: the user gets a
 /// retryable message instead of a screen that never moves.
+/// 麦克风权限被拒时学员读到的那句话。
+///
+/// 两处共用一份：事先那一问（`.createSession` 的开头）与引擎在采集前的最后一问
+/// （`AudioEnginePermissionError.microphoneDenied`）。同一件事两个说法，
+/// 用户就会以为是两个毛病。
+private let microphoneDeniedMessage = "无法访问麦克风，请在系统设置中允许 FluentWork 使用麦克风。"
+
 /// Names a transport event for the tracker. Only the two that can strand
 /// `.connecting` need names — everything else is already visible through the
 /// events it produces downstream.

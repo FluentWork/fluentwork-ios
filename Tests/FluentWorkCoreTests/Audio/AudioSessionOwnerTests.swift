@@ -152,37 +152,111 @@ import os
             snapshot: .active(category: .playAndRecord, mode: .voiceChat)
         )
         let owner = SharedAudioSessionOwner(port: port)
-        _ = try owner.claim(.playback)
+        _ = try owner.claim(.fullDuplex)   // 房间真的认领过（否则这条退化成「没租约的人来归还」）
+        _ = try owner.claim(.playback)     // 每日一读借了它
 
         let decision = try owner.release(from: .fullDuplex)
 
-        #expect(decision == .keep(heldBy: .claimed(.fullDuplex)))
+        #expect(decision == .keepLeased(by: [.playback]))
         #expect(
-            port.calls.activeChanges == [true],
+            port.calls.activeChanges == [true, true],
             "归还时把会话关了 —— 正在播的每日一读被静音：\(port.calls.activeChanges)"
         )
     }
 
-    /// 激活失败要报成会话冲突，而且**把底层错误带出来** ——
-    /// 中间件按这个 case 生成用户可见文案（「请关掉正在用音频的 App」）。
-    @Test func activationFailureIsReportedAsASessionConflict() {
-        let port = ScriptedAudioSessionPort(snapshot: .unclaimed, activationFailure: "boom")
+    /// 认领失败要**带着它失败在哪一步**、以及系统给的 domain + code。
+    ///
+    /// 这两件事以前都丢了：`apply` 的错原样抛出（连 `AudioEngineError` 都不是，中间件那条
+    /// typed catch 捞不到它），`setActive` 的错被包成一句英文散文、domain/code 没了。
+    /// 而 SDK 头文件（`AVAudioSession.h:250-255`）点名过不同成因：别人在通话/占麦时以
+    /// Record/PlayAndRecord 激活会失败在 `insufficientPriority` —— 那是「换一个 App」，
+    /// 不是「等一下再试」。
+    @Test func configureFailureIsWrappedAndNamesTheStage() throws {
+        let port = ScriptedAudioSessionPort(
+            snapshot: .unclaimed,
+            configureFailure: .init(code: -50, message: "kAudioSessionBadParam")
+        )
         let owner = SharedAudioSessionOwner(port: port)
 
         do {
             _ = try owner.claim(.playback)
-            Issue.record("应当抛 audioSessionConflict")
+            Issue.record("应当抛 audioSessionClaimFailed")
         } catch let error as AudioEngineError {
-            guard case .audioSessionConflict(let message) = error else {
+            guard case .audioSessionClaimFailed(let failure) = error else {
                 Issue.record("抛错了 case：\(error)")
                 return
             }
-            #expect(message.contains("close other apps using audio"))
-            #expect(message.contains("boom"), "底层错误被吞了：\(message)")
+            #expect(failure.stage == .configure)
+            #expect(failure.domain == NSOSStatusErrorDomain)
+            #expect(failure.code == -50)
+            #expect(failure.telemetrySummary.contains("kAudioSessionBadParam"))
+            #expect(error.errorDescription?.contains("无法配置音频会话") == true)
+            #expect(
+                error.errorDescription?.contains("-50") == true,
+                "机器码没进括号：\(error.errorDescription ?? "nil")"
+            )
+        } catch {
+            Issue.record("抛了非 AudioEngineError：\(error)")
+        }
+
+        #expect(port.calls.activeChanges.isEmpty, "配置都没成功就去激活了")
+        // 失败的认领**不许**留在名册上，否则那次会话永远归还不掉。
+        #expect(try owner.release(from: .playback) == .keep(heldBy: .noOne))
+    }
+
+    @Test func activationFailureNamesTheStageAndKeepsTheSystemCodes() throws {
+        let port = ScriptedAudioSessionPort(
+            snapshot: .unclaimed,
+            activationFailure: .init(code: 5_610_174_409, message: "priority")
+        )
+        let owner = SharedAudioSessionOwner(port: port)
+
+        do {
+            _ = try owner.claim(.playback)
+            Issue.record("应当抛 audioSessionClaimFailed")
+        } catch let error as AudioEngineError {
+            guard case .audioSessionClaimFailed(let failure) = error else {
+                Issue.record("抛错了 case：\(error)")
+                return
+            }
+            #expect(failure.stage == .activate)
+            #expect(failure.code == 5_610_174_409)
+            #expect(failure.telemetrySummary.contains("activate"))
         } catch {
             Issue.record("抛了非 AudioEngineError：\(error)")
         }
     }
+
+    /// 「没优先权拿到麦克风」必须有**它自己**那句话，而不是通用那句。
+    ///
+    /// 走注入点而不是真常量：`AVAudioSession.ErrorCode` 在 macOS 上不存在（CI 平台），
+    /// 于是判别式在真机上生效、**文案结构**在 CI 上被钉住 —— 两边都有人管。
+    @Test func insufficientPriorityGetsItsOwnSentenceAndEverythingElseTheGenericOne() {
+        let failure = AudioSessionClaimFailure(
+            stage: .activate,
+            error: NSError(
+                domain: NSOSStatusErrorDomain,
+                code: 5_610_174_409,
+                userInfo: [NSLocalizedDescriptionKey: "priority"]
+            )
+        )
+
+        let specific = failure.userFacingText(treatingCodeAsInsufficientPriority: 5_610_174_409)
+        #expect(specific.contains("另一个 App 正在使用麦克风"))
+        #expect(specific.contains("5610174409"), "机器码该按十进制原样写：\(specific)")
+
+        let generic = failure.userFacingText(treatingCodeAsInsufficientPriority: 999)
+        #expect(generic.contains("音频会话被系统占着"))
+        #expect(!generic.contains("另一个 App"))
+
+        // 平台问不出那个码时（macOS）也必须落到通用那句，而不是空串。
+        #expect(
+            failure.userFacingText(treatingCodeAsInsufficientPriority: nil)
+                .contains("音频会话被系统占着")
+        )
+    }
+
+
 }
 
 // MARK: - 脚本化端口
@@ -192,6 +266,20 @@ import os
 /// 「跟随变化」是关键：真实系统在 `setCategory` 之后就会报告新类别，而主人下一次
 /// 认领读的正是那个值。不会变化的替身会让「占用是读出来的」这条性质测不出来。
 final class ScriptedAudioSessionPort: AudioSessionPorting, @unchecked Sendable {
+    /// 注入一次失败：**哪一步**（由传参位置决定）与系统给的那对 domain+code。
+    ///
+    /// 带 code 而不只是一句话 —— 判据要钉的正是「domain+code 有没有被带出来」：
+    /// 文案可以改，那两个数是排查时唯一的线索。
+    struct Failure {
+        var domain: String = NSOSStatusErrorDomain
+        var code: Int = 0
+        var message: String
+
+        var nsError: NSError {
+            NSError(domain: domain, code: code, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+    }
+
     struct Calls: Equatable {
         var applied: [AudioSessionConfiguration] = []
         var activeChanges: [Bool] = []
@@ -203,10 +291,16 @@ final class ScriptedAudioSessionPort: AudioSessionPorting, @unchecked Sendable {
     }
 
     private let storage: OSAllocatedUnfairLock<State>
-    private let activationFailure: String?
+    private let configureFailure: Failure?
+    private let activationFailure: Failure?
 
-    init(snapshot: AudioSessionSnapshot, activationFailure: String? = nil) {
+    init(
+        snapshot: AudioSessionSnapshot,
+        configureFailure: Failure? = nil,
+        activationFailure: Failure? = nil
+    ) {
         self.storage = OSAllocatedUnfairLock(initialState: State(snapshot: snapshot))
+        self.configureFailure = configureFailure
         self.activationFailure = activationFailure
     }
 
@@ -224,6 +318,7 @@ final class ScriptedAudioSessionPort: AudioSessionPorting, @unchecked Sendable {
     }
 
     func apply(_ configuration: AudioSessionConfiguration) throws {
+        if let configureFailure { throw configureFailure.nsError }
         storage.withLock {
             $0.calls.applied.append(configuration)
             $0.snapshot.category = configuration.category.rawValue
@@ -234,7 +329,7 @@ final class ScriptedAudioSessionPort: AudioSessionPorting, @unchecked Sendable {
     func setActive(_ active: Bool) throws {
         if active, let activationFailure {
             storage.withLock { $0.calls.activeChanges.append(active) }
-            throw ScriptedAudioSessionFailure(message: activationFailure)
+            throw activationFailure.nsError
         }
         storage.withLock {
             $0.calls.activeChanges.append(active)
@@ -242,11 +337,6 @@ final class ScriptedAudioSessionPort: AudioSessionPorting, @unchecked Sendable {
             $0.snapshot.sampleRate = active ? 16_000 : 0
         }
     }
-}
-
-private struct ScriptedAudioSessionFailure: Error, LocalizedError {
-    let message: String
-    var errorDescription: String? { message }
 }
 
 // MARK: - 快照构造
