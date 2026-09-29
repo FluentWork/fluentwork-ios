@@ -107,6 +107,76 @@ import Testing
 
     // MARK: - 解析
 
+    /// `project.yml` 与 `Package.swift` 必须对得上。
+    ///
+    /// 没人看这条缝的时候，改一个名字的代价是**静默的**：CI 不跑 `xcodegen`，
+    /// 而落地门禁腿 2 构建的是**已提交的** `.xcodeproj` —— 所以把 `App/FluentWorkHost`
+    /// 改名、或把某个 product 改名，都不会有任何自动步骤报警，直到有人手动重新生成
+    /// 工程、才发现宿主 app 编不过（2026-09-29 查出的空档，F8-b）。
+    @Test func theXcodeGenManifestAgreesWithThePackageManifest() throws {
+        let root = Self.repositoryRoot
+        let projectManifest = try String(
+            contentsOf: root.appending(path: "project.yml"),
+            encoding: .utf8
+        )
+        let packageManifest = try String(
+            contentsOf: root.appending(path: "Package.swift"),
+            encoding: .utf8
+        )
+
+        // 两种写法都要认：`path: .`（packages 段）与 `- path: App/FluentWorkHost`（sources 段）。
+        let sourcePaths = Self.captureGroups(
+            of: #"(?m)^\s*-?\s*path:\s*(\S+)\s*$"#,
+            in: projectManifest
+        ).compactMap(\.first)
+        #expect(
+            sourcePaths.count >= 2,
+            "只从 project.yml 解析出 \(sourcePaths.count) 个 path —— 解析器失配（期望 >= 2）"
+        )
+
+        let missingPaths = sourcePaths.filter {
+            !FileManager.default.fileExists(atPath: root.appending(path: $0).path)
+        }
+        #expect(
+            missingPaths.isEmpty,
+            "project.yml 指向了不存在的路径：\(missingPaths.joined(separator: ", "))"
+        )
+
+        // product 必须在 `Package.swift` 的 `products:` 里声明过。
+        //
+        // 只认「`name: "X",` 后面跟 `targets:`」那一形 —— 那是 `.library(...)`；
+        // `.target(...)` 的 `name:` 后面跟的是 `dependencies:`。同名的 product 与
+        // target 都存在（`FluentWorkDiagnostics` 两处都有），所以这个区分是必要的。
+        let referencedProducts = Self.captureGroups(
+            of: #"(?m)^\s*product:\s*(\S+)\s*$"#,
+            in: projectManifest
+        ).compactMap(\.first)
+        let declaredProducts = Set(
+            Self.captureGroups(
+                of: #"name:\s*"([^"]+)",\s*\n\s*targets:"#,
+                in: packageManifest
+            ).compactMap(\.first)
+        )
+
+        #expect(
+            referencedProducts.count >= 2,
+            "只从 project.yml 解析出 \(referencedProducts.count) 个 product 引用 —— 解析器失配"
+        )
+        #expect(
+            declaredProducts.count >= 2,
+            "只从 Package.swift 解析出 \(declaredProducts.count) 个 product 声明 —— 解析器失配"
+        )
+
+        let undeclared = referencedProducts.filter { !declaredProducts.contains($0) }
+        #expect(
+            undeclared.isEmpty,
+            """
+            project.yml 引用了 Package.swift 里没有声明的 product：\(undeclared.joined(separator: ", "))
+            Package.swift 声明过的：\(declaredProducts.sorted().joined(separator: ", "))
+            """
+        )
+    }
+
     /// 取每条匹配的全部捕获组。
     private static func captureGroups(of pattern: String, in text: String) -> [[String]] {
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
