@@ -95,9 +95,6 @@ struct ScreenEntryGuardTests {
         Group(
             reason: "屏幕还没落地（④ 逐屏）—— 数据层与中间件都已接线",
             cases: [
-                // D2 的丢弃 / 编辑：reducer 与中间件都在，只差按钮。
-                "review.discardRefineCardTapped", "review.restoreRefineCardTapped",
-                "review.refineCardEditChanged", "review.refineCardEditReverted",
                 // 闪测屏（E1/E2/E4 的屏幕）—— **它卡在一条不存在的采集链路上**：
                 // 这 7 条里有 5 条是屏幕能派的，而 `.answerCaptured` 要的是 ASR 文本，
                 // 客户端今天没有任何东西产出它（`ClientASRTranscriber` 是一份没接线的文档）。

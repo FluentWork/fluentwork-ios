@@ -74,16 +74,47 @@ extension ReviewViewModel {
         from state: ReviewState,
         entry: VisibleRefineCard
     ) -> ReviewRefineCardRow {
-        ReviewRefineCardRow(
+        let isAccepting = state.acceptingRefineCardIDs.contains(entry.key)
+        let isAccepted = state.acceptedRefineCardIDs.contains(entry.key)
+        return ReviewRefineCardRow(
             id: entry.key,
             intentZH: entry.card.intentZH,
             expressionEN: entry.card.expressionEN,
             anchorUserSaid: entry.card.anchorUserSaid,
+            // 这两个也来自 `entry.card`（有草稿就是草稿）：它们是 `RefineCardEditField` 里
+            // 的五个字段之二，入库时会跟着一起送上去，所以编辑面板的每个输入框都要有出处。
+            sceneTag: entry.card.sceneTag,
+            functionTag: entry.card.functionTag,
             // 两个标记都按**稳定键**查：state 里那两个集合装的就是原卡 id
             // （动作带的是它，reducer 也按它剪枝）。
-            isAccepting: state.acceptingRefineCardIDs.contains(entry.key),
-            isAccepted: state.acceptedRefineCardIDs.contains(entry.key),
-            isEdited: entry.isEdited
+            isAccepting: isAccepting,
+            isAccepted: isAccepted,
+            isEdited: entry.isEdited,
+            // 屏幕的规则，见 `ReviewRefineCardRow.canEdit`。
+            canEdit: !isAccepting && !isAccepted,
+            canDiscard: !isAccepting && !isAccepted
         )
+    }
+}
+
+/// 可编辑字段的中文标签（D2）。
+///
+/// 编辑面板按 `RefineCardEditField.allCases` 铺开，标签从这里取 —— 于是「枚举里加了字段、
+/// 屏幕上没有它的输入框」这件事在**编译期**就不成立（`label` 的 switch 是穷举的），
+/// 而「两个字段用了同一句话」由判据钉住。
+extension RefineCardEditField {
+    public var label: String {
+        switch self {
+        case .intentZH:
+            return "意图"
+        case .expressionEN:
+            return "英文表达"
+        case .anchorUserSaid:
+            return "你当时说的"
+        case .sceneTag:
+            return "场景"
+        case .functionTag:
+            return "功能"
+        }
     }
 }

@@ -224,6 +224,20 @@ struct HostRootView: View {
                 },
                 onAcceptRefineCard: { cardID in
                     store.dispatch(.review(.acceptRefineCardTapped(cardID: cardID)))
+                },
+                onDiscardRefineCard: { cardID in
+                    store.dispatch(.review(.discardRefineCardTapped(cardID: cardID)))
+                },
+                onRestoreRefineCard: { cardID in
+                    store.dispatch(.review(.restoreRefineCardTapped(cardID: cardID)))
+                },
+                onEditRefineCard: { cardID, field, value in
+                    store.dispatch(
+                        .review(.refineCardEditChanged(cardID: cardID, field: field, value: value))
+                    )
+                },
+                onRevertRefineCardEdits: { cardID in
+                    store.dispatch(.review(.refineCardEditReverted(cardID: cardID)))
                 }
             )
             .overlay(alignment: .topLeading) {
