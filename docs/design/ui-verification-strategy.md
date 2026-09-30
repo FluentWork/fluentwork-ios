@@ -91,7 +91,7 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
 
 ## 3. 两条守卫：把「入口」变成机器能判的
 
-### 守卫 A · action 双向名单
+### 守卫 A · action 双向名单（`f302454` 落地）
 
 **每个 `XxxAction` case，要么在某个视图的回调里被派发，要么在一个写明理由的豁免名单里。**
 
@@ -100,7 +100,18 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
   （仓级检索 + 名单双向 + 变异验证过）；
 - 它挡住的正是模块轴那 6 条的成因：**数据层做完了、屏幕上没有入口**。
 
-### 守卫 B · 驱动与视图同一张表
+落地时量出来的三件事（都写进了那份文件头）：
+
+1. **「屏幕层」= `App/` ＋ `Shared/FluentWorkUI/` ＋ `AppRootTabView.swift`** —— 第三个是量出来的：
+   底部 tab 栏那个视图住在 `Shared/FluentWorkCore/Navigation/` 里，只扫 `App/` 会把
+   `navigation.selectTab` 误判成「没有入口」。**视图在哪个模块里是历史，不是定义。**
+2. **只查一层**：嵌套载荷里的 `SpeechSessionEvent` 是传输泵喂给状态机的输入（27 个 case 里
+   只有 4 个由屏幕派），「屏幕能不能派它」对它不是对的问题；`WorkspaceSurface` / `AppTab` 是值。
+   要盯的那个嵌套事件由守卫 B 点名。
+3. **表分三组**，理由的性质不同：中间件派（正常）/ 屏幕未落地（债，随 ④ 变短）/
+   **没有任何派发者（死 action，14 条）**。第三组的「没有派发者」本身也有一条判据当场验证。
+
+### 守卫 B · 驱动与视图同一张表（`f302454` 落地）
 
 `Debug/DeviceScenarioDriver.swift` 是今天「自动点屏幕」的替代（仅 DEBUG、由 `FW_SCENARIO` 开，
 照视图派**同样的 action**）。它的行动序列必须与视图的可点路径**出自同一张表**。
@@ -181,8 +192,8 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
 | 步 | 状态 |
 |---|---|
 | ① 投影搬迁 | **✅ 9/9 完成**。`Review`（`4ce2e57`）、`speakingRoom`（`ba281dd`）、`dailyRead`（`79816e5`）、`sessionHistory` + `sessionDetail`（`66b7a78`）、`corpus` + `badgeFeedback`（`be1d22d`）、`settings` + `workbenchHome`（`2ffa112`）。`HostRootView` 里已无 `make*ViewModel` |
-| ② 两条守卫 | 未开始 |
-| ③ `AppRoute` | 未开始（闪测 / 话题卡的目的地仍是 `nil`） |
+| ② 两条守卫 | **✅ 完成**（`f302454`）。守卫 A `ScreenEntryGuardTests`（每个 `AppAction` case 要么在屏幕层被派发、要么在表里写明理由；表分三组：中间件派 64 / 屏幕未落地 18 / **死 action 14**）、守卫 B `ScenarioDriverTableGuardTests`（驱动与视图同一张表）。10 次变异全部咬住 |
+| ③ `AppRoute` | 未开始（`AppRoute(entryRoute: "/drill")` 仍是 `nil`）。**落地时守卫 A 与工作台的 `isAvailable` 判据会红**，那是内置提醒物 |
 | ④ 逐屏 UI | 未开始 |
 
 ### 搬迁过程中查出的缺陷（这就是先搬它的理由）
