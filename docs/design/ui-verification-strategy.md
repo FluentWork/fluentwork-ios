@@ -176,6 +176,21 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
 3. **`AppRoute` 补闪测 / 话题卡目的地**（属业务逻辑，可测；顺手改掉那两条断言）；
 4. **逐屏落地 UI**，每屏收尾跑真机场景 + 填走查表。
 
+### 进度
+
+| 步 | 状态 |
+|---|---|
+| ① 投影搬迁 | **1/9**：`Review` 已搬（`4ce2e57`，含 9 条判据 + 6 次变异验证）。**顺带修掉一个活的缺陷**：`HostRootView` 当时仍读 `payload.refineCards`，所以 D2 的丢弃与编辑在屏幕上不生效 —— 而 796 条判据一条都看不到。剩余 8 个：`speakingRoom` / `settings` / `corpus` / `sessionHistory` / `sessionDetail` / `badgeFeedback` / `dailyRead` / `workbenchHome` |
+| ② 两条守卫 | 未开始 |
+| ③ `AppRoute` | 未开始（闪测 / 话题卡的目的地仍是 `nil`） |
+| ④ 逐屏 UI | 未开始 |
+
+**每一步都按同一个形状做**：先落桩（桩＝搬迁前 Host 里那一行）→ 判据真红 → 实现 → 全绿 →
+**逐条变异验证**。搬完 Review 那一份暴露出来的两条经验：
+（a）`FluentWorkUI` 本来就依赖 `FluentWorkCore`，**不用动 `Package.swift`**；
+（b）判据要**先编辑一张卡再断言**，否则「按稳定键查」与「按内容 id 查」两种写法同值，
+判据不咬人 —— 一条不咬人的判据比没有判据更坏。
+
 ---
 
 ## 9. 一句话
