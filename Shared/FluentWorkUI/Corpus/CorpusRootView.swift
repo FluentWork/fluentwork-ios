@@ -19,6 +19,8 @@ public struct CorpusRowViewData: Equatable, Sendable, Identifiable {
     public var hasPendingFavorite: Bool
     public var hasPendingDelete: Bool
     public var updatedAt: String
+    /// 状态灯（F2）。`nil` = 服务端给的取值我们认不出 —— 那时**不画灯**，见 `CorpusStateLamp`。
+    public var lamp: CorpusStateLamp?
 
     public init(
         id: String,
@@ -30,7 +32,8 @@ public struct CorpusRowViewData: Equatable, Sendable, Identifiable {
         isFavorite: Bool,
         hasPendingFavorite: Bool = false,
         hasPendingDelete: Bool = false,
-        updatedAt: String
+        updatedAt: String,
+        lamp: CorpusStateLamp?
     ) {
         self.id = id
         self.intentZH = intentZH
@@ -42,6 +45,7 @@ public struct CorpusRowViewData: Equatable, Sendable, Identifiable {
         self.hasPendingFavorite = hasPendingFavorite
         self.hasPendingDelete = hasPendingDelete
         self.updatedAt = updatedAt
+        self.lamp = lamp
     }
 }
 
@@ -170,6 +174,22 @@ public struct CorpusRootView: View {
                                     if row.isFavorite {
                                         Image(systemName: "star.fill")
                                             .foregroundStyle(.yellow)
+                                    }
+                                    // F2 状态灯。稿子 §2.4 要求「不单靠颜色」，所以形态与颜色
+                                    // 同时变（○ / ◐ / ●）—— 形态取自 `CorpusStateLamp.form`，
+                                    // 颜色取自令牌。
+                                    //
+                                    // 认不出的状态**没有灯**，这是刻意的：一个看起来确定、其实错
+                                    // 的灯比没有灯更坏。所以这里是 `if let`，不是兜底成灰点。
+                                    if let lamp = row.lamp {
+                                        Image(systemName: lamp.form.symbolName)
+                                            // 令牌给的是名义尺寸 —— 符号自身的字形有内缩，
+                                            // 所以它不是一个像素级精确的 8pt 圆。
+                                            .font(.system(size: DesignTokens.Component.statusDotDiameter))
+                                            .foregroundStyle(
+                                                DesignTokens.Color.color(forHex: lamp.colorHex)
+                                            )
+                                            .accessibilityLabel(lamp.accessibilityLabel)
                                     }
                                 }
                                 Text(row.expressionEN)

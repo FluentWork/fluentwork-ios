@@ -39,6 +39,16 @@ public enum DesignTokens {
         public static let separator = SwiftUI.Color(hex: Hex.separatorBase).opacity(Alpha.separator)
         public static let separatorStrong = SwiftUI.Color(hex: Hex.separatorBase).opacity(Alpha.separatorStrong)
         public static let wash = SwiftUI.Color(hex: Hex.accent).opacity(Alpha.wash)
+
+        /// 把上面那张表里的字面量取回去。
+        ///
+        /// 存在的理由只有一个：状态灯（F2）的颜色要**能被判据核对**。`Color` 本身没法在判据里
+        /// 可靠地比（构造路径不同就可能不等），所以 `CorpusStateLamp` 暴露的是 hex、视图走这一个
+        /// 入口转回颜色 —— 于是「灯用哪个颜色」仍然只有一张表，而不是在灯里再抄一遍十六进制。
+        public static func color(forHex hex: String) -> SwiftUI.Color {
+            // 必须写全 `SwiftUI.Color` —— 在 `DesignTokens.Color` 里面，裸 `Color` 指的是它自己。
+            SwiftUI.Color(hex: hex)
+        }
     }
 
     public enum Typography {

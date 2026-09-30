@@ -36,7 +36,9 @@ extension CorpusViewModel {
                     // 意图，而块本身已经是服务端那一版。
                     hasPendingFavorite: state.isPending(blockID: block.id, operation: .favorite),
                     hasPendingDelete: state.isPending(blockID: block.id, operation: .delete),
-                    updatedAt: block.updatedAt
+                    updatedAt: block.updatedAt,
+                    // F2：状态灯。认不出的取值 → `nil` → 不画灯（见 `CorpusStateLamp`）。
+                    lamp: CorpusStateLamp(serverState: block.state)
                 )
             },
             searchQuery: state.searchQuery,
