@@ -65,6 +65,13 @@ specific to this repository.
    `fluentwork-meta/agents/shared/defect-fix-discipline.md`. A green suite after the
    fix is not evidence the guard works; break the implementation and confirm the
    *expected* test goes red.
+7. Search with the editor's search tool, not shell `grep`. macOS ships **BSD grep**, whose BRE
+   treats `\|` as a literal, so `grep -n "a\|b" file` returns **nothing** instead of failing
+   and `grep -v "a\|b"` passes **everything** through. Both halves have cost this repo real
+   time: a search that "found nothing" (so a symbol looked unused), and a test run that looked
+   green while a `FAIL` sat inside the output that was being filtered out. If you must use the
+   shell, use `grep -E` with `|`, and print the exit status — see the gate commands in
+   `Scripts/`.
 
 ## Concurrency Isolation
 
