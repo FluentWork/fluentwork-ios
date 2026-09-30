@@ -78,11 +78,21 @@ struct HostRootView: View {
     private func routeDestination(_ route: AppRoute) -> some View {
         switch route {
         case let .speakingRoom(sessionID):
+            // 投影只算一次。
+            //
+            // 以前这里调了三次 `makeSpeakingRoomViewModel(from:)` —— 一次给视图、另两次是
+            // 在回调里为了读 `startTapIntent` / `stopTapIntent` 又重新算了一遍。同一份映射
+            // 每帧跑三遍本身是浪费，更要紧的是：**回调执行时读的不是屏幕上那一份**，而是
+            // 那一刻重新算出来的另一份。把模型提到前面，两边读的就是同一个值。
+            let room = SpeakingRoomViewModel.make(
+                from: store.state.speakingRoom,
+                usesAutoVAD: store.state.usesVoiceVadAuto
+            )
             ZStack(alignment: .top) {
                 SpeakingRoomView(
-                    model: makeSpeakingRoomViewModel(from: store.state.speakingRoom),
+                    model: room,
                     onStartTapped: {
-                        switch makeSpeakingRoomViewModel(from: store.state.speakingRoom).startTapIntent {
+                        switch room.startTapIntent {
                         case .startSession:
                             restartOrStartSpeakingSession()
                         case .beginTurn:
@@ -92,7 +102,7 @@ struct HostRootView: View {
                         }
                     },
                     onStopTapped: {
-                        switch makeSpeakingRoomViewModel(from: store.state.speakingRoom).stopTapIntent {
+                        switch room.stopTapIntent {
                         case .endTurn:
                             store.dispatch(.speakingRoom(.manualSpeechEnd))
                         case .endSession:
@@ -388,36 +398,6 @@ struct HostRootView: View {
                 .review(sessionID: sessionID),
                 style: .fullScreenCover
             )))
-        )
-    }
-
-    private func makeSpeakingRoomViewModel(
-        from state: SpeakingRoomState
-    ) -> SpeakingRoomViewModel {
-        SpeakingRoomViewModel(
-            phase: state.phase,
-            processingStage: state.processingStage,
-            liveTranscript: state.liveTranscript,
-            lastBadge: state.lastBadge,
-            badgeHits: state.badgeHits,
-            failureReason: state.failureReason,
-            timeline: state.timeline.map { item in
-                SpeakingRoomTimelineRow(
-                    id: item.id.uuidString,
-                    isUser: item.speaker == .user,
-                    text: item.text,
-                    isListening: item.status == .listening,
-                    hits: item.hits.map { hit in
-                        SpeakingRoomTimelineHit(
-                            id: "\(hit.phraseBlockID ?? "badge")-\(item.id.uuidString)",
-                            badge: hit.badge,
-                            phraseBlockID: hit.phraseBlockID
-                        )
-                    }
-                )
-            },
-            usesAutoVAD: store.state.usesVoiceVadAuto,
-            isRescueHintAvailable: state.isRescueHintAvailable
         )
     }
 
