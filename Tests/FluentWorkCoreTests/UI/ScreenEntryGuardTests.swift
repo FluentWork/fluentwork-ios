@@ -98,14 +98,13 @@ struct ScreenEntryGuardTests {
                 // D2 的丢弃 / 编辑：reducer 与中间件都在，只差按钮。
                 "review.discardRefineCardTapped", "review.restoreRefineCardTapped",
                 "review.refineCardEditChanged", "review.refineCardEditReverted",
-                // 闪测屏（E1/E2/E4 的屏幕）。
+                // 闪测屏（E1/E2/E4 的屏幕）—— **它卡在一条不存在的采集链路上**：
+                // 这 7 条里有 5 条是屏幕能派的，而 `.answerCaptured` 要的是 ASR 文本，
+                // 客户端今天没有任何东西产出它（`ClientASRTranscriber` 是一份没接线的文档）。
+                // 见 `docs/design/ui-verification-strategy.md` 的 ④ 一节。
                 "drill.startTapped", "drill.answerCaptured", "drill.skipTapped",
                 "drill.retryTapped", "drill.advanceTapped", "drill.appealTapped",
                 "drill.exitTapped",
-                // 话题卡屏（H1/H2/H3 的屏幕）。
-                "topic.appear", "topic.refreshRequested", "topic.checkinDraftReflectionChanged",
-                "topic.checkinDraftBlockToggled", "topic.checkinDraftDiscarded",
-                "topic.checkinTapped", "topic.dismissTapped",
             ]
         ),
 

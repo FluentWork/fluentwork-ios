@@ -323,7 +323,34 @@ struct HostRootView: View {
             // 那时一片空白比一句占位难查得多，所以目的地写在 Tab 根同一个视图上。
             flashTestPlaceholder
         case .topicCards:
-            topicCardsPlaceholder
+            TopicCardsRootView(
+                model: TopicCardsViewModel.make(from: store.state.topic),
+                onAppear: {
+                    store.dispatch(.topic(.appear))
+                },
+                onRefresh: {
+                    store.dispatch(.topic(.refreshRequested))
+                },
+                onReflectionChanged: { cardID, value in
+                    store.dispatch(
+                        .topic(.checkinDraftReflectionChanged(cardID: cardID, value: value))
+                    )
+                },
+                onToggleBlock: { cardID, blockID in
+                    store.dispatch(
+                        .topic(.checkinDraftBlockToggled(cardID: cardID, blockID: blockID))
+                    )
+                },
+                onDiscardDraft: { cardID in
+                    store.dispatch(.topic(.checkinDraftDiscarded(cardID: cardID)))
+                },
+                onCheckIn: { cardID in
+                    store.dispatch(.topic(.checkinTapped(cardID: cardID)))
+                },
+                onDismiss: { cardID, reason in
+                    store.dispatch(.topic(.dismissTapped(cardID: cardID, reason: reason)))
+                }
+            )
         }
     }
 
@@ -335,13 +362,6 @@ struct HostRootView: View {
         placeholderScreen(
             title: "闪测（占位）",
             detail: "训练卡流、判定与申诉、结算都还没落地。"
-        )
-    }
-
-    private var topicCardsPlaceholder: some View {
-        placeholderScreen(
-            title: "话题建议（占位）",
-            detail: "「今天就聊这几件」还没落地。"
         )
     }
 

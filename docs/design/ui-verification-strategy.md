@@ -175,11 +175,26 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
   `:61-71` 还断言只有 first-wave 四条路由能解析。
   **那两条断言确实是内置的提醒物**：加路由时它们必须跟着改，改不动说明路由没接上 ——
   ③ 就是先改它们、看着它们红，再落实现的（见下方进度表）。
-- ~~**⑤-2 话题卡（H1/H2/H3）**~~ —— 已完成（见进度表）。**F2 状态灯**：**已核对，它的 store 落点
-  本来就有** —— `PhraseBlock.state` 一路进到 `CorpusState.items`，丢的是投影那一步
-  （`CorpusRowViewData` 里没有它），所以它不满足「读一个永远为空的字段」，而是**反过来的那一类**：
-  数据到位、屏幕上没有。**已在 F2 落地时一并做完**（`8bd2808`，投影 + 视图 + 5 条判据）。
-  剩下的 **G2 语音偏好（含 AI 语速）**仍然成立：语速是合成参数，跨仓，要先定走哪条路。
+- ~~**⑤-2 话题卡（H1/H2/H3）**~~ —— **数据层与屏幕都已完成**（屏幕见 ④ 一节）。
+  **F2 状态灯**：**已核对，它的 store 落点本来就有** —— `PhraseBlock.state` 一路进到
+  `CorpusState.items`，丢的是投影那一步（`CorpusRowViewData` 里没有它），所以它不满足
+  「读一个永远为空的字段」，而是**反过来的那一类**：数据到位、屏幕上没有。
+  **已在 F2 落地时一并做完**（`8bd2808`，投影 + 视图 + 5 条判据）。
+- **G2 语音偏好（含 AI 语速）**：仍然成立 —— 语速是合成参数，跨仓，要先定走哪条路。
+- ⚠️ **闪测屏（E1/E2/E4）卡在一条不存在的采集链路上** —— ④ 动工时才发现，**这是 §7 这一节
+  第一次没能提前看出来的前置条件**：
+  - `DrillAction.answerCaptured(asrText:at:)` 要的是**文本**，而客户端今天没有任何东西产出它。
+    `ClientASRTranscriber`（`Shared/FluentWorkCore/Services/ClientASRTranscriber.swift`）是一份
+    **只有文档注释、从未接线**的协议：`clientASRTranscriber` 在全仓的唯一出现就是它自己注释里的
+    `Container.shared.clientASRTranscriber()`；`pcmAudioStream()` 同理零实现。
+  - 唯一真实的采集路径是对话房间的 `LiveAudioEngine.startCapture()`，绑在
+    `SpeechSessionMiddleware` 的 WSS 会话上。
+  - 技术方案（`fluentwork-meta` `32_…iOS App端技术设计文档.md:127`）把 E1–E4 的落点写成
+    「**计时 + 异步判定 + 队列调度**」，并且 `:224` 写着「闪测/对话/跟读**共用一次授权**」——
+    也就是说「说的话怎么变成文本」被划在了 E1–E4 之外，属音频链路。
+  - ⇒ 闪测屏要动，先要有一个决定：复用房间的 WSS ASR、还是上设备端 Apple Speech、
+    还是 Volcengine。这条决定的方向会牵到 `SharedAudioSessionOwner` 的租约名册（F6/R1–R10 那一摊）。
+    **在它定下来之前，闪测屏保持占位**；守卫 A 的第 ② 组留着那 7 条 `drill.*` 并写明了原因。
 - **投影搬迁**（第 2 节）。
 
 ---
@@ -198,7 +213,7 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
 | ① 投影搬迁 | **✅ 9/9 完成**。`Review`（`4ce2e57`）、`speakingRoom`（`ba281dd`）、`dailyRead`（`79816e5`）、`sessionHistory` + `sessionDetail`（`66b7a78`）、`corpus` + `badgeFeedback`（`be1d22d`）、`settings` + `workbenchHome`（`2ffa112`）。`HostRootView` 里已无 `make*ViewModel` |
 | ② 两条守卫 | **✅ 完成**（`f302454`）。守卫 A `ScreenEntryGuardTests`（每个 `AppAction` case 要么在屏幕层被派发、要么在表里写明理由；表分三组：中间件派 64 / 屏幕未落地 18 / **死 action 14**）、守卫 B `ScenarioDriverTableGuardTests`（驱动与视图同一张表）。10 次变异全部咬住 |
 | ③ `AppRoute` | **✅ 完成**。`AppRoute` 补 `.drill` / `.topicCards`（`entryRoute` / `init?(entryRoute:)` / `defaultWorkbenchNavigationAction`）；`FeaturePluginCatalog` 补 `/topic-cards`；工作台四张表与 `Module.Kind` 跟着补；`HostRootView` 补两个目的地（占位，与 Tab 2 根**共用同一个视图**）。6 条变异全部咬住 |
-| ④ 逐屏 UI | 未开始 |
+| ④ 逐屏 UI | **进行中**。话题建议屏（H1 列表 / H2 来源标注 / H3 打卡草稿 + 86_ M11 忽略）**已落地**：投影 `FluentWorkUI/Topic/TopicProjection.swift` + 视图 `TopicCardsRootView.swift` + Host 接线，10 条判据，守卫 A 的第 ② 组因此从 18 条缩到 **11 条**。闪测屏**卡在采集链路**（见 §7），保持占位 |
 
 ③ 之后顺手清掉了 §7 里「F2 状态灯」那条前置条件（`8bd2808`，投影 + 视图 + 5 条判据，变异 6/6），
 以及模块轴记的「`AppTab` 注释与代码不一致」（`c3b079b`）。**④ 逐屏的入口条件是齐的**：
