@@ -180,16 +180,49 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
 
 | 步 | 状态 |
 |---|---|
-| ① 投影搬迁 | **1/9**：`Review` 已搬（`4ce2e57`，含 9 条判据 + 6 次变异验证）。**顺带修掉一个活的缺陷**：`HostRootView` 当时仍读 `payload.refineCards`，所以 D2 的丢弃与编辑在屏幕上不生效 —— 而 796 条判据一条都看不到。剩余 8 个：`speakingRoom` / `settings` / `corpus` / `sessionHistory` / `sessionDetail` / `badgeFeedback` / `dailyRead` / `workbenchHome` |
+| ① 投影搬迁 | **5/9**。已搬：`Review`（`4ce2e57`）、`speakingRoom`（`ba281dd`）、`dailyRead`（`79816e5`）、`sessionHistory` + `sessionDetail`（`66b7a78`）。剩 4 个：`settings` / `corpus` / `badgeFeedback` / `workbenchHome` |
 | ② 两条守卫 | 未开始 |
 | ③ `AppRoute` | 未开始（闪测 / 话题卡的目的地仍是 `nil`） |
 | ④ 逐屏 UI | 未开始 |
+
+### 搬迁过程中查出的缺陷（这就是先搬它的理由）
+
+四件里三件是**真缺陷**，它们在搬迁之前**一条判据都看不到** —— 因为那一层住在 app target，
+而 app target 没有测试 target：
+
+| 缺陷 | 后果 | 出处 |
+|---|---|---|
+| 回顾投影仍读 `payload.refineCards` | D2 的**丢弃与编辑在屏幕上完全不生效** | `4ce2e57` |
+| 提示身份 `phraseBlockID ?? "badge"` 会撞 | 一轮里两条只有 badge 的命中拿到**同一个 `ForEach` 身份**（SwiftUI 未定义行为） | `ba281dd` |
+| 详情投影只在「有 detail」那条出口传 `errorMessage` | **失败的详情页说不出失败原因**，屏幕退到「检查网络后重试。」 | `66b7a78` |
+| 两份投影各自在内部读 `Date()` | 「今天/昨天/9月10日」三档文案**不可重现**，所以一条判据都没有 | `66b7a78` |
+
+还查到两处**规则写了两遍**（尚未构成行为分歧，但已在分叉的路上）：
+
+- `DailyReadState.showsSkeleton`（Core）与 `DailyReadViewModel.showsSkeleton`（UI）是同一条规则的
+  两份写法，靠 `generating → .loading` 这一条映射撑着 —— 已在 `79816e5` 用判据在**整个相位域**上
+  钉住两侧相等；
+- **`ReviewState.showsSkeleton` 是一份没人读的死规则**（`ReviewFeature.swift:123`），而
+  **回顾页根本没有骨架屏** —— Core 里写着一个屏幕行为，那个屏幕没实现它，没有任何东西在提醒。
+  归 **UI 缺口**（④ 逐屏时补，走查清单里加一条「loading 态要有骨架屏」）。
 
 **每一步都按同一个形状做**：先落桩（桩＝搬迁前 Host 里那一行）→ 判据真红 → 实现 → 全绿 →
 **逐条变异验证**。搬完 Review 那一份暴露出来的两条经验：
 （a）`FluentWorkUI` 本来就依赖 `FluentWorkCore`，**不用动 `Package.swift`**；
 （b）判据要**先编辑一张卡再断言**，否则「按稳定键查」与「按内容 id 查」两种写法同值，
 判据不咬人 —— 一条不咬人的判据比没有判据更坏。
+
+搬到 5/9 时，同一条教训又出现了三次，都是「判据没咬住」而不是「实现写错」：
+
+1. `isUser` 写死 `true` 也能过 —— fixture 里只有一条**用户**行，「谁说的」没有判别力。
+   给 fixture 补一条 AI 回复才转红。（`ba281dd`）
+2. `.paused` 映成 `.playing` 也能过 —— 判据只用了 `.playing` 一个相位。
+   **只测一个分支的判据会替其余分支签字。** 补成四个相位逐个对应才转红。（`79816e5`）
+3. 变异锚点不唯一（`case .failed: phase = .failed` 在两个投影里各有一处）⇒ **变异根本没落地**，
+   那一轮「一片绿」不是通过。换唯一锚点重做才转红。（`66b7a78`）
+
+反过来也踩过一次：判据红了要先判断**是实现错还是期望错** —— `66b7a78` 里有两条红是期望写错了
+（把「现在」的日子当成了记录的日子），实现是对的。
 
 ---
 
