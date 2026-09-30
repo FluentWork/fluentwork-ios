@@ -196,6 +196,30 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
     还是 Volcengine。这条决定的方向会牵到 `SharedAudioSessionOwner` 的租约名册（F6/R1–R10 那一摊）。
     **在它定下来之前，闪测屏保持占位**；守卫 A 的第 ② 组留着那 7 条 `drill.*` 并写明了原因。
 - **投影搬迁**（第 2 节）。
+- ⚠️ **工作台 Tab 1（屏 01）是 ④ 里唯一同时缺「一条拍板 + 两个字段 + 一个页面」的屏。**
+  下面五条都是读码量出来的，动手前先摆出来，免得又靠印象：
+
+  1. **形态本身要先拍板。** 09-26 稿 屏 01 是六段（问候条 · 今日三件事 · 今日入口卡 ·
+     每日一读卡 · 话题建议卡 · 练习历史）；而 `77_` **P0-13**（用户原话「产品需求其实就跟
+     deepseek app 的会话列表一样」）说房间入口应是**会话列表**。这两条**互相取代**，不是叠加
+     （`问题总清单-PRD模块轴.md:245` 记着这件事）。选哪边决定 Tab 1 还要不要「今日入口卡」，
+     也决定现有那个「功能入口模块列表」留不留。
+  2. **「本周练习次数」（问候条的进度环）没有数据源。** `GET /api/v1/sessions` 的回包是
+     `items` / `next_cursor` / `size`（`internal/sessionhistory/model.go:24-28`），**没有 total**；
+     语料库列表同理（`ListPhraseBlocksResponse` 只有 `items` / `next_cursor` / `cursor_reset`）。
+     客户端是分页的，**从已加载的那一页数不出「本周几次」** —— 要后端补 total 或 count。
+  3. **「话术块 N · 已自动化 M」有现成数据源，但它住在话题模块的端点上。**
+     `GET /topic-cards/stats` 的 `blocks_total` / `green_blocks` 就是**整个语料**与其中的绿子集
+     （`internal/topic/stats.go:38-43`，注释明写 "the whole corpus"）。而 iOS 侧今天**零读点**
+     （`blocksTotal` / `greenBlocks` 全仓无命中）。要用它，得先定：工作台直接调这个端点，
+     还是后端另给一个。
+  4. **「今日三件事」（练一次 / 读一篇 / 闪测一轮，完成即勾销）没有任何落点。**
+     iOS 全仓搜 `三件事` / `todayTask` / `weeklyGoal` / `本周` / `progressRing` **零命中**，
+     服务端也没有「今天做了什么」的状态。要么后端加，要么从形态里去掉。
+  5. **「开始新练习」指向的创建练习弹层（屏 11）标着「缺（关键路径）」**（`brief.md:51`）。
+
+  ⇒ **在 1 定下来之前，Tab 1 的绝大部分工作是在赌一种形态。** 能不等这条决定就做的，
+  是 Tab 1 之外的 **D2 丢弃 / 编辑入口**与**回顾页骨架屏**。
 
 ---
 
@@ -214,6 +238,15 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
 | ② 两条守卫 | **✅ 完成**（`f302454`）。守卫 A `ScreenEntryGuardTests`（每个 `AppAction` case 要么在屏幕层被派发、要么在表里写明理由；表分三组：中间件派 64 / 屏幕未落地 18 / **死 action 14**）、守卫 B `ScenarioDriverTableGuardTests`（驱动与视图同一张表）。10 次变异全部咬住 |
 | ③ `AppRoute` | **✅ 完成**。`AppRoute` 补 `.drill` / `.topicCards`（`entryRoute` / `init?(entryRoute:)` / `defaultWorkbenchNavigationAction`）；`FeaturePluginCatalog` 补 `/topic-cards`；工作台四张表与 `Module.Kind` 跟着补；`HostRootView` 补两个目的地（占位，与 Tab 2 根**共用同一个视图**）。6 条变异全部咬住 |
 | ④ 逐屏 UI | **进行中**。话题建议屏（H1 列表 / H2 来源标注 / H3 打卡草稿 + 86_ M11 忽略）**已落地**：投影 `FluentWorkUI/Topic/TopicProjection.swift` + 视图 `TopicCardsRootView.swift` + Host 接线，10 条判据，守卫 A 的第 ② 组因此从 18 条缩到 **11 条**。闪测屏**卡在采集链路**（见 §7），保持占位 |
+
+### ④ 剩下的两张，与它们各自卡在哪
+
+| 屏 | 卡在哪 |
+|---|---|
+| **闪测（E1/E2/E4）** | ⏸ 一条**不存在的采集链路**（见 §7 那条 ⚠️）—— 要定 WSS ASR / Apple Speech / Volcengine |
+| **工作台 Tab 1（屏 01）** | ⏸ **形态本身没拍板**（PRD §六 六段式 vs P0-13 会话列表式）+ 两个字段缺 + 关键路径页缺（见 §7 那条 ⚠️） |
+| **D2 丢弃 / 编辑入口** | ✅ 可以立刻做（reducer 与中间件都在，只差按钮；守卫 A 里那 4 条在等） |
+| **回顾页骨架屏** | ✅ 可以立刻做（`ReviewState.showsSkeleton` 是一份**没人读的死规则**，`ReviewFeature.swift:123`） |
 
 ③ 之后顺手清掉了 §7 里「F2 状态灯」那条前置条件（`8bd2808`，投影 + 视图 + 5 条判据，变异 6/6），
 以及模块轴记的「`AppTab` 注释与代码不一致」（`c3b079b`）。**④ 逐屏的入口条件是齐的**：
