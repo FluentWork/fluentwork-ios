@@ -856,6 +856,26 @@ public extension Container {
         }.shared
     }
 
+    var drillAPIClient: Factory<DrillClientProtocol> {
+        self {
+            DrillAPIClient(
+                network: self.networkClient(),
+                baseURL: self.appEnvironment().apiBaseURL
+            )
+        }.cached
+    }
+
+    /// 闪测的数据面，**不带 token**：鉴权收在 `DefaultDrillClient` 里，中间件看不到它。
+    var drillClient: Factory<DrillClient> {
+        self {
+            DefaultDrillClient(
+                api: self.drillAPIClient(),
+                sessionAPI: self.sessionAPIClient(),
+                tokens: self.authTokenStore()
+            )
+        }.shared
+    }
+
     var featurePluginRegistry: Factory<FeaturePluginRegistryProtocol> {
         self { StaticFeaturePluginRegistry() }.cached
     }

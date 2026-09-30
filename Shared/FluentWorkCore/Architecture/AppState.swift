@@ -62,6 +62,8 @@ public struct AppState: Equatable, Sendable, State {
   /// The conversation list. Read-only and cursor-paged; see
   /// `SessionHistoryFeature` for why it keeps no cache.
   public var sessionHistory: SessionHistoryState
+  /// 闪测（Drill）。机器输出的一份快照，见 `DrillFeature`。
+  public var drill: DrillState
   public var workspace: WorkspaceState
   public var badgeFeedback: BadgeFeedbackState
   public var network: NetworkConnectivityState
@@ -77,6 +79,7 @@ public struct AppState: Equatable, Sendable, State {
     corpus: CorpusState = CorpusState(),
     dailyRead: DailyReadState = DailyReadState(),
     sessionHistory: SessionHistoryState = SessionHistoryState(),
+    drill: DrillState = DrillState(),
     workspace: WorkspaceState = WorkspaceState(),
     badgeFeedback: BadgeFeedbackState = BadgeFeedbackState(),
     network: NetworkConnectivityState = NetworkConnectivityState(),
@@ -91,6 +94,7 @@ public struct AppState: Equatable, Sendable, State {
     self.corpus = corpus
     self.dailyRead = dailyRead
     self.sessionHistory = sessionHistory
+    self.drill = drill
     self.workspace = workspace
     self.badgeFeedback = badgeFeedback
     self.network = network
@@ -121,6 +125,7 @@ public enum AppAction: Equatable, Sendable, Action {
   case corpus(CorpusAction)
   case dailyRead(DailyReadAction)
   case sessionHistory(SessionHistoryAction)
+  case drill(DrillAction)
   case workspace(WorkspaceAction)
   case badgeFeedback(BadgeFeedbackAction)
   case network(NetworkConnectivityAction)

@@ -68,6 +68,15 @@ public let appReducer: Reducer<AppState, AppAction> = combineReducers(
     }
   ),
   pullback(
+    drillReducer,
+    state: \.drill,
+    action: AppAction.drill,
+    extract: {
+      guard case .drill(let action) = $0 else { return nil }
+      return action
+    }
+  ),
+  pullback(
     workspaceReducer,
     state: \.workspace,
     action: AppAction.workspace,

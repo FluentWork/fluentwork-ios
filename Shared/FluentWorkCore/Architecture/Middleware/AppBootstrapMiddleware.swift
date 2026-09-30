@@ -37,6 +37,7 @@ public func makeAppMiddlewares(container: Container) -> [Middleware<AppState, Ap
         dailyReadMiddleware(container: container),
         dailyReadAudioObserver(container: container),
         sessionHistoryMiddleware(container: container),
+        drillMiddleware(container: container),
         speechSessionMiddleware(container: container),
         appBootstrapMiddleware(container: container),
         appNetworkMonitorMiddleware(container: container),
