@@ -103,6 +103,24 @@ private let clientOperations: [ClientOperation] = [
     ClientOperation(
         name: "drillAppeal", api: .drillAppeal(accessToken: "t", recordID: 1),
         path: "/drill/appeal", method: "POST"),
+    ClientOperation(
+        name: "topicCards", api: .topicCards(accessToken: "t"),
+        path: "/topic-cards", method: "GET"),
+    ClientOperation(
+        name: "topicCheckin",
+        api: .topicCheckin(
+            accessToken: "t",
+            cardID: placeholderID,
+            request: TopicCheckinRequest(reflection: "r", usedBlockIDs: [])
+        ),
+        path: "/topic-cards/{id}/checkin", method: "POST"),
+    ClientOperation(
+        name: "topicStats", api: .topicStats(accessToken: "t", days: 7),
+        path: "/topic-cards/stats", method: "GET"),
+    ClientOperation(
+        name: "topicDismiss",
+        api: .topicDismiss(accessToken: "t", cardID: placeholderID, reason: .noTime),
+        path: "/topic-cards/{id}/dismiss", method: "POST"),
 ]
 
 @Test func everyClientOperationIsDeclaredInTheMirroredContract() throws {

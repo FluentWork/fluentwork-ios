@@ -35,6 +35,10 @@ private let boundModels: [ModelBinding] = [
     ModelBinding(swiftType: "SessionHistoryItem", source: .schema("SessionListItem")),
     ModelBinding(swiftType: "SessionDetail", source: .schema("SessionDetail")),
     ModelBinding(swiftType: "SessionUtterance", source: .schema("SessionUtterance")),
+    ModelBinding(swiftType: "TopicCardList", source: .schema("TopicCardList")),
+    ModelBinding(swiftType: "TopicCheckinResult", source: .schema("TopicCheckinResult")),
+    ModelBinding(swiftType: "TopicPracticeStats", source: .schema("TopicPracticeStats")),
+    ModelBinding(swiftType: "TopicDismissResult", source: .schema("TopicDismissResult")),
 ]
 
 private let decodedTypesWithoutRESTBinding: [String: String] = [

@@ -77,6 +77,15 @@ public let appReducer: Reducer<AppState, AppAction> = combineReducers(
     }
   ),
   pullback(
+    topicReducer,
+    state: \.topic,
+    action: AppAction.topic,
+    extract: {
+      guard case .topic(let action) = $0 else { return nil }
+      return action
+    }
+  ),
+  pullback(
     workspaceReducer,
     state: \.workspace,
     action: AppAction.workspace,

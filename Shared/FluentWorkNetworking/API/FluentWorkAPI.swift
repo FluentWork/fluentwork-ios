@@ -56,6 +56,14 @@ public enum FluentWorkAPI: FluentWorkTargetType {
     sessionID: String?
   )
   case drillAppeal(accessToken: String, recordID: Int64)
+  /// `GET /api/v1/topic-cards` — 今天的话题卡（B23 / PRD §7.8 H1）。
+  case topicCards(accessToken: String)
+  /// `POST /api/v1/topic-cards/:id/checkin` — 聊后打卡（H3）。
+  case topicCheckin(accessToken: String, cardID: String, request: TopicCheckinRequest)
+  /// `GET /api/v1/topic-cards/stats` — 窗口内的话题卡练习统计。
+  case topicStats(accessToken: String, days: Int?)
+  /// `POST /api/v1/topic-cards/:id/dismiss` — 带原因地忽略一张卡（86_ M11）。
+  case topicDismiss(accessToken: String, cardID: String, reason: TopicDismissReason)
 
   public var baseURL: URL {
     // Overridden by SessionAPIClient via AbsoluteURL target wrapper — unused.
@@ -99,13 +107,21 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       return "/drill/judge"
     case .drillAppeal:
       return "/drill/appeal"
+    case .topicCards:
+      return "/topic-cards"
+    case .topicCheckin(_, let cardID, _):
+      return "/topic-cards/\(cardID)/checkin"
+    case .topicStats:
+      return "/topic-cards/stats"
+    case .topicDismiss(_, let cardID, _):
+      return "/topic-cards/\(cardID)/dismiss"
     }
   }
 
   public var method: Moya.Method {
     switch self {
     case .getDailyReadToday, .getSessionReview, .listCorpusBlocks, .listSessions,
-      .getSessionDetail, .drillRound:
+      .getSessionDetail, .drillRound, .topicCards, .topicStats:
       return .get
     case .deleteCorpusBlock:
       return .delete
@@ -120,7 +136,9 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       .favoriteCorpusBlock,
       .postDailyReadFollowRead,
       .drillJudge,
-      .drillAppeal:
+      .drillAppeal,
+      .topicCheckin,
+      .topicDismiss:
       return .post
     }
   }
@@ -244,6 +262,18 @@ public enum FluentWorkAPI: FluentWorkTargetType {
         parameters: ["record_id": recordID],
         encoding: JSONEncoding.default
       )
+    case .topicCards:
+      return .requestPlain
+    case .topicCheckin(_, _, let request):
+      return .requestJSONEncodable(request)
+    case .topicStats(_, let days):
+      guard let days else { return .requestPlain }
+      return .requestParameters(parameters: ["days": days], encoding: URLEncoding.queryString)
+    case .topicDismiss(_, _, let reason):
+      return .requestParameters(
+        parameters: ["reason": reason.rawValue],
+        encoding: JSONEncoding.default
+      )
     }
   }
 
@@ -274,7 +304,11 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       .postDailyReadFollowRead(let token, _, _),
       .drillRound(let token, _),
       .drillJudge(let token, _, _, _, _),
-      .drillAppeal(let token, _):
+      .drillAppeal(let token, _),
+      .topicCards(let token),
+      .topicCheckin(let token, _, _),
+      .topicStats(let token, _),
+      .topicDismiss(let token, _, _):
       return token
     }
   }

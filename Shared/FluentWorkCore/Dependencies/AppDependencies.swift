@@ -865,6 +865,26 @@ public extension Container {
         }.cached
     }
 
+    var topicAPIClient: Factory<TopicClientProtocol> {
+        self {
+            TopicAPIClient(
+                network: self.networkClient(),
+                baseURL: self.appEnvironment().apiBaseURL
+            )
+        }.cached
+    }
+
+    /// 话题卡的数据面，**不带 token**。
+    var topicClient: Factory<TopicClient> {
+        self {
+            DefaultTopicClient(
+                api: self.topicAPIClient(),
+                sessionAPI: self.sessionAPIClient(),
+                tokens: self.authTokenStore()
+            )
+        }.shared
+    }
+
     /// 闪测的数据面，**不带 token**：鉴权收在 `DefaultDrillClient` 里，中间件看不到它。
     var drillClient: Factory<DrillClient> {
         self {

@@ -64,6 +64,8 @@ public struct AppState: Equatable, Sendable, State {
   public var sessionHistory: SessionHistoryState
   /// 闪测（Drill）。机器输出的一份快照，见 `DrillFeature`。
   public var drill: DrillState
+  /// 话题卡（B23 / PRD §7.8 H1–H3）。
+  public var topic: TopicState
   public var workspace: WorkspaceState
   public var badgeFeedback: BadgeFeedbackState
   public var network: NetworkConnectivityState
@@ -80,6 +82,7 @@ public struct AppState: Equatable, Sendable, State {
     dailyRead: DailyReadState = DailyReadState(),
     sessionHistory: SessionHistoryState = SessionHistoryState(),
     drill: DrillState = DrillState(),
+    topic: TopicState = TopicState(),
     workspace: WorkspaceState = WorkspaceState(),
     badgeFeedback: BadgeFeedbackState = BadgeFeedbackState(),
     network: NetworkConnectivityState = NetworkConnectivityState(),
@@ -95,6 +98,7 @@ public struct AppState: Equatable, Sendable, State {
     self.dailyRead = dailyRead
     self.sessionHistory = sessionHistory
     self.drill = drill
+    self.topic = topic
     self.workspace = workspace
     self.badgeFeedback = badgeFeedback
     self.network = network
@@ -126,6 +130,7 @@ public enum AppAction: Equatable, Sendable, Action {
   case dailyRead(DailyReadAction)
   case sessionHistory(SessionHistoryAction)
   case drill(DrillAction)
+  case topic(TopicAction)
   case workspace(WorkspaceAction)
   case badgeFeedback(BadgeFeedbackAction)
   case network(NetworkConnectivityAction)
