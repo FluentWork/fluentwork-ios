@@ -89,6 +89,21 @@ public struct ReviewState: Equatable, Sendable, State {
     /// **视图读这个，不读 `payload.refineCards`。** 抛弃掉的卡仍然留在产出里（那是服务端给的
     /// 一份快照），由这里过滤掉；写成派生访问器而不是在 reducer 里改写产出，是为了让
     /// 「撤回」变成一个没有副作用的动作。
+    /// **被丢掉的那几张** —— 撤回的入口靠它。
+    ///
+    /// `visibleRefineCards` 恰好把它们滤掉了，所以没有这一条，「撤回」就成了一条
+    /// **没有入口的动作**：reducer 里有 `restoreRefineCardTapped`、判据全绿，
+    /// 而屏幕上没有任何东西能把它读出来。
+    public var discardedRefineCards: [VisibleRefineCard] {
+        (payload?.refineCards ?? []).compactMap { card in
+            guard discardedRefineCardIDs.contains(card.id) else { return nil }
+            guard let draft = refineCardDrafts[card.id] else {
+                return VisibleRefineCard(key: card.id, card: card, isEdited: false)
+            }
+            return VisibleRefineCard(key: card.id, card: draft, isEdited: true)
+        }
+    }
+
     public var visibleRefineCards: [VisibleRefineCard] {
         (payload?.refineCards ?? []).compactMap { card in
             guard !discardedRefineCardIDs.contains(card.id) else { return nil }

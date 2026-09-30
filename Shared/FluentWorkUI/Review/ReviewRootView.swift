@@ -47,12 +47,19 @@ public struct ReviewComparisonRow: Equatable, Sendable, Identifiable {
 }
 
 public struct ReviewRefineCardRow: Equatable, Sendable, Identifiable {
+    /// **稳定键**：原卡（服务端给的那张）的 id。
+    ///
+    /// 不是「现在显示的这一版的 id」：`RefineCard.id` 是内容派生的
+    /// （`expressionEN-anchorUserSaid`），学员改一个字它就换一个 —— 视图若拿它回派
+    /// （入库 / 再编辑 / 撤回），改完第一个字符就再也找不到自己，而这条路上不会报任何错。
     public var id: String
     public var intentZH: String
     public var expressionEN: String
     public var anchorUserSaid: String
     public var isAccepting: Bool
     public var isAccepted: Bool
+    /// 这一张学员改过（D2）。视图据此标出「已修改」。
+    public var isEdited: Bool
 
     public init(
         id: String,
@@ -60,7 +67,8 @@ public struct ReviewRefineCardRow: Equatable, Sendable, Identifiable {
         expressionEN: String,
         anchorUserSaid: String,
         isAccepting: Bool = false,
-        isAccepted: Bool = false
+        isAccepted: Bool = false,
+        isEdited: Bool = false
     ) {
         self.id = id
         self.intentZH = intentZH
@@ -68,6 +76,7 @@ public struct ReviewRefineCardRow: Equatable, Sendable, Identifiable {
         self.anchorUserSaid = anchorUserSaid
         self.isAccepting = isAccepting
         self.isAccepted = isAccepted
+        self.isEdited = isEdited
     }
 }
 
@@ -77,6 +86,8 @@ public struct ReviewViewModel: Equatable, Sendable {
     public var transcript: [ReviewTranscriptRow]
     public var dualColumn: [ReviewComparisonRow]
     public var refineCards: [ReviewRefineCardRow]
+    /// 被丢掉的那几张，供「撤回」用。`refineCards` 里没有它们。
+    public var discardedRefineCards: [ReviewRefineCardRow]
     public var refineErrorMessage: String?
     public var errorMessage: String?
 
@@ -86,6 +97,7 @@ public struct ReviewViewModel: Equatable, Sendable {
         transcript: [ReviewTranscriptRow] = [],
         dualColumn: [ReviewComparisonRow] = [],
         refineCards: [ReviewRefineCardRow] = [],
+        discardedRefineCards: [ReviewRefineCardRow] = [],
         refineErrorMessage: String? = nil,
         errorMessage: String? = nil
     ) {
@@ -94,6 +106,7 @@ public struct ReviewViewModel: Equatable, Sendable {
         self.transcript = transcript
         self.dualColumn = dualColumn
         self.refineCards = refineCards
+        self.discardedRefineCards = discardedRefineCards
         self.refineErrorMessage = refineErrorMessage
         self.errorMessage = errorMessage
     }

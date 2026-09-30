@@ -201,7 +201,7 @@ struct HostRootView: View {
         case let .review(sessionID):
             let effectiveSessionID = sessionID ?? store.state.speakingRoom.lastSessionID
             ReviewRootView(
-                model: makeReviewViewModel(from: store.state.review),
+                model: ReviewViewModel.make(from: store.state.review),
                 onAppear: {
                     store.dispatch(.review(.appear(sessionID: effectiveSessionID)))
                 },
@@ -441,57 +441,6 @@ struct HostRootView: View {
             flags: flags,
             appVersion: version ?? "—",
             hasOverrides: !state.localOverrides.isEmpty
-        )
-    }
-
-    private func makeReviewViewModel(from state: ReviewState) -> ReviewViewModel {
-        let phase: ReviewViewPhase
-        switch state.phase {
-        case .idle:
-            phase = .idle
-        case .loading:
-            phase = .loading
-        case .pending:
-            phase = .pending
-        case .ready:
-            phase = .ready
-        case .failed:
-            phase = .failed
-        }
-
-        let overview = state.payload.map {
-            ReviewOverviewViewData(
-                note: $0.overview.goalAchievement.note,
-                issueCount: $0.overview.issueCount,
-                suggestionCount: $0.overview.suggestionCount,
-                comparisonCount: $0.overview.comparisonCount
-            )
-        }
-        let transcript = state.payload?.transcript.map {
-            ReviewTranscriptRow(id: $0.id, speaker: $0.speaker, text: $0.text)
-        } ?? []
-        let dualColumn = state.payload?.dualColumn.map {
-            ReviewComparisonRow(id: $0.id, user: $0.user, better: $0.better)
-        } ?? []
-        let refineCards = state.payload?.refineCards.map {
-            ReviewRefineCardRow(
-                id: $0.id,
-                intentZH: $0.intentZH,
-                expressionEN: $0.expressionEN,
-                anchorUserSaid: $0.anchorUserSaid,
-                isAccepting: state.acceptingRefineCardIDs.contains($0.id),
-                isAccepted: state.acceptedRefineCardIDs.contains($0.id)
-            )
-        } ?? []
-
-        return ReviewViewModel(
-            phase: phase,
-            overview: overview,
-            transcript: transcript,
-            dualColumn: dualColumn,
-            refineCards: refineCards,
-            refineErrorMessage: state.acceptErrorMessage,
-            errorMessage: state.lastErrorMessage
         )
     }
 
