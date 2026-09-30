@@ -56,7 +56,10 @@ let package = Package(
         ),
         .target(
             name: "FluentWorkUI",
-            dependencies: ["FluentWorkCore"],
+            // `FluentWorkFeatureFlags` 是投影搬迁带出来的**新**依赖：设置页要把开关列表画出来，
+            // 而它的状态类型（`FeatureFlagsState` / `AppFeatureFlag`）住在那一个模块里。
+            // 以前这层逻辑在 app target 的 `HostRootView` 里，所以 UI 不需要认识它。
+            dependencies: ["FluentWorkCore", "FluentWorkFeatureFlags"],
             path: "Shared/FluentWorkUI",
             resources: [
                 // 26 个图标（稿子 → asset catalog）。声明在这里 `swift build`

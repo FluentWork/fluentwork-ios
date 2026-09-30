@@ -46,7 +46,12 @@ struct HostRootView: View {
             },
             settingsRoot: {
                 SettingsRootView(
-                    model: makeSettingsViewModel(from: store.state.featureFlags),
+                    model: SettingsViewModel.make(
+                        from: store.state.featureFlags,
+                        // 版本号是 app 层的事实：投影里读 `Bundle.main` 会在测试进程里读到
+                        // 测试 runner 的 bundle —— 恰好是你想核对版本的那一处读到错的那份。
+                        appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+                    ),
                     onToggleFlag: { rawValue, isEnabled in
                         guard let flag = AppFeatureFlag(rawValue: rawValue) else { return }
                         store.dispatch(.featureFlags(.setLocalOverride(flag: flag, isEnabled: isEnabled)))
@@ -412,69 +417,18 @@ struct HostRootView: View {
         )
     }
 
-    /// State → the settings screen's plain model.
-    ///
-    /// Shows the **effective** value next to whether it came from an override,
-    /// because those are the two things a device run needs to tell apart: a
-    /// flag turned on by a local override behaves exactly like one that is on
-    /// by default, and only one of them survives a reinstall.
-    private func makeSettingsViewModel(from state: FeatureFlagsState) -> SettingsViewModel {
-        let flags = AppFeatureFlag.allCases.map { flag in
-            SettingsViewModel.FlagRow(
-                id: flag.rawValue,
-                title: flag.rawValue,
-                isEnabled: state.isEnabled(flag),
-                isOverridden: state.localOverrides[flag] != nil
-            )
-        }
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-        return SettingsViewModel(
-            flags: flags,
-            appVersion: version ?? "—",
-            hasOverrides: !state.localOverrides.isEmpty
-        )
-    }
-
     private var workbenchRoot: some View {
         WorkbenchHomeView(
-            model: makeWorkbenchHomeViewModel(),
+            model: WorkbenchHomeViewModel.make(
+                from: store.state.workspace,
+                bootstrapStatus: store.state.bootstrapStatus,
+                lastErrorMessage: store.state.lastErrorMessage,
+                isOffline: !store.state.network.isConnected
+            ),
             onModuleTapped: openWorkbenchModule,
             onRetryTapped: {
                 store.dispatch(.lifecycle(.appLaunched))
             }
-        )
-    }
-
-    private func makeWorkbenchHomeViewModel() -> WorkbenchHomeViewModel {
-        let modules = store.state.workspace.availableModules.map { descriptor in
-            WorkbenchHomeViewModel.Module(
-                id: descriptor.moduleName,
-                title: moduleTitle(moduleName: descriptor.moduleName, entryRoute: descriptor.entryRoute),
-                subtitle: moduleSubtitle(forEntryRoute: descriptor.entryRoute),
-                systemImage: moduleIcon(forEntryRoute: descriptor.entryRoute),
-                entryRoute: descriptor.entryRoute,
-                kind: moduleKind(forEntryRoute: descriptor.entryRoute),
-                isAvailable: AppRoute(entryRoute: descriptor.entryRoute) != nil
-            )
-        }
-
-        let phase: WorkbenchHomeViewModel.Phase
-        switch store.state.bootstrapStatus {
-        case .idle, .loading:
-            phase = .loading
-        case .ready:
-            phase = modules.isEmpty ? .empty : .ready
-        case .failed:
-            phase = .failed(message: store.state.lastErrorMessage)
-        }
-
-        return WorkbenchHomeViewModel(
-            phase: phase,
-            modules: modules,
-            isOffline: !store.state.network.isConnected,
-            activeModuleTitle: activeModuleTitle(from: store.state.workspace.activeSurface),
-            highlightedBadge: store.state.workspace.highlightedBadge,
-            badgeFeedCount: store.state.workspace.badgeFeedCount
         )
     }
 
@@ -483,77 +437,6 @@ struct HostRootView: View {
             return
         }
         store.dispatch(.navigation(action))
-    }
-
-    private func activeModuleTitle(from surface: WorkspaceSurface) -> String? {
-        switch surface {
-        case .workbench:
-            return nil
-        case .speakingRoom:
-            return "说的房间"
-        case .review:
-            return "回顾"
-        }
-    }
-
-    private func moduleTitle(moduleName: String, entryRoute: String) -> String {
-        switch entryRoute {
-        case "/speaking-room":
-            return "说的房间"
-        case "/review":
-            return "回顾"
-        case "/daily-read":
-            return "每日一读"
-        case "/sessions":
-            return "练习历史"
-        default:
-            return moduleName
-        }
-    }
-
-    private func moduleSubtitle(forEntryRoute entryRoute: String) -> String {
-        switch entryRoute {
-        case "/speaking-room":
-            return "进入实时口语练习，会话页使用全屏导航承载。"
-        case "/review":
-            return "查看评价、对照表达与炼句卡片，保持会话式全屏沉浸。"
-        case "/daily-read":
-            return "在工作台导航栈内进入阅读页，继续停留在当前 Tab。"
-        case "/sessions":
-            return "按时间回看每一场练习。列表按页加载，停留在当前 Tab。"
-        default:
-            return "该模块尚未接入当前 MVP 导航。"
-        }
-    }
-
-    private func moduleIcon(forEntryRoute entryRoute: String) -> String {
-        switch entryRoute {
-        case "/speaking-room":
-            return "mic.fill"
-        case "/review":
-            return "text.quote"
-        case "/daily-read":
-            return "book.fill"
-        case "/sessions":
-            return "clock.arrow.circlepath"
-        default:
-            return "square.grid.2x2"
-        }
-    }
-
-    private func moduleKind(forEntryRoute entryRoute: String) -> WorkbenchHomeViewModel.Module.Kind {
-        switch entryRoute {
-        case "/speaking-room":
-            return .speakingRoom
-        case "/review":
-            return .review
-        case "/daily-read":
-            return .dailyRead
-        case "/sessions":
-            return .sessionHistory
-        default:
-            return .unsupported
-        }
     }
 
     private func closeSpeakingRoom() {
