@@ -267,7 +267,12 @@ struct HostRootView: View {
             .onAppear { _ = sessionID }
         case .sessionHistory:
             SessionHistoryRootView(
-                model: makeSessionHistoryViewModel(from: store.state.sessionHistory),
+                model: SessionHistoryViewModel.make(
+                    from: store.state.sessionHistory,
+                    // 「现在」由调用方给：投影里读 `Date()` 会让「今天/昨天」这三档文案
+                    // 在任何判据里都不可重现。
+                    now: Date()
+                ),
                 onAppear: {
                     store.dispatch(.sessionHistory(.appear))
                 },
@@ -283,7 +288,10 @@ struct HostRootView: View {
             )
         case let .sessionDetail(sessionID):
             SessionDetailView(
-                model: makeSessionDetailViewModel(from: store.state.sessionHistory.detail),
+                model: SessionDetailViewModel.make(
+                    from: store.state.sessionHistory.detail,
+                    now: Date()
+                ),
                 onAppear: {
                     // Re-requesting on appear is what makes back-and-forth
                     // work: the state holds one session, and coming back to a
@@ -465,106 +473,6 @@ struct HostRootView: View {
             canLoadMore: state.nextCursor != nil,
             errorMessage: state.lastErrorMessage
         )
-    }
-
-    /// State → the list's plain model.
-    ///
-    /// `now` is read **once** and handed to every row: a list of thirty rows
-    /// that each called `Date()` could straddle midnight and disagree about
-    /// which rows are 今天.
-    private func makeSessionHistoryViewModel(
-        from state: SessionHistoryState
-    ) -> SessionHistoryViewModel {
-        let phase: SessionHistoryViewPhase
-        switch state.phase {
-        case .idle:
-            phase = .idle
-        case .loading:
-            phase = .loading
-        case .ready:
-            phase = .ready
-        case .empty:
-            phase = .empty
-        case .failed:
-            phase = .failed
-        }
-
-        let now = Date()
-        return SessionHistoryViewModel(
-            phase: phase,
-            rows: state.items.map { item in
-                SessionHistoryRowViewData(
-                    id: item.sessionID,
-                    startedAtText: SessionHistoryFormatting.startedAt(item.startedAt, now: now),
-                    durationText: SessionHistoryFormatting.duration(item.durationSec),
-                    statusText: SessionHistoryFormatting.status(item.status)
-                )
-            },
-            canLoadMore: state.hasMore,
-            isLoadingMore: state.isLoadingMore,
-            errorMessage: state.errorMessage
-        )
-    }
-
-    /// State → the detail screen's plain model.
-    ///
-    /// `isUser` comes from the wire's `speaker` string compared against
-    /// `"user"`, and anything else — known-unknown or genuinely new — renders
-    /// as the other side with its own label rather than being dropped. A
-    /// transcript that silently loses turns is worse than one that labels them
-    /// oddly.
-    private func makeSessionDetailViewModel(
-        from state: SessionHistoryDetailState
-    ) -> SessionDetailViewModel {
-        let phase: SessionDetailViewPhase
-        switch state.phase {
-        case .idle:
-            phase = .idle
-        case .loading:
-            phase = .loading
-        case .ready:
-            phase = .ready
-        case .failed:
-            phase = .failed
-        }
-
-        guard let detail = state.detail else {
-            return SessionDetailViewModel(phase: phase)
-        }
-
-        let now = Date()
-        let subtitle = [
-            SessionHistoryFormatting.startedAt(detail.startedAt, now: now),
-            SessionHistoryFormatting.duration(detail.durationSec),
-        ].joined(separator: " · ")
-
-        return SessionDetailViewModel(
-            phase: phase,
-            subtitleText: subtitle,
-            turns: detail.utterances
-                .sorted { $0.seq < $1.seq }
-                .map { utterance in
-                    SessionDetailTurnViewData(
-                        id: utterance.seq,
-                        isUser: utterance.speaker == "user",
-                        speakerLabel: Self.speakerLabel(utterance.speaker),
-                        text: utterance.text
-                    )
-                },
-            errorMessage: state.phase.errorMessage
-        )
-    }
-
-    /// `user` / `ai` are the two the backend sends. A third one keeps its own
-    /// name instead of being folded into "AI" — the transcript is the one place
-    /// where every turn has to be attributable to somebody, and mislabelling
-    /// one is worse than showing a word the reader has not seen before.
-    private static func speakerLabel(_ speaker: String) -> String {
-        switch speaker {
-        case "user": return "我"
-        case "ai": return "AI"
-        default: return speaker
-        }
     }
 
     private func makeBadgeFeedbackViewModel(
