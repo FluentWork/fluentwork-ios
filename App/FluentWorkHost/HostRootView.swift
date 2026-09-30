@@ -14,10 +14,7 @@ struct HostRootView: View {
             navigation: store.state.navigation,
             dispatch: { store.dispatch($0) },
             workbenchRoot: { workbenchRoot },
-            flashRoot: {
-                Text("闪测（占位）")
-                    .foregroundStyle(.secondary)
-            },
+            flashRoot: { flashTestPlaceholder },
             corpusRoot: {
                 CorpusRootView(
                     model: CorpusViewModel.make(from: store.state.corpus),
@@ -319,7 +316,46 @@ struct HostRootView: View {
                     )
                 }
             )
+        case .drill:
+            // 这条路今天走不到：闪测的模块入口是 `.selectTab(.flashTest)`
+            // （`AppRoute.drill.defaultWorkbenchNavigationAction`），它不往栈里压页。
+            // 但 `AppRoute` 是 `Codable` —— 深链与状态恢复都可能构造出它，
+            // 那时一片空白比一句占位难查得多，所以目的地写在 Tab 根同一个视图上。
+            flashTestPlaceholder
+        case .topicCards:
+            topicCardsPlaceholder
         }
+    }
+
+    /// 闪测页 —— ④ 逐屏之前它是占位。
+    ///
+    /// 底部 Tab 2 的根与 `.drill` 这条路用的是**同一个视图**：同一个功能在两处出现时，
+    /// 两处渲染出两样东西，本身就是一条误导。
+    private var flashTestPlaceholder: some View {
+        placeholderScreen(
+            title: "闪测（占位）",
+            detail: "训练卡流、判定与申诉、结算都还没落地。"
+        )
+    }
+
+    private var topicCardsPlaceholder: some View {
+        placeholderScreen(
+            title: "话题建议（占位）",
+            detail: "「今天就聊这几件」还没落地。"
+        )
+    }
+
+    private func placeholderScreen(title: String, detail: String) -> some View {
+        VStack(spacing: 8) {
+            Text(title)
+                .font(.headline)
+            Text(detail)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder

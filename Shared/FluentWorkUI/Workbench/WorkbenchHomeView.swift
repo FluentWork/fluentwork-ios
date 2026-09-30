@@ -14,6 +14,10 @@ public struct WorkbenchHomeViewModel: Equatable, Sendable {
             case review
             case dailyRead
             case sessionHistory
+            /// 闪测 —— 它的家在底部 Tab 2，不在工作台的导航栈里。
+            case drill
+            /// 话题建议页（H1–H3）。
+            case topicCards
             case unsupported
         }
 
@@ -244,8 +248,10 @@ public struct WorkbenchHomeView: View {
         switch kind {
         case .speakingRoom, .review:
             return "全屏"
-        case .dailyRead, .sessionHistory:
+        case .dailyRead, .sessionHistory, .topicCards:
             return "页内"
+        case .drill:
+            return "底部 Tab"
         case .unsupported:
             return "未开放"
         }

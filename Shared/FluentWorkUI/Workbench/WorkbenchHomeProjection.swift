@@ -69,6 +69,10 @@ extension WorkbenchHomeViewModel {
             return "每日一读"
         case "/sessions":
             return "练习历史"
+        case "/drill":
+            return "闪测"
+        case "/topic-cards":
+            return "话题建议"
         default:
             return moduleName
         }
@@ -84,6 +88,11 @@ extension WorkbenchHomeViewModel {
             return "在工作台导航栈内进入阅读页，继续停留在当前 Tab。"
         case "/sessions":
             return "按时间回看每一场练习。列表按页加载，停留在当前 Tab。"
+        case "/drill":
+            // 文案说的是**按下去会发生什么**，因为这条特别容易猜错：它不开一页，它切 Tab。
+            return "训练卡流、判定与申诉、结算都在底部「闪测」页内，点这里切到那个 Tab。"
+        case "/topic-cards":
+            return "读今天该聊的那几件，聊完回来打卡。停留在当前 Tab。"
         default:
             return "该模块尚未接入当前 MVP 导航。"
         }
@@ -99,6 +108,12 @@ extension WorkbenchHomeViewModel {
             return "book.fill"
         case "/sessions":
             return "clock.arrow.circlepath"
+        case "/drill":
+            // 与底部 Tab 2 的 `bolt` 同一个形状：同一个功能在两处出现时，
+            // 图标不一致本身就是一条误导。
+            return "bolt.fill"
+        case "/topic-cards":
+            return "bubble.left.and.bubble.right.fill"
         default:
             return "square.grid.2x2"
         }
@@ -114,6 +129,10 @@ extension WorkbenchHomeViewModel {
             return .dailyRead
         case "/sessions":
             return .sessionHistory
+        case "/drill":
+            return .drill
+        case "/topic-cards":
+            return .topicCards
         default:
             return .unsupported
         }

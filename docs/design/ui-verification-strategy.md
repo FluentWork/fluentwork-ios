@@ -169,11 +169,12 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
 
 ## 7. 前置条件（属业务逻辑，但 UI 落地前必须先有）
 
-- **导航目的地**：`AppRoute(entryRoute: "/drill")` **今天是 `nil`**，而
+- ~~**导航目的地**~~ —— **已在 ③ 完成**。原来的形状是：
+  `AppRoute(entryRoute: "/drill")` 是 `nil`，而
   `Tests/FluentWorkCoreTests/Architecture/LaunchToNavigationEndToEndTests.swift:34` 正在断言这件事；
-  `:61-71` 还断言只有 first-wave 四条路由能解析。闪测屏与话题卡落地前，
-  `AppRoute` + `FeaturePluginCatalog` 要先能解析它们 —— 否则就是「有屏幕、没入口」。
-  **那条断言恰好是内置的提醒物**：加路由时它必须跟着改，改不动说明路由没接上。
+  `:61-71` 还断言只有 first-wave 四条路由能解析。
+  **那两条断言确实是内置的提醒物**：加路由时它们必须跟着改，改不动说明路由没接上 ——
+  ③ 就是先改它们、看着它们红，再落实现的（见下方进度表）。
 - **⑤-2 话题卡（H1/H2/H3）**、**F2 状态灯 / G2 语音偏好**：字段要在 store 里有落点，
   否则投影 P3（读一个永远为空的字段）当场就会红 —— 这是好事，它把顺序逼对了。
 - **投影搬迁**（第 2 节）。
@@ -193,8 +194,38 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
 |---|---|
 | ① 投影搬迁 | **✅ 9/9 完成**。`Review`（`4ce2e57`）、`speakingRoom`（`ba281dd`）、`dailyRead`（`79816e5`）、`sessionHistory` + `sessionDetail`（`66b7a78`）、`corpus` + `badgeFeedback`（`be1d22d`）、`settings` + `workbenchHome`（`2ffa112`）。`HostRootView` 里已无 `make*ViewModel` |
 | ② 两条守卫 | **✅ 完成**（`f302454`）。守卫 A `ScreenEntryGuardTests`（每个 `AppAction` case 要么在屏幕层被派发、要么在表里写明理由；表分三组：中间件派 64 / 屏幕未落地 18 / **死 action 14**）、守卫 B `ScenarioDriverTableGuardTests`（驱动与视图同一张表）。10 次变异全部咬住 |
-| ③ `AppRoute` | 未开始（`AppRoute(entryRoute: "/drill")` 仍是 `nil`）。**落地时守卫 A 与工作台的 `isAvailable` 判据会红**，那是内置提醒物 |
+| ③ `AppRoute` | **✅ 完成**。`AppRoute` 补 `.drill` / `.topicCards`（`entryRoute` / `init?(entryRoute:)` / `defaultWorkbenchNavigationAction`）；`FeaturePluginCatalog` 补 `/topic-cards`；工作台四张表与 `Module.Kind` 跟着补；`HostRootView` 补两个目的地（占位，与 Tab 2 根**共用同一个视图**）。6 条变异全部咬住 |
 | ④ 逐屏 UI | 未开始 |
+
+### ③ 的红是哪些，以及一条预测错了
+
+改到新预期之后、实现之前，**实际红了四组**（都是断言失败，不是编译失败）：
+
+| 判据 | 红在哪 |
+|---|---|
+| `appRouteBridgesPluginEntryRoutes` | `/drill`、`/topic-cards` 仍是 `nil` |
+| `appRouteBuildsWorkbenchNavigationActions` | `/topic-cards` 拿不到动作；`.drill` 的动作还是 push |
+| `pluginCatalogEntryRoutesAlignWithAppRoute` | 目录里的 `Drill` 解析不出来 |
+| `WorkbenchHomeProjectionTests` 的两条 | 四处表退回 `.unsupported` / 默认标题；`isAvailable` 还是 `false` |
+
+**预测错了一半，如实记下**：进度表原写「落地时**守卫 A** 与工作台的 `isAvailable` 判据会红」。
+实际只有工作台那条红了 —— 守卫 A **不该**红，也不该因为它没红而以为漏了东西：
+
+- 守卫 A 问的是「`AppAction` 的 case 有没有**屏幕派发点**」；
+- ③ 只加路由、不加屏幕，所以 `drill.*` / `topic.*` 那 14 条仍然合法地待在
+  「屏幕还没落地」那一组里。
+
+两件事被那句话混成了一件：**「有入口」的判据在 `isAvailable` 上，「有屏幕」的判据在守卫 A 上。**
+守卫 A 到 ④ 落地闪测/话题卡屏幕时才会缩短。
+
+### ③ 里唯一的产品决定：闪测的入口是**切 Tab**，不是 push 一页
+
+`AppRoute.drill.defaultWorkbenchNavigationAction` 返回 `.selectTab(.flashTest)`。
+依据是 09-26 稿 §03：闪测住在**底部 Tab 2**，关键路径审计写的是「闪测｜底部 Tab → 直接开始｜1」。
+把同一屏同时做成工作台栈里的一页，它会因来路不同而有两种行为（Tab 根 / 推入页）——
+正是 `HostRootView` 在 `sessionDetail` 的「继续练习」上明确拒绝过的形状。
+这条决定由 `appRouteBuildsWorkbenchNavigationActions` 钉住（改实现它就红）。
+`.topicCards` 则与每日一读同类：`.workbench(.push(.topicCards))`。
 
 ### 搬迁过程中查出的缺陷（这就是先搬它的理由）
 

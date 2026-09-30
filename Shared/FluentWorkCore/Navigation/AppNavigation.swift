@@ -27,6 +27,17 @@ public enum AppRoute: TGRoute, Codable {
     /// One past session, pushed from the list. Read-only.
     case sessionDetail(sessionID: String)
 
+    /// 闪测（E1–E5）。
+    ///
+    /// 这里**不带 `sessionID`**：闪测读的是语料块，不是某一场会话。给它一个永远为 `nil`
+    /// 的参数只会让「这个参数在什么情况下有值」变成一个没有答案的问题。
+    case drill
+
+    /// 话题建议页（H1–H3）。
+    ///
+    /// 同样不带 `sessionID`，理由同上。
+    case topicCards
+
     /// Stable path shared with `FeaturePluginDescriptor.entryRoute`.
     public var entryRoute: String {
         switch self {
@@ -40,6 +51,10 @@ public enum AppRoute: TGRoute, Codable {
             return "/sessions"
         case .sessionDetail(let sessionID):
             return "/sessions/\(sessionID)"
+        case .drill:
+            return "/drill"
+        case .topicCards:
+            return "/topic-cards"
         }
     }
 
@@ -54,6 +69,12 @@ public enum AppRoute: TGRoute, Codable {
             self = .dailyRead(sessionID: sessionID)
         case "/sessions":
             self = .sessionHistory
+        case "/drill":
+            // `sessionID` 被刻意丢掉，和 `/sessions` 同理：闪测没有「继续某一场」这个语义，
+            // 把参数收下来再丢掉，会让调用方以为它有用。
+            self = .drill
+        case "/topic-cards":
+            self = .topicCards
         // Note what is *not* here: `/sessions/<id>`. That path exists on the
         // server, but on this side the detail is only ever reached by tapping a
         // row, which builds the route from the id it already has. Parsing it
@@ -65,13 +86,27 @@ public enum AppRoute: TGRoute, Codable {
     }
 
     /// Default workbench navigation semantics for user-facing module entry.
-    /// Conversational surfaces stay full-screen; content reading stays in-stack.
+    ///
+    /// Three behaviours, and the third is the one worth reading twice:
+    ///
+    /// - conversational surfaces (`speakingRoom` / `review`) stay full-screen;
+    /// - content pages (`dailyRead` / `sessionHistory` / `sessionDetail` /
+    ///   `topicCards`) stay in the stack;
+    /// - **`drill` does not open a page at all** — it switches the bottom tab.
+    ///
+    /// That last one is not an inconsistency, it is the design: 09-26 稿 §03 puts
+    /// 闪测 in **Tab 2** and audits the path as「底部 Tab → 直接开始」= 1 click. If a workbench
+    /// tap pushed the same screen as a page, the screen would have two entry paths and therefore
+    /// two behaviours (a pushed page vs. a tab root) — exactly the shape `HostRootView` refuses
+    /// for `sessionDetail`'s「继续练习」. So the module entry points at the tab it lives in.
     public var defaultWorkbenchNavigationAction: AppNavigationAction {
         switch self {
         case .speakingRoom, .review:
             return .workbench(.present(self, style: .fullScreenCover))
-        case .dailyRead, .sessionHistory, .sessionDetail:
+        case .dailyRead, .sessionHistory, .sessionDetail, .topicCards:
             return .workbench(.push(self))
+        case .drill:
+            return .selectTab(.flashTest)
         }
     }
 

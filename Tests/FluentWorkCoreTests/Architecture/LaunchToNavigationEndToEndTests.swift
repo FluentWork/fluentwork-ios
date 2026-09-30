@@ -31,7 +31,16 @@ private func makeIsolatedLaunchContainer() -> Container {
     #expect(AppRoute(entryRoute: "/speaking-room") == .speakingRoom(sessionID: nil))
     #expect(AppRoute(entryRoute: "/review", sessionID: "abc") == .review(sessionID: "abc"))
     #expect(AppRoute(entryRoute: "/daily-read", sessionID: nil) == .dailyRead(sessionID: nil))
-    #expect(AppRoute(entryRoute: "/drill") == nil)
+
+    // ③：闪测与话题卡从「目录里有、导航不认识」变成有目的地。
+    #expect(AppRoute.drill.entryRoute == "/drill")
+    #expect(AppRoute.topicCards.entryRoute == "/topic-cards")
+    #expect(AppRoute(entryRoute: "/drill") == .drill)
+    #expect(AppRoute(entryRoute: "/topic-cards") == .topicCards)
+
+    // 补路由不是「什么都收」：没听过的路径仍然是 `nil`。
+    // 少了这一半，把 `init?` 改成永远返回某条路由也能全绿。
+    #expect(AppRoute(entryRoute: "/shadowing") == nil)
 }
 
 @Test func appRouteBuildsWorkbenchNavigationActions() {
@@ -55,18 +64,54 @@ private func makeIsolatedLaunchContainer() -> Container {
         AppRoute.workbenchNavigationAction(entryRoute: "/daily-read", sessionID: "daily-2")
             == .workbench(.push(.dailyRead(sessionID: "daily-2")))
     )
-    #expect(AppRoute.workbenchNavigationAction(entryRoute: "/drill") == nil)
+
+    // 闪测这一条是**刻意的例外**，写死在这里当判据：它的家在底部 Tab 2（09-26 稿 §03：
+    // 「Tab 2 · 闪测」「底部 Tab → 直接开始」1 次点击）。把它同时做成工作台栈里的一页，
+    // 同一个屏幕就会有两条进入路径、两种行为 —— 所以这里把 Tab 切过去，而不是 push 一页。
+    #expect(AppRoute.drill.defaultWorkbenchNavigationAction == .selectTab(.flashTest))
+    #expect(
+        AppRoute.workbenchNavigationAction(entryRoute: "/drill") == .selectTab(.flashTest)
+    )
+
+    // 话题建议页与每日一读同类：工作台导航栈内的页面。
+    #expect(
+        AppRoute.topicCards.defaultWorkbenchNavigationAction
+            == .workbench(.push(.topicCards))
+    )
+    #expect(
+        AppRoute.workbenchNavigationAction(entryRoute: "/topic-cards")
+            == .workbench(.push(.topicCards))
+    )
+
+    // 只有「没听过的路由」才拿不到动作。
+    #expect(AppRoute.workbenchNavigationAction(entryRoute: "/shadowing") == nil)
 }
 
+/// 目录与路由的**一致性**：目录说「有这个模块」，路由说「点进去去哪」。
+///
+/// 两者不一致时的后果不是报错，是工作台上多出一个点了没反应的入口 ——
+/// `WorkbenchHomeProjection` 拿 `AppRoute(entryRoute:)` 判「能不能点」，判的正是这一条。
+/// 上一版把这条写成 `switch descriptor.feature` 只让 first-wave 四条通过，所以
+/// **③ 加路由时它必然红** —— 那是内置的提醒物，不是障碍。
 @Test func pluginCatalogEntryRoutesAlignWithAppRoute() {
     let catalog = FeaturePluginCatalog.firstWave
+    #expect(catalog.count >= 6, "目录里只剩 \(catalog.count) 条 —— 下面的循环会因为没东西可查而空转")
+
     for descriptor in catalog {
-        switch descriptor.feature {
-        case .speakingRoom, .workspaceReview, .dailyRead, .sessionHistory:
-            #expect(AppRoute(entryRoute: descriptor.entryRoute) != nil)
-        default:
-            #expect(AppRoute(entryRoute: descriptor.entryRoute) == nil)
-        }
+        #expect(
+            AppRoute(entryRoute: descriptor.entryRoute) != nil,
+            """
+            \(descriptor.moduleName)（\(descriptor.entryRoute)）在目录里，导航却不认识它 ——
+            工作台上会多出一个点进去是空屏的入口。
+            """
+        )
+        #expect(
+            AppRoute.workbenchNavigationAction(entryRoute: descriptor.entryRoute) != nil,
+            """
+            \(descriptor.moduleName)（\(descriptor.entryRoute)）能解析成路由，却拿不到导航动作 ——
+            工作台上那个模块按钮按下去不会有任何反应。
+            """
+        )
     }
 }
 

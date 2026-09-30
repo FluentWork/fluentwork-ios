@@ -69,5 +69,10 @@ public enum FeaturePluginCatalog {
             moduleName: "Drill",
             entryRoute: "/drill"
         ),
+        FeaturePluginDescriptor(
+            feature: .topicSuggestions,
+            moduleName: "TopicCards",
+            entryRoute: "/topic-cards"
+        ),
     ]
 }

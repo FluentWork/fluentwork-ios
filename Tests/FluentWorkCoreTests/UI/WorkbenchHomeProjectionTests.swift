@@ -16,17 +16,19 @@ struct WorkbenchHomeProjectionTests {
         FeaturePluginDescriptor(feature: .speakingRoom, moduleName: module, entryRoute: route)
     }
 
-    /// 四个已知模块各自的标题 / 副标题 / 图标 / 种类。
+    /// 已知模块各自的标题 / 副标题 / 图标 / 种类。
     ///
-    /// 四张表放在一起断言，因为它们是同一件事的四张脸 —— 逐条挑一个测会让「某一行的图标写成了
+    /// 六张表放在一起断言，因为它们是同一件事的几张脸 —— 逐条挑一个测会让「某一行的图标写成了
     /// 另一行的」这种复制粘贴错误溜过去。
-    @Test func 四个模块的四张表() {
+    @Test func 已知模块的四张表() {
         var workspace = WorkspaceState()
         workspace.availableModules = [
             descriptor(module: "speaking-room", route: "/speaking-room"),
             descriptor(module: "review", route: "/review"),
             descriptor(module: "daily-read", route: "/daily-read"),
             descriptor(module: "sessions", route: "/sessions"),
+            descriptor(module: "drill", route: "/drill"),
+            descriptor(module: "topic-cards", route: "/topic-cards"),
         ]
 
         let model = WorkbenchHomeViewModel.make(
@@ -36,15 +38,31 @@ struct WorkbenchHomeProjectionTests {
             isOffline: false
         )
 
-        #expect(model.modules.map(\.title) == ["说的房间", "回顾", "每日一读", "练习历史"])
         #expect(
-            model.modules.map(\.systemImage) == ["mic.fill", "text.quote", "book.fill", "clock.arrow.circlepath"]
+            model.modules.map(\.title)
+                == ["说的房间", "回顾", "每日一读", "练习历史", "闪测", "话题建议"]
         )
         #expect(
-            model.modules.map(\.kind) == [.speakingRoom, .review, .dailyRead, .sessionHistory]
+            model.modules.map(\.systemImage)
+                == [
+                    "mic.fill", "text.quote", "book.fill",
+                    "clock.arrow.circlepath", "bolt.fill", "bubble.left.and.bubble.right.fill",
+                ]
         )
-        #expect(model.modules.map(\.id) == ["speaking-room", "review", "daily-read", "sessions"])
-        #expect(model.modules.map(\.entryRoute) == ["/speaking-room", "/review", "/daily-read", "/sessions"])
+        #expect(
+            model.modules.map(\.kind)
+                == [
+                    .speakingRoom, .review, .dailyRead, .sessionHistory, .drill, .topicCards,
+                ]
+        )
+        #expect(
+            model.modules.map(\.id)
+                == ["speaking-room", "review", "daily-read", "sessions", "drill", "topic-cards"]
+        )
+        #expect(
+            model.modules.map(\.entryRoute)
+                == ["/speaking-room", "/review", "/daily-read", "/sessions", "/drill", "/topic-cards"]
+        )
         #expect(model.modules.allSatisfy { !$0.subtitle.isEmpty }, "有模块没有副标题")
     }
 
@@ -72,15 +90,19 @@ struct WorkbenchHomeProjectionTests {
 
     /// **`isAvailable` 问的是「导航认不认这条路由」，不是「后端有没有这个能力」。**
     ///
-    /// 闪测（`/drill`）与话题卡（`/topic-cards`）今天在 `AppRoute` 里**还没有目的地**，所以它们
-    /// 在工作台上就该显示成不可用 —— 一个点进去是空屏的入口比一个明确不可用的入口更坏。
-    /// （这条判据会在步骤 ③「`AppRoute` 补闪测/话题卡目的地」时**变红**，那正是它该起的作用。）
+    /// ③ 给 `/drill` 与 `/topic-cards` 补上了目的地，所以它们从这里起必须显示成**可用** ——
+    /// 「目录里有模块」与「导航认识这条路径」是同一件事的两半，任何一半单独改动都会在这里红。
+    /// （③ 之前这条判据断言的正好是相反的值，那正是它该起的作用。）
+    ///
+    /// 另一半是 `/shadowing`：导航不认识的路径仍然要显示成不可用 ——
+    /// 一个点进去是空屏的入口，比一个明确不可用的入口更坏。
     @Test func 可不可用取决于导航认不认这条路由() {
         var workspace = WorkspaceState()
         workspace.availableModules = [
             descriptor(module: "speaking-room", route: "/speaking-room"),
             descriptor(module: "drill", route: "/drill"),
             descriptor(module: "topic-cards", route: "/topic-cards"),
+            descriptor(module: "shadowing", route: "/shadowing"),
         ]
 
         let model = WorkbenchHomeViewModel.make(
@@ -91,8 +113,9 @@ struct WorkbenchHomeProjectionTests {
         )
 
         #expect(model.modules[0].isAvailable, "已知路由被标成了不可用")
-        #expect(model.modules[1].isAvailable == false, "闪测还没有目的地，却显示成可用")
-        #expect(model.modules[2].isAvailable == false, "话题卡还没有目的地，却显示成可用")
+        #expect(model.modules[1].isAvailable, "闪测已经有目的地了（③），却还显示成不可用")
+        #expect(model.modules[2].isAvailable, "话题卡已经有目的地了（③），却还显示成不可用")
+        #expect(model.modules[3].isAvailable == false, "导航不认识 /shadowing，却显示成可用")
     }
 
     /// 四个启动相位映成四种屏幕状态，其中 `.ready` **要分「有模块」与「一个都没有」**。
