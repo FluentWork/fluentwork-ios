@@ -65,6 +65,8 @@ extension ReviewViewModel {
             dualColumn: dualColumn,
             refineCards: refineCards,
             discardedRefineCards: discarded,
+            // 直通 state 的规则，不在这里重写一遍 —— 理由见 `ReviewViewModel.showsSkeleton`。
+            showsSkeleton: state.showsSkeleton,
             refineErrorMessage: state.acceptErrorMessage,
             errorMessage: state.lastErrorMessage
         )

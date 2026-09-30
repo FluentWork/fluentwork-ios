@@ -113,6 +113,12 @@ public struct ReviewViewModel: Equatable, Sendable {
     public var refineCards: [ReviewRefineCardRow]
     /// 被丢掉的那几张，供「撤回」用。`refineCards` 里没有它们。
     public var discardedRefineCards: [ReviewRefineCardRow]
+    /// 该给学员盖骨架屏。
+    ///
+    /// **规则来自 `ReviewState.showsSkeleton`，这里只做直通** —— 不在 UI 侧重写一遍。
+    /// 每日一读那边就是两处写法（Core 按状态相位、UI 按视图相位），靠一条判据撑着相等；
+    /// 那是一条已经走在分叉路上的路，不必再走一次。
+    public var showsSkeleton: Bool
     public var refineErrorMessage: String?
     public var errorMessage: String?
 
@@ -123,6 +129,7 @@ public struct ReviewViewModel: Equatable, Sendable {
         dualColumn: [ReviewComparisonRow] = [],
         refineCards: [ReviewRefineCardRow] = [],
         discardedRefineCards: [ReviewRefineCardRow] = [],
+        showsSkeleton: Bool = false,
         refineErrorMessage: String? = nil,
         errorMessage: String? = nil
     ) {
@@ -132,6 +139,7 @@ public struct ReviewViewModel: Equatable, Sendable {
         self.dualColumn = dualColumn
         self.refineCards = refineCards
         self.discardedRefineCards = discardedRefineCards
+        self.showsSkeleton = showsSkeleton
         self.refineErrorMessage = refineErrorMessage
         self.errorMessage = errorMessage
     }
@@ -179,14 +187,20 @@ public struct ReviewRootView: View {
     private var content: some View {
         switch model.phase {
         case .idle, .loading, .pending:
-            VStack(alignment: .leading, spacing: 12) {
-                Text("回顾生成中")
-                    .font(.headline)
-                Text("正在等待转录、评价与炼化内容。")
-                    .foregroundStyle(.secondary)
+            if model.showsSkeleton {
+                ReviewSkeletonView()
+            } else {
+                // 相位说还在加载、产出却已经到了 —— 不盖骨架（理由见
+                // `ReviewViewModel.showsSkeleton`），把话说清就走。
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("回顾生成中")
+                        .font(.headline)
+                    Text("正在等待转录、评价与炼化内容。")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding()
 
         case .failed:
             VStack(alignment: .leading, spacing: 12) {
@@ -288,6 +302,36 @@ public struct ReviewRootView: View {
         }
     }
 
+}
+
+/// 回顾正在生成时的那一屏：**骨架块 + 一句话**，不是转圈。
+///
+/// 稿子 屏 04 的原话是「评价区用骨架屏占位，标注『正在分析你的表达…』」；§2.4 又写着
+/// 四个页面的加载态「统一用闪光骨架块，不用转圈 spinner」。
+///
+/// 骨架块的形状照着这一屏将要出现的东西摆：先是几行短文本（总结条），下面两块大的
+/// （评价卡与双栏对照）。**形状即说明** —— 这是骨架屏相对 spinner 的全部价值。
+private struct ReviewSkeletonView: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.s6) {
+            Text("正在分析你的表达…")
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Color.textSecondary)
+
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.s3) {
+                SkeletonBlock(height: 20)
+                SkeletonBlock(height: 20, widthRatio: 0.85)
+                SkeletonBlock(height: 20, widthRatio: 0.55)
+            }
+
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.s3) {
+                SkeletonBlock(height: 72)
+                SkeletonBlock(height: 72, widthRatio: 0.7)
+            }
+        }
+        .padding(DesignTokens.Spacing.pageMargin)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
 }
 
 /// 一张炼化卡：读它、改它、丢掉它、入库。

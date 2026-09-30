@@ -240,6 +240,50 @@ import Testing
     #expect(Set(labels).count == labels.count, "有两个字段用了同一个标签")
 }
 
+/// 骨架屏那条规则**直通 state**，不在 UI 侧重写一遍。
+///
+/// `ReviewState.showsSkeleton` 此前是一份**没人读的死规则**（`ReviewFeature.swift:123`）：
+/// Core 里写着一条屏幕行为，那个屏幕从没实现它，而没有任何东西在提醒。这条判据把「有人读它」
+/// 钉住 —— 在**整个相位域 × 有没有产出**上两侧都要相等，于是将来谁在 UI 侧另写一份
+/// （每日一读那边就是这个形状），只要两份不相等就会红。
+@Test func theSkeletonRuleIsPassedThroughNotRewritten() throws {
+    let payload = try makePayload()
+
+    for phase in [ReviewScreenPhase.idle, .loading, .pending, .ready, .failed] {
+        for payloadOrNil in [nil, payload] as [ReviewReadyPayload?] {
+            var state = ReviewState()
+            state.phase = phase
+            state.payload = payloadOrNil
+
+            let model = ReviewViewModel.make(from: state)
+            let hasPayload = payloadOrNil == nil ? "无" : "有"
+            #expect(
+                model.showsSkeleton == state.showsSkeleton,
+                "相位 \(phase)（产出：\(hasPayload)）上两侧不一致：视图 \(model.showsSkeleton) / 状态 \(state.showsSkeleton)"
+            )
+        }
+    }
+}
+
+/// **有产出就不该盖骨架**，哪怕相位还说在加载。
+///
+/// 上一条只保证「两份相等」——如果将来 UI 侧把规则改成「只要不在 `.ready` 就盖骨架」，
+/// 它与 state 就不相等了，上一条会红；但如果**两边一起改错**，只有这一条还站着：
+/// 已经拿到内容却盖一层骨架，学员会以为内容没了。
+@Test func contentMeansNoSkeletonEvenWhileLoading() throws {
+    var state = ReviewState()
+    state.phase = .loading
+    state.payload = try makePayload()
+
+    #expect(ReviewViewModel.make(from: state).showsSkeleton == false)
+    #expect(ReviewViewModel.make(from: state).overview != nil, "有产出却读不出 overview —— 上面那条就白测了")
+
+    // 反向：什么都没有的时候确实要盖。
+    var empty = ReviewState()
+    empty.phase = .loading
+    #expect(ReviewViewModel.make(from: empty).showsSkeleton)
+}
+
 // MARK: - 装置
 
 private func makePayload() throws -> ReviewReadyPayload {

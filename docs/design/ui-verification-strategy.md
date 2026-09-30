@@ -237,7 +237,7 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
 | ① 投影搬迁 | **✅ 9/9 完成**。`Review`（`4ce2e57`）、`speakingRoom`（`ba281dd`）、`dailyRead`（`79816e5`）、`sessionHistory` + `sessionDetail`（`66b7a78`）、`corpus` + `badgeFeedback`（`be1d22d`）、`settings` + `workbenchHome`（`2ffa112`）。`HostRootView` 里已无 `make*ViewModel` |
 | ② 两条守卫 | **✅ 完成**（`f302454`）。守卫 A `ScreenEntryGuardTests`（每个 `AppAction` case 要么在屏幕层被派发、要么在表里写明理由；表分三组：中间件派 64 / 屏幕未落地 18 / **死 action 14**）、守卫 B `ScenarioDriverTableGuardTests`（驱动与视图同一张表）。10 次变异全部咬住 |
 | ③ `AppRoute` | **✅ 完成**。`AppRoute` 补 `.drill` / `.topicCards`（`entryRoute` / `init?(entryRoute:)` / `defaultWorkbenchNavigationAction`）；`FeaturePluginCatalog` 补 `/topic-cards`；工作台四张表与 `Module.Kind` 跟着补；`HostRootView` 补两个目的地（占位，与 Tab 2 根**共用同一个视图**）。6 条变异全部咬住 |
-| ④ 逐屏 UI | **进行中**。① 话题建议屏（H1 列表 / H2 来源标注 / H3 打卡草稿 + 86_ M11 忽略）**已落地**：投影 `FluentWorkUI/Topic/TopicProjection.swift` + 视图 `TopicCardsRootView.swift` + Host 接线，10 条判据。② **D2 丢弃 / 编辑入口已落地**（`ReviewProjection` + `ReviewRefineCardView`），守卫 A 的第 ② 组因此从 18 条 → 11 条 → **7 条**（只剩闪测那 7 条）。闪测屏**卡在采集链路**、工作台 Tab 1 **卡在形态拍板**（见 §7），两者保持现状 |
+| ④ 逐屏 UI | **进行中**。① 话题建议屏（H1 列表 / H2 来源标注 / H3 打卡草稿 + 86_ M11 忽略）**已落地**：投影 `FluentWorkUI/Topic/TopicProjection.swift` + 视图 `TopicCardsRootView.swift` + Host 接线，10 条判据。② **D2 丢弃 / 编辑入口**（`81b4f0a`）。③ **回顾页骨架屏**（投影直通 Core 那条死规则 + 共用 `SkeletonBlock`）。守卫 A 的第 ② 组因此从 18 条 → 11 条 → **7 条**（只剩闪测那 7 条）。**④ 剩下两条都卡在决定上**：闪测卡在采集链路、工作台 Tab 1 卡在形态拍板（见 §7） |
 
 ### ④ 剩下的两张，与它们各自卡在哪
 
@@ -245,8 +245,8 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
 |---|---|
 | **闪测（E1/E2/E4）** | ⏸ 一条**不存在的采集链路**（见 §7 那条 ⚠️）—— 要定 WSS ASR / Apple Speech / Volcengine |
 | **工作台 Tab 1（屏 01）** | ⏸ **形态本身没拍板**（PRD §六 六段式 vs P0-13 会话列表式）+ 两个字段缺 + 关键路径页缺（见 §7 那条 ⚠️） |
-| ~~D2 丢弃 / 编辑入口~~ | **✅ 已完成**。投影补 `sceneTag` / `functionTag` / `canEdit` / `canDiscard`，视图补编辑面板（按 `RefineCardEditField.allCases` 铺开）+ 「已丢弃」段的撤回入口；3 条新判据，8 条变异全部咬住 |
-| **回顾页骨架屏** | ✅ 可以立刻做（`ReviewState.showsSkeleton` 是一份**没人读的死规则**，`ReviewFeature.swift:123`） |
+| ~~D2 丢弃 / 编辑入口~~ | **✅ 已完成**（`81b4f0a`）。投影补 `sceneTag` / `functionTag` / `canEdit` / `canDiscard`，视图补编辑面板（按 `RefineCardEditField.allCases` 铺开）+ 「已丢弃」段的撤回入口；3 条新判据，8 条变异全部咬住 |
+| ~~回顾页骨架屏~~ | **✅ 已完成**。投影**直通** `state.showsSkeleton`（那条死规则第一次有人读），新增共用组件 `FluentWorkUI/Common/SkeletonBlock.swift`；2 条新判据，变异 2/2 咬住 |
 
 ③ 之后顺手清掉了 §7 里「F2 状态灯」那条前置条件（`8bd2808`，投影 + 视图 + 5 条判据，变异 6/6），
 以及模块轴记的「`AppTab` 注释与代码不一致」（`c3b079b`）。**④ 逐屏的入口条件是齐的**：
@@ -311,7 +311,12 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
   钉住两侧相等；
 - **`ReviewState.showsSkeleton` 是一份没人读的死规则**（`ReviewFeature.swift:123`），而
   **回顾页根本没有骨架屏** —— Core 里写着一个屏幕行为，那个屏幕没实现它，没有任何东西在提醒。
-  归 **UI 缺口**（④ 逐屏时补，走查清单里加一条「loading 态要有骨架屏」）。
+  **已在 ④ 补上**：投影**直通** `state.showsSkeleton`（**没有**像每日一读那样在 UI 侧再写一份），
+  回顾页用新的共用组件 `FluentWorkUI/Common/SkeletonBlock.swift` 画骨架块 + 稿子原话
+  「正在分析你的表达…」。走查清单里那条「loading 态要有骨架屏」保留。
+
+  > 顺带：稿子 §2.4 说骨架块是**四个页面**的统一加载态（语料库 / 历史 / 每日一读 / 回顾），
+  > 所以 `SkeletonBlock` 住在 `Common/`。另外三处仍是转圈 —— 属 ④ 的逐屏收尾。
 
 **每一步都按同一个形状做**：先落桩（桩＝搬迁前 Host 里那一行）→ 判据真红 → 实现 → 全绿 →
 **逐条变异验证**。搬完 Review 那一份暴露出来的两条经验：
