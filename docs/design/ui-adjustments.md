@@ -70,5 +70,13 @@
 DTO（键与契约逐字对齐）+ `DrillClientProtocol` + `DrillAPIClient` + **纯状态机 `DrillRoundMachine`**。
 25 条测试；变异 3 条（申诉权限 / `response_ms` 起点 / 申诉回退）**全部按预期咬住**。
 
-**未做**：把机器接进 Redux（`AppState` / feature / middleware，含 token 解析）—— 那是下一段；
-本文的 UI 条目是最后一段。
+**已做**（`7adda8e`）：机器已接进 Redux —— `DrillFeature`（`DrillState` / `DrillAction` /
+`drillReducer`）+ `DrillMiddleware` + 数据面 `DrillClient` / `DefaultDrillClient`（不带 token）。
+接法与 `speechSessionMiddleware` 同形：中间件调纯机器 → `.applyRound` 写 store → 逐条解释效应；
+**5 秒限时不在视图里**（机器在 `.answering` 武装截止，到点带截止时长本身提交）。12 条判据、
+7 次变异验证全部咬住。
+
+**还没做**：本文的 UI 条目 —— 那是最后一段。它在动工之前有一份前置约定：
+**[`ui-verification-strategy.md`](ui-verification-strategy.md)**（UI 里体现的功能准备怎么测，
+以及为什么第一件事是**把 `state → ViewModel` 的投影从 `HostRootView` 搬进
+`Shared/FluentWorkUI`** —— 它现在在 app target 里，而 app target 没有测试 target）。
