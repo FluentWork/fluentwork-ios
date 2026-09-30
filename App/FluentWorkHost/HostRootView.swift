@@ -20,7 +20,7 @@ struct HostRootView: View {
             },
             corpusRoot: {
                 CorpusRootView(
-                    model: makeCorpusViewModel(from: store.state.corpus),
+                    model: CorpusViewModel.make(from: store.state.corpus),
                     onAppear: {
                         store.dispatch(.corpus(.appear))
                     },
@@ -152,7 +152,7 @@ struct HostRootView: View {
 
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     BadgeFeedbackOverlay(
-                        model: makeBadgeFeedbackViewModel(
+                        model: BadgeFeedbackViewModel.make(
                             from: store.state.badgeFeedback,
                             now: context.date
                         )
@@ -433,73 +433,6 @@ struct HostRootView: View {
             appVersion: version ?? "—",
             hasOverrides: !state.localOverrides.isEmpty
         )
-    }
-
-    private func makeCorpusViewModel(from state: CorpusState) -> CorpusViewModel {
-        let phase: CorpusViewPhase
-        switch state.phase {
-        case .idle:
-            phase = .idle
-        case .loading:
-            phase = .loading
-        case .ready:
-            phase = .ready
-        case .failed:
-            phase = .failed
-        case .migrating:
-            phase = .migrating
-        }
-
-        return CorpusViewModel(
-            phase: phase,
-            rows: state.visibleItems.map {
-                CorpusRowViewData(
-                    id: $0.id,
-                    intentZH: $0.intentZH,
-                    expressionEN: $0.expressionEN,
-                    anchorUserSaid: $0.anchorUserSaid,
-                    sceneTag: $0.sceneTag,
-                    functionTag: $0.functionTag,
-                    isFavorite: $0.isFavorite,
-                    hasPendingFavorite: state.isPending(blockID: $0.id, operation: .favorite),
-                    hasPendingDelete: state.isPending(blockID: $0.id, operation: .delete),
-                    updatedAt: $0.updatedAt
-                )
-            },
-            searchQuery: state.searchQuery,
-            favoriteOnly: state.favoriteOnly,
-            isRefreshing: state.isRefreshing,
-            isReplayingOutbox: state.isReplayingOutbox,
-            canLoadMore: state.nextCursor != nil,
-            errorMessage: state.lastErrorMessage
-        )
-    }
-
-    private func makeBadgeFeedbackViewModel(
-        from state: BadgeFeedbackState,
-        now: Date
-    ) -> BadgeFeedbackViewModel {
-        let visible = state.visibleEntries(at: now)
-        let rows = visible.map { entry in
-            BadgeFeedbackRow(
-                id: entry.id.uuidString,
-                badge: entry.badge,
-                tier: mapTier(entry.tier)
-            )
-        }
-        return BadgeFeedbackViewModel(
-            badges: rows,
-            maxVisible: state.maxVisibleEntries
-        )
-    }
-
-    private func mapTier(_ tier: BadgeFeedEntry.Tier) -> BadgeFeedbackRow.BadgeTier {
-        switch tier {
-        case .sameTurnConfirm: return .sameTurnConfirm
-        case .nextTurnConfirm: return .nextTurnConfirm
-        case .badgeOnly: return .badgeOnly
-        case .unknown: return .unknown
-        }
     }
 
     private var workbenchRoot: some View {
