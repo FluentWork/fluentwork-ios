@@ -240,7 +240,10 @@ struct HostRootView: View {
             }
         case let .dailyRead(sessionID):
             DailyReadRootView(
-                model: makeDailyReadViewModel(from: store.state.dailyRead, isOffline: !store.state.network.isConnected),
+                model: DailyReadViewModel.make(
+                    from: store.state.dailyRead,
+                    isOffline: !store.state.network.isConnected
+                ),
                 onAppear: {
                     store.dispatch(.dailyRead(.loadTriggered))
                 },
@@ -588,86 +591,6 @@ struct HostRootView: View {
         case .nextTurnConfirm: return .nextTurnConfirm
         case .badgeOnly: return .badgeOnly
         case .unknown: return .unknown
-        }
-    }
-
-    private func makeDailyReadViewModel(
-        from state: DailyReadState,
-        isOffline: Bool
-    ) -> DailyReadViewModel {
-        let phase: DailyReadViewPhase
-        switch state.phase {
-        case .idle:
-            phase = .idle
-        case .generating:
-            phase = .loading
-        case .ready:
-            phase = .ready
-        case .fallbackPreset:
-            phase = .fallbackPreset
-        case .failed:
-            phase = .failed
-        }
-
-        let article: DailyReadArticle? = state.dailyRead.map {
-            DailyReadArticle(
-                id: $0.id,
-                title: $0.title,
-                body: $0.body,
-                hasAudio: ($0.audioURL?.isEmpty == false),
-                sourceBlockCount: $0.usedBlockIDs.count,
-                estimatedReadingSeconds: estimatedReadingSeconds(for: $0.body)
-            )
-        }
-
-        let audioPhase: DailyReadAudioViewPhase
-        switch state.audioPhase {
-        case .idle: audioPhase = .idle
-        case .loading: audioPhase = .loading
-        case .playing: audioPhase = .playing
-        case .paused: audioPhase = .paused
-        }
-
-        let followReadPhase: FollowReadViewPhase
-        switch state.followReadPhase {
-        case .idle: followReadPhase = .idle
-        case .recording: followReadPhase = .recording
-        case .submitting: followReadPhase = .submitting
-        case .recorded: followReadPhase = .recorded
-        case let .failed(message): followReadPhase = .failed(message)
-        }
-
-        return DailyReadViewModel(
-            phase: phase,
-            article: article,
-            fallbackBody: state.fallbackBody,
-            genDate: state.genDate,
-            audioPhase: audioPhase,
-            audioPlaybackTime: state.audioPlaybackTime,
-            audioDuration: state.audioDuration,
-            followReadPhase: followReadPhase,
-            hasFollowRead: state.hasFollowRead,
-            isOffline: isOffline,
-            errorMessage: state.lastErrorMessage
-        )
-    }
-
-    private func estimatedReadingSeconds(for body: String) -> Int {
-        // Approximate: average English reading speed ~200 words per minute.
-        let words = body
-            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
-            .count
-        let seconds = Int((Double(words) / 200.0) * 60.0)
-        return max(seconds, 30)
-    }
-
-    private func followReadPhaseLabel(_ phase: FollowReadPhase) -> String {
-        switch phase {
-        case .idle: return "idle"
-        case .recording: return "recording"
-        case .submitting: return "submitting"
-        case .recorded: return "recorded"
-        case let .failed(message): return "failed(\(message))"
         }
     }
 
