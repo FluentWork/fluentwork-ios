@@ -2,7 +2,11 @@ import Foundation
 import TGNavigationStack
 import TGReduxKit
 
-/// Bottom tabs: 工作台｜闪测｜语料库
+/// Bottom tabs: 工作台｜闪测｜语料库｜设置。
+///
+/// **四个，而 09-26 稿 §03 写的是「底部导航固定 3 项」。** 这处分歧是**已知且尚未拍板**的
+/// （meta `问题总清单-PRD模块轴` 的「底部 Tab 数」一行记着它）。这一行只把代码里的事实写对 ——
+/// 它此前写着「工作台｜闪测｜语料库」，那是**撒谎**，而撒谎的注释比没有注释更难查。
 public enum AppTab: String, CaseIterable, Codable, Hashable, Sendable {
     case workbench
     case flashTest
