@@ -180,7 +180,7 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
 
 | 步 | 状态 |
 |---|---|
-| ① 投影搬迁 | **5/9**。已搬：`Review`（`4ce2e57`）、`speakingRoom`（`ba281dd`）、`dailyRead`（`79816e5`）、`sessionHistory` + `sessionDetail`（`66b7a78`）。剩 4 个：`settings` / `corpus` / `badgeFeedback` / `workbenchHome` |
+| ① 投影搬迁 | **✅ 9/9 完成**。`Review`（`4ce2e57`）、`speakingRoom`（`ba281dd`）、`dailyRead`（`79816e5`）、`sessionHistory` + `sessionDetail`（`66b7a78`）、`corpus` + `badgeFeedback`（`be1d22d`）、`settings` + `workbenchHome`（`2ffa112`）。`HostRootView` 里已无 `make*ViewModel` |
 | ② 两条守卫 | 未开始 |
 | ③ `AppRoute` | 未开始（闪测 / 话题卡的目的地仍是 `nil`） |
 | ④ 逐屏 UI | 未开始 |
@@ -196,6 +196,16 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
 | 提示身份 `phraseBlockID ?? "badge"` 会撞 | 一轮里两条只有 badge 的命中拿到**同一个 `ForEach` 身份**（SwiftUI 未定义行为） | `ba281dd` |
 | 详情投影只在「有 detail」那条出口传 `errorMessage` | **失败的详情页说不出失败原因**，屏幕退到「检查网络后重试。」 | `66b7a78` |
 | 两份投影各自在内部读 `Date()` | 「今天/昨天/9月10日」三档文案**不可重现**，所以一条判据都没有 | `66b7a78` |
+
+另外两处签名在搬迁中被改掉，因为**原来的签名是假的**：
+
+- 设置页的 `appVersion` 原来在投影里读 `Bundle.main` —— 在测试进程里那是**测试 runner 的
+  bundle**，也就是「版本号显示得对不对」恰好是最查不了的一件事；现在从签名进来。
+- 工作台的投影原来直接读 `store.state`（`bootstrapStatus` / `lastErrorMessage` / `network`），
+  签名却写着只依赖 `WorkspaceState` —— 实际依赖四个。三个输入已提到签名上。
+
+还有一处**模块边界**是搬迁带出来的：`FluentWorkUI` 第一次需要命名
+`FluentWorkFeatureFlags` 的类型（设置页要画开关列表），依赖已补进 `Package.swift`（无环）。
 
 还查到两处**规则写了两遍**（尚未构成行为分歧，但已在分叉的路上）：
 
@@ -223,6 +233,11 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
 
 反过来也踩过一次：判据红了要先判断**是实现错还是期望错** —— `66b7a78` 里有两条红是期望写错了
 （把「现在」的日子当成了记录的日子），实现是对的。
+
+到 9/9 收口时又加了第四条，这次是**删除范围**而不是判据：搬 `settings` 时我的删除区间把夹在
+两个函数之间的 **`workbenchRoot` 计算属性**一起吞了，而 `swift build` **全绿** —— 因为腿 1 只编
+SwiftPM 的 target，**`App/` 根本不在里面**；是腿 2 报的 `cannot find 'workbenchRoot' in scope`。
+**腿 1 通过不等于能编译 app。** 这条同时也是本文件开头的论点（投影层只有腿 2 看得见）的又一次实证。
 
 ---
 
