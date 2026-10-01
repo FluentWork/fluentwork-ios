@@ -35,6 +35,17 @@ public struct TurnTimelineItem: Equatable, Sendable, Identifiable {
     public var text: String
     public var status: TurnTimelineItemStatus
     public var hits: [BadgeHitRef]
+    /// **卡壳点**（09-26 稿 屏 03）：这一轮学员卡住了，梯子/提示是在这里递的。
+    ///
+    /// 稿子的三条硬约束之一是「不记入失败」：那句截断的话**留在时间线上**并标成卡壳点，
+    /// 照常进入 D1 的炼化候选 —— 「卡壳点正是最该练的东西」。所以它是**一条标记**，
+    /// 不是一次删除、也不是一个红叉。
+    public var isStallPoint: Bool
+    /// **被打断**（稿子 屏 02 的「三条易错点」之二）：AI 这句话没说完就被学员开口打断了。
+    ///
+    /// 它要解决的是**误读**：没有这个标记，一条断在半句的气泡看起来像「它卡住了」，
+    /// 而不是「它被你打断了」。
+    public var wasInterrupted: Bool
 
     public init(
         id: UUID = UUID(),
@@ -42,7 +53,9 @@ public struct TurnTimelineItem: Equatable, Sendable, Identifiable {
         speaker: TurnTimelineSpeaker,
         text: String,
         status: TurnTimelineItemStatus,
-        hits: [BadgeHitRef] = []
+        hits: [BadgeHitRef] = [],
+        isStallPoint: Bool = false,
+        wasInterrupted: Bool = false
     ) {
         self.id = id
         self.turnID = turnID
@@ -50,6 +63,8 @@ public struct TurnTimelineItem: Equatable, Sendable, Identifiable {
         self.text = text
         self.status = status
         self.hits = hits
+        self.isStallPoint = isStallPoint
+        self.wasInterrupted = wasInterrupted
     }
 
     /// One turn of a *stored* transcript, rendered into the same timeline.
@@ -268,7 +283,21 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
         // session ended was to lose the session. Clearing belongs to the room
         // entry (`.enterRoom`), which is where the user actually chooses
         // between continuing something and starting fresh (`79_` §设计 3).
+        //
+        // **被打断要说清**（稿子 屏 02 的「三条易错点」之二）也在这里判：那一对相位
+        // `aiSpeaking → recording` 只有一种成因 —— 学员在 AI 还在说的时候开了口（barge-in）。
+        // 没有这条标记，一句断在半截的气泡会被读成「它卡住了」，而真相是「它被你打断了」。
+        //
+        // 写在 `.applySession` 里是因为**只有这里同时看得见前后两个相位**：`state.session`
+        // 还是旧的，`session` 是新的。等 `userTurnStarted` 到达时，相位早就是 `.recording`，
+        // 「刚才是不是在说话」已经无从判断。
+        let wasAISpeaking = state.session.phase == .aiSpeaking
         state.session = session
+        if wasAISpeaking, session.phase == .recording {
+            markLastTimelineItem(speaker: .ai, in: &state) { item in
+                item.wasInterrupted = true
+            }
+        }
 
     case let .badgeHit(badge, phraseBlockID, tier, turnID):
         state.lastBadge = badge
@@ -382,8 +411,29 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
 
     case .rescueHintBecameDue:
         state.isRescueHintDue = true
+        // **卡壳点**（稿子 屏 03）：提示是在**这一轮**递的，而这一轮就是学员卡住的那一轮。
+        // 标它而不是删它 —— 稿子的硬约束写着「不记入失败：用户那句截断的话保留在时间线上
+        // 并标记为『卡壳点』，照常进入 D1 炼化候选，卡壳点正是最该练的东西」。
+        markLastTimelineItem(speaker: .user, in: &state) { item in
+            item.isStallPoint = true
+        }
 
     case .rescueHintTapped:
         state.isRescueHintDue = false
     }
+}
+
+/// 给时间线上**最后一条该说话人的**项打一个标记。
+///
+/// 「最后一条」而不是「最后一条」：`rescueHintBecameDue` 到达时，时间线尾部可能已经有一条
+/// AI 的占位（提示本身）—— 学员卡住的那一句在它前面。所以按**说话人**往回找第一条，
+/// 而不是直接取 `.last`。找不到就什么都不做（这是**正常**路径：静默可能发生在一条消息都还没有
+/// 的时候，那时没有「那轮」可标）。
+private func markLastTimelineItem(
+    speaker: TurnTimelineSpeaker,
+    in state: inout SpeakingRoomState,
+    _ mark: (inout TurnTimelineItem) -> Void
+) {
+    guard let index = state.timeline.lastIndex(where: { $0.speaker == speaker }) else { return }
+    mark(&state.timeline[index])
 }

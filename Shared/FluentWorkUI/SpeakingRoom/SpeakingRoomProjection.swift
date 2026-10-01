@@ -7,9 +7,13 @@ extension SpeakingRoomViewModel {
     /// state. It is a feature-flag decision — `AppState.usesVoiceVadAuto` derives it from
     /// `featureFlags` — and the screen needs the answer, not the flag's name. Taking it as a
     /// parameter is what keeps this projection a function of things it can be handed in a test.
+    ///
+    /// `creation` 同理：场景名与「标准/迷你」是**创建练习那一屏**定下来的
+    /// （`AppState.createPractice.pendingCreation`），不是房间自己的状态。房间只是消费者。
     public static func make(
         from state: SpeakingRoomState,
-        usesAutoVAD: Bool
+        usesAutoVAD: Bool,
+        creation: PracticeCreation? = nil
     ) -> SpeakingRoomViewModel {
         SpeakingRoomViewModel(
             phase: state.phase,
@@ -39,11 +43,65 @@ extension SpeakingRoomViewModel {
                             badge: hit.badge,
                             phraseBlockID: hit.phraseBlockID
                         )
-                    }
+                    },
+                    isStallPoint: item.isStallPoint,
+                    wasInterrupted: item.wasInterrupted
                 )
             },
             usesAutoVAD: usesAutoVAD,
-            isRescueHintAvailable: state.isRescueHintAvailable
+            isRescueHintAvailable: state.isRescueHintAvailable,
+            sceneLabel: sceneLabel(creation: creation),
+            roundText: roundText(completedTurns: state.session.userTurnCount),
+            lengthText: creation?.length.roomLabel,
+            badgeHitText: state.badgeHits > 0 ? "用上 \(state.badgeHits) 个" : nil,
+            liveTranscriptFloat: liveTranscriptFloat(from: state),
+            rescueHeadline: state.isRescueHintAvailable ? "已经 3 秒没有听到你" : nil,
+            rescueReassurance: "慢一点没关系，这不算失败",
+            rescueButtonTitle: "给我点儿提示"
         )
+    }
+
+    /// 场景名。**认得出的用词表里的中文标签，认不出的就用原值**。
+    ///
+    /// 两条都不是「兜底成某个已知场景」：那会让屏幕上出现一个确定但错的场景名
+    /// （与状态灯同一条纪律）。用原值至少是服务端真说的话。
+    private static func sceneLabel(creation: PracticeCreation?) -> String? {
+        guard let scene = creation?.sceneType, !scene.isEmpty else { return nil }
+        return CorpusSceneFilter(serverTag: scene)?.label ?? scene
+    }
+
+    /// 「第 N 轮」＝**正在进行的这一轮**。
+    ///
+    /// `userTurnCount` 数的是**已经说完**的轮数，所以加一。两种读法都说得通
+    /// （「你在第几轮」/「你说完了几轮」），这里取前者 —— 它与稿子 屏 02「第 3 轮」
+    /// 底下正好三条气泡的画法一致。**这一条要人在真机上确认**，见走查清单。
+    private static func roundText(completedTurns: Int) -> String? {
+        "第 \(completedTurns + 1) 轮"
+    }
+
+    /// **禁止双重展示**（稿子 屏 02 的「三条易错点」之首）。
+    ///
+    /// 稿子的原话：「录音中文本只在浮层；话音落下后归位到气泡，两者不同时显示同一句话」。
+    ///
+    /// 这一条不靠视图自律：`liveTranscript` 在录音结束后**仍然**留着那句话
+    /// （`serverASRReceived` 会把它写成权威转写，而同一句话也已经进了气泡），
+    /// 所以只要浮层无条件读它，屏幕上就会出现两份同样的字。判据在这里：
+    /// **不在录音态，浮层就没有内容**。
+    private static func liveTranscriptFloat(from state: SpeakingRoomState) -> String? {
+        guard state.phase == .recording else { return nil }
+        let text = state.liveTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+}
+
+extension PracticeSessionLength {
+    /// 顶部栏里的会话时长名（稿子 屏 02：「第 3 轮 · 标准会话」）。
+    public var roomLabel: String {
+        switch self {
+        case .standard:
+            return "标准会话"
+        case .mini:
+            return "迷你会话"
+        }
     }
 }

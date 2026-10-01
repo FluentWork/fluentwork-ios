@@ -20,24 +20,42 @@ public struct SpeakingRoomTimelineHit: Equatable, Sendable, Identifiable {
 }
 
 public struct SpeakingRoomTimelineRow: Equatable, Sendable, Identifiable {
+    /// 卡壳点的标记文案（稿子 屏 03）。
+    ///
+    /// 放在类型上，好让「两个标记说了同一句话」这件事**能被判据钉住** ——
+    /// 屏幕上一个灰签写着「卡壳点」、另一个也写着「卡壳点」，是那种在设计稿上看不出来、
+    /// 在真机上要用眼睛撞见的错。
+    public static let stallPointMarker = "卡壳点"
+    /// 被打断的标记文案（稿子 屏 02 的「三条易错点」之二）。
+    public static let interruptedMarker = "被打断"
+
     public let id: String
     public let isUser: Bool
     public let text: String
     public let isListening: Bool
     public let hits: [SpeakingRoomTimelineHit]
+    /// 这一轮学员卡住了（屏 03）。**它是一条标记，不是一次删除** ——
+    /// 那句截断的话照常留在时间线上、照常进炼化候选。
+    public let isStallPoint: Bool
+    /// AI 这句话没说完就被学员打断（屏 02）。
+    public let wasInterrupted: Bool
 
     public init(
         id: String,
         isUser: Bool,
         text: String,
         isListening: Bool,
-        hits: [SpeakingRoomTimelineHit]
+        hits: [SpeakingRoomTimelineHit],
+        isStallPoint: Bool = false,
+        wasInterrupted: Bool = false
     ) {
         self.id = id
         self.isUser = isUser
         self.text = text
         self.isListening = isListening
         self.hits = hits
+        self.isStallPoint = isStallPoint
+        self.wasInterrupted = wasInterrupted
     }
 }
 
@@ -57,6 +75,26 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
     public var usesAutoVAD: Bool
     public var isRescueHintAvailable: Bool
 
+    // MARK: 屏 02 / 03 的版式（09-26 稿）
+
+    /// 顶部栏左边那个场景名（「Daily Standup」）。来自创建练习时定下的场景。
+    public var sceneLabel: String?
+    /// 「第 3 轮」。
+    public var roundText: String?
+    /// 「标准会话」/「迷你会话」。
+    public var lengthText: String?
+    /// 「用上 N 个」——本轮用上的新表达数。为 0 时是 `nil`。
+    public var badgeHitText: String?
+    /// 实时转录浮层的内容。**只在录音时非空**（稿子：仅录音时出现，话音落下后归位到气泡；
+    /// 同一句话不同时出现在浮层与气泡里）。
+    public var liveTranscriptFloat: String?
+    /// 静默救援的头一句（「已经 3 秒没有听到你」）。仅救援就绪时非空。
+    public var rescueHeadline: String?
+    /// 救援的第二句（「慢一点没关系，这不算失败」）。
+    public var rescueReassurance: String
+    /// 救援按钮的文案。
+    public var rescueButtonTitle: String
+
     public init(
         phase: SpeechSessionPhase,
         processingStage: ProcessingStage? = nil,
@@ -66,7 +104,15 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
         failureReason: String? = nil,
         timeline: [SpeakingRoomTimelineRow] = [],
         usesAutoVAD: Bool = false,
-        isRescueHintAvailable: Bool = false
+        isRescueHintAvailable: Bool = false,
+        sceneLabel: String? = nil,
+        roundText: String? = nil,
+        lengthText: String? = nil,
+        badgeHitText: String? = nil,
+        liveTranscriptFloat: String? = nil,
+        rescueHeadline: String? = nil,
+        rescueReassurance: String = "",
+        rescueButtonTitle: String = ""
     ) {
         self.phase = phase
         self.processingStage = processingStage
@@ -77,6 +123,14 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
         self.timeline = timeline
         self.usesAutoVAD = usesAutoVAD
         self.isRescueHintAvailable = isRescueHintAvailable
+        self.sceneLabel = sceneLabel
+        self.roundText = roundText
+        self.lengthText = lengthText
+        self.badgeHitText = badgeHitText
+        self.liveTranscriptFloat = liveTranscriptFloat
+        self.rescueHeadline = rescueHeadline
+        self.rescueReassurance = rescueReassurance
+        self.rescueButtonTitle = rescueButtonTitle
     }
 
     public var isRecording: Bool {
