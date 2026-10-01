@@ -24,9 +24,9 @@ import Testing
 /// ## 只查一层，这也是刻意的
 ///
 /// `AppAction` 的载荷里还有嵌套枚举（`speakingRoom.session(SpeechSessionEvent)`、
-/// `workspace.activate(WorkspaceSurface)`、`navigation.selectTab(AppTab)`），它们不进这张表：
+/// `navigation.selectTab(AppTab)`），它们不进这张表：
 ///
-/// - `WorkspaceSurface` / `AppTab` 是**值**，不是动作；
+/// - `AppTab` 是**值**，不是动作；
 /// - `SpeechSessionEvent` 是**传输泵喂给状态机的输入**（socket 收到什么就变成什么），
 ///   「屏幕能不能派它」对它不是对的问题 —— 27 个 case 里只有 4 个由屏幕派。
 ///
@@ -37,12 +37,25 @@ import Testing
 /// 一条「永远为真」的豁免没有任何外部信号提示它已失效。所以条目指向的 case 若**改名/删掉了**、
 /// 或者**现在有屏幕派它了**，守卫都要红 —— 红的意思是「把这条删掉」。
 /// 这张表因此会随着 ④ 逐屏而**变短**。
+///
+/// ## 它已经短过一次，而且第 ③ 组已经消失
+///
+/// 这张表起初是**三组**：① 由中间件派（正常）、② 屏幕还没落地（债）、
+/// ③ **生产代码里没有任何派发者**（死 action，14 条）。
+/// 第 ③ 组不是豁免，是债单，而它的说法由一条判据当场检索验证。**那笔债已还清**（14 条全删）——
+/// 所以那一组与那条判据一起消失了。这正是「一份永远为真的债单会一直长在那里假装还有债」
+/// 想避免的结局：债清了，债单也走。
+///
+/// 顺带记下那次清理量出来的东西：那 14 条里**两整族**（`workspace.*` / `badgeFeedback.*`）
+/// 的所有权本来就不在 action 上 —— `WorkspaceState` 的五个字段全是派生值，
+/// `BadgeFeedbackState.ingest` 是被 `appCrossCuttingReducer` 直接调的方法。
+/// 它们的 action 只是同一件事的第二条路，而**一条都没被派过**。
 @Suite("屏幕入口的守卫")
 struct ScreenEntryGuardTests {
 
     /// 一组同类条目：一条理由 + 它盖住的那些 `tag.case`。
     ///
-    /// 分组而不是逐条写理由，是因为理由的性质只有三种，而条目有九十多条 ——
+    /// 分组而不是逐条写理由，是因为理由的性质只有两种，而条目有八十多条 ——
     /// 逐条复制同一句话会让「它们其实是同一件事」这个信息消失。
     struct Group {
         let reason: String
@@ -107,27 +120,6 @@ struct ScreenEntryGuardTests {
 
         // ── ③ 生产代码里**没有任何**派发者 —— 死 action，待清理 ────────────────
         //
-        // 这一组不是豁免，是**债单**。它们的「没有派发者」由下面
-        // `theDeadActionsAreStillUndispatchedEverywhere` 一条判据**当场验证**，
-        // 所以这一行注释不是印象：检索面是全部生产代码（`Shared` + `App`）。
-        Group(
-            reason: "生产代码里没有任何派发者 —— 死 action（判据当场验证），待清理",
-            cases: [
-                // `WorkspaceState` / `BadgeFeedbackState` 各有两个写入者：它们自己的 reducer
-                // （经 action）与 `appCrossCuttingReducer`（直接改 state）。今天生效的是后者，
-                // 下面这些 action 因此从未被派发 —— 它们长着一副「有东西在派我」的样子。
-                // 证据：`AppReducer.swift:139`（`isBootstrapComplete`）、`:140`（`activeSurface`）、
-                // `:171`（`highlightedBadge` / `badgeFeedCount`）、`:184`（直接调
-                // `state.badgeFeedback.ingest(...)`）、`:211`（`availableModules`）。
-                "workspace.setBootstrapComplete", "workspace.activate", "workspace.recordBadgeHit",
-                "workspace.setAvailableModules", "badgeFeedback.ingest",
-                "badgeFeedback.tick", "badgeFeedback.clear",
-                "speakingRoom.bootstrapReady", "speakingRoom.userSpeechCaptured",
-                "speakingRoom.aiTurnEndReceived",
-                "review.clear",
-                "corpus.removeOutboxItem", "corpus.outboxReplayFinished", "corpus.reset",
-            ]
-        ),
     ]
 
     /// 扁平成 `tag.case` → 理由，供双向校验用。
@@ -137,11 +129,6 @@ struct ScreenEntryGuardTests {
             for entry in group.cases { out[entry] = group.reason }
         }
         return out
-    }
-
-    /// 「死 action」那一组 —— 单独取出来，好让判据能验证它。
-    static var deadActions: [String] {
-        groups.first { $0.reason.contains("没有任何派发者") }?.cases ?? []
     }
 
     /// **每个 `AppAction` 底下的 case，要么在屏幕层被派发，要么在表里。**
@@ -175,35 +162,6 @@ struct ScreenEntryGuardTests {
         )
     }
 
-    /// **「死 action」那一组的说法要能被当场验证。**
-    ///
-    /// 上一条只保证「它们没有**屏幕**入口」；这一条管的是更强的那个断言 ——
-    /// **全部生产代码里都没有派发者**。少了它，那一组会退化成一句无人核对的话，
-    /// 而「死 action」这个标签恰恰是给人做清理决定用的。
-    ///
-    /// 有人把它们接上（无论接在屏幕还是中间件上）时，这条会红 —— 那时把它从 ③ 挪走。
-    @Test func theDeadActionsAreStillUndispatchedEverywhere() throws {
-        let all = try RepositoryScan.productionSources()
-            .map { RepositoryScan.codeLines(of: $0.text).map(\.text).joined(separator: "\n") }
-            .joined(separator: "\n")
-
-        let revived = Self.deadActions.filter { entry in
-            let parts = entry.split(separator: ".")
-            guard parts.count == 2 else { return false }
-            let pattern = #"\.\#(parts[0])\(\s*\.\#(parts[1])\b"#
-            return !Self.matches(pattern, in: all).isEmpty
-        }
-
-        #expect(
-            revived.isEmpty,
-            """
-            这些动作已经被接上了派发点，但它们还挂在「死 action」那一组里：
-            \(revived.sorted().joined(separator: "\n"))
-            把它们挪到 ① 或 ②，或者从表里删掉，或者把死代码删掉。
-            """
-        )
-    }
-
     /// 守卫在看真代码，而不是在看空气。
     ///
     /// 目录改名、`AppAction` 换写法、正则写坏，都会让「没有屏幕入口」的集合**变成全部**，
@@ -211,12 +169,16 @@ struct ScreenEntryGuardTests {
     /// 先量总数，再用几个**已知有屏幕入口**的动作点名验一遍。
     @Test func theScanSeesBothSides() throws {
         let enums = try Self.rootActionEnums()
-        #expect(enums.count >= 14, "只解析出 \(enums.count) 个根动作枚举 —— `AppAction` 的写法变了")
+        // 12 = 删掉 `workspace` / `badgeFeedback` 两族之后的根动作枚举数
+        // （lifecycle / featureFlags / auth / speakingRoom / review / corpus / dailyRead /
+        // sessionHistory / drill / topic / network / navigation）。
+        // 这是个**地板**，不是等式：它要抓的是「枚举解析坏了」（那会让下面几条静默变绿）。
+        #expect(enums.count >= 12, "只解析出 \(enums.count) 个根动作枚举 —— `AppAction` 的写法变了")
 
         let all = try enums.flatMap { pair in
             try Self.cases(of: pair.enumName).map { caseName in "\(pair.tag).\(caseName)" }
         }
-        #expect(all.count >= 100, "只解析出 \(all.count) 个 case —— 枚举解析坏了")
+        #expect(all.count >= 95, "只解析出 \(all.count) 个 case —— 枚举解析坏了")
 
         let unreachable = try Self.casesWithoutScreenEntry()
         let reachable = Set(all).subtracting(unreachable)

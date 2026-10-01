@@ -106,17 +106,16 @@ public enum CorpusAction: Equatable, Sendable, Action {
     case favoriteToggled(blockID: String, isFavorite: Bool, pinned: Bool)
     case deleteTapped(blockID: String)
     case enqueueOutboxItem(CorpusOutboxItem)
-    case removeOutboxItem(id: String)
     case outboxReplayStarted
     case outboxReplayCompleted(ids: [String])
-    case outboxReplayFinished
     case outboxReplayFailed(String)
     case mergeRebuildStarted
     case mergeRebuildPrepared(snapshot: CachedCorpusSnapshot, metadata: CorpusSyncMetadata)
     case mergeRebuildFinished
     case searchQueryChanged(String)
     case favoriteOnlyChanged(Bool)
-    case reset
+    // 没有 `.reset`：换账号时整格清空这件事在 `appCrossCuttingReducer` 里做
+    // （`state.corpus = CorpusState()`，那里才知道账号变了）。从前那个 action 一次都没被派发过。
 }
 
 public let corpusReducer: Reducer<CorpusState, CorpusAction> = { state, action in
@@ -202,14 +201,6 @@ public let corpusReducer: Reducer<CorpusState, CorpusAction> = { state, action i
             )
         }
 
-    case let .removeOutboxItem(id):
-        if let item = state.outbox.first(where: { $0.id == id }) {
-            state.pendingIndicators.removeAll {
-                $0.blockID == item.blockID && $0.operation == item.operation
-            }
-        }
-        state.outbox.removeAll { $0.id == id }
-
     case .outboxReplayStarted:
         state.isReplayingOutbox = true
         state.lastErrorMessage = nil
@@ -223,9 +214,6 @@ public let corpusReducer: Reducer<CorpusState, CorpusAction> = { state, action i
             }
         }
         state.outbox.removeAll { ids.contains($0.id) }
-        state.isReplayingOutbox = false
-
-    case .outboxReplayFinished:
         state.isReplayingOutbox = false
 
     case let .outboxReplayFailed(message):
@@ -252,9 +240,6 @@ public let corpusReducer: Reducer<CorpusState, CorpusAction> = { state, action i
 
     case .loadMoreRequested:
         break
-
-    case .reset:
-        state = CorpusState()
     }
 }
 

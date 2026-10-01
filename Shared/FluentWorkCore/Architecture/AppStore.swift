@@ -47,7 +47,7 @@ public extension Store where State == AppState, Action == AppAction {
         scope(state: \.speakingRoom, action: AppAction.speakingRoom)
     }
 
-    func workspaceScope() -> ScopedStore<WorkspaceState, WorkspaceAction> {
-        scope(state: \.workspace, action: AppAction.workspace)
-    }
+    // 没有 `workspaceScope()`：scope 的用途是**派发该切片的 action**，而 `WorkspaceAction`
+    // 整族已删（那五个字段全是派生值，由 `appCrossCuttingReducer` 写）。要读工作台那一格，
+    // 直接读 `store.state.workspace` —— 那是「只读」这件事本来就该用的写法。
 }

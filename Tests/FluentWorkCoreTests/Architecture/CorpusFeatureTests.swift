@@ -639,9 +639,12 @@ import TGReduxKitTesting
     store.send(.enqueueOutboxItem(item))
     try store.assert(equals: expected)
 
+    // 出队走的是**重放真正会派的那条**（`outboxReplayCompleted`），而不是一条只有测试在用的
+    // `removeOutboxItem` —— 那条已删：`outboxReplayCompleted(ids:)` 与 `mergeRebuildPrepared`
+    // 都会清 outbox 与待同步标记，它没有任何独占的行为。
     expected.outbox = []
     expected.pendingIndicators = []
-    store.send(.removeOutboxItem(id: "op-1"))
+    store.send(.outboxReplayCompleted(ids: ["op-1"]))
     try store.assert(equals: expected)
 }
 

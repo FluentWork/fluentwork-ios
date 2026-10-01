@@ -25,13 +25,13 @@ extension SpeakingRoomAction {
             self = .session(.networkLost)
         case let .serverASRReceived(text, turnID):
             self = .serverASRReceived(text: text, turnID: turnID)
-        // B15: ai.turn.end with explicit outcome. The bridge exists to satisfy the
-        // Swift exhaustive switch — the actual handling is done directly in
-        // SpeechSessionMiddleware via the SocketTransportEvent.switch so the outcome
-        // value can be inspected and drive the .failed("turn_timeout") path.
-        // B15-I3: logID is forwarded so the middleware can store it in the tracker.
-        case let .aiTurnEndReceived(turnID, outcome, logID):
-            self = .aiTurnEndReceived(turnID: turnID, outcome: outcome, logID: logID)
+        // B15: ai.turn.end with explicit outcome. **这里没有可映射的 action，是刻意的**：
+        // 真正处理它的是 `SpeechSessionMiddleware`（它会看 outcome 并驱动
+        // `.failed("turn_timeout")` 那条路），而 `SocketTransportEventMapper` 永远不产出
+        // 这个传输动作 —— 所以从前那个 `SpeakingRoomAction.aiTurnEndReceived` 是一条
+        // 到不了 reducer 的 no-op，已删。这一支留着是为了 `switch` 穷举，并写下「为什么不映射」。
+        case .aiTurnEndReceived:
+            return nil
         }
     }
 }

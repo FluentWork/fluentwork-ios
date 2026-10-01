@@ -6,76 +6,42 @@ import Testing
 
 @testable import FluentWorkCore
 
-@Test func badgeFeedbackReducerAcceptsFirstIngest() throws {
-    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+// 这一个文件里五条判据从前派 `.badgeFeedback(...)`（那一族 action 已删，没有任何派发者）。
+// 它们测的 ingest / 去重语义一条没少，改成直接调**真正生效的那个入口**
+// （`BadgeFeedbackState.ingest`，也就是 `appCrossCuttingReducer` 调的那个方法）。
+@Test func badgeFeedbackIngestAcceptsFirstHit() throws {
+    var state = AppState.initial.badgeFeedback
     let now = Date(timeIntervalSinceReferenceDate: 1_000)
     let clock = FixedClock(date: now)
 
-    store.send(
-        .badgeFeedback(
-            .ingest(
-                badge: "表达自然",
-                turnID: "turn-1",
-                tier: .nextTurnConfirm,
-                at: clock.now()
-            )
-        )
-    )
+    state.ingest(badge: "表达自然", turnID: "turn-1", tier: .nextTurnConfirm, at: clock.now())
 
     // Two `BadgeFeedEntry`s with equal payloads but auto-generated UUIDs
     // don't compare equal — verify by field instead of full struct.
-    let entries = store.state.badgeFeedback.entries
+    let entries = state.entries
     #expect(entries.count == 1)
     #expect(entries.first?.badge == "表达自然")
     #expect(entries.first?.turnID == "turn-1")
     #expect(entries.first?.tier == .nextTurnConfirm)
     #expect(entries.first?.receivedAt == clock.now())
-    #expect(store.state.badgeFeedback.lastTickAt == clock.now())
 }
 
-@Test func badgeFeedbackReducerDeduplicatesSameBadgeAndTurn() throws {
-    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
+@Test func badgeFeedbackIngestDeduplicatesSameBadgeAndTurn() throws {
+    var state = AppState.initial.badgeFeedback
     let initial = Date(timeIntervalSinceReferenceDate: 1_000)
     let clock = FixedClock(date: initial)
 
-    store.send(
-        .badgeFeedback(
-            .ingest(
-                badge: "节奏稳定",
-                turnID: "turn-A",
-                tier: .badgeOnly,
-                at: clock.now()
-            )
-        )
-    )
-    #expect(store.state.badgeFeedback.entries.count == 1)
+    state.ingest(badge: "节奏稳定", turnID: "turn-A", tier: .badgeOnly, at: clock.now())
+    #expect(state.entries.count == 1)
 
     // Same badge + same turnID within dedupe window → suppressed.
-    store.send(
-        .badgeFeedback(
-            .ingest(
-                badge: "节奏稳定",
-                turnID: "turn-A",
-                tier: .badgeOnly,
-                at: clock.now()
-            )
-        )
-    )
-    #expect(store.state.badgeFeedback.entries.count == 1)
+    state.ingest(badge: "节奏稳定", turnID: "turn-A", tier: .badgeOnly, at: clock.now())
+    #expect(state.entries.count == 1)
 
     // Different turnID → not duplicate.
-    store.send(
-        .badgeFeedback(
-            .ingest(
-                badge: "节奏稳定",
-                turnID: "turn-B",
-                tier: .badgeOnly,
-                at: clock.now()
-            )
-        )
-    )
-    #expect(store.state.badgeFeedback.entries.count == 2)
-    #expect(store.state.badgeFeedback.entries.map(\.turnID) == ["turn-A", "turn-B"])
+    state.ingest(badge: "节奏稳定", turnID: "turn-B", tier: .badgeOnly, at: clock.now())
+    #expect(state.entries.count == 2)
+    #expect(state.entries.map(\.turnID) == ["turn-A", "turn-B"])
 }
 
 @Test func badgeFeedbackReducerDedupeWindowExpires() {
@@ -116,49 +82,34 @@ import Testing
     #expect(state.entries.last?.badge == "badge-4")
 }
 
-@Test func badgeFeedbackReducerTickDropsExpiredEntries() {
+/// **「没有定时清扫」是设计，不是遗漏。**
+///
+/// 过期只体现在**读**上：`visibleEntries(at:)` 按窗口算，`entries` 不会自己变短。
+/// 从前有一条 `tick` action 专门做清扫（没人派发），而它为它写的那条判据也没在测生产代码 ——
+/// 它在测试里把 cutoff 公式抄了一遍再断言自己抄对了。这条改成测真的那条路。
+@Test func expiredEntriesLeaveTheVisibleSetWithoutAnySweep() {
     var state = AppState.initial.badgeFeedback
     state.visibleWindowSeconds = 2.0
 
     let clock = Date(timeIntervalSinceReferenceDate: 0)
-
     state.ingest(badge: "old", turnID: "old", tier: .unknown, at: clock)
     state.ingest(badge: "mid", turnID: "mid", tier: .unknown, at: clock.addingTimeInterval(1))
 
-    // Tick 10s later — both should drop (visibleWindowSeconds = 2).
-    let cutoff = clock.addingTimeInterval(10).addingTimeInterval(-state.visibleWindowSeconds)
-    state.entries.removeAll { $0.receivedAt < cutoff }
-    state.lastTickAt = clock.addingTimeInterval(10)
+    // 窗口内：两条都在，按时间升序。
+    #expect(state.visibleEntries(at: clock.addingTimeInterval(1)).map(\.badge) == ["old", "mid"])
 
-    #expect(state.entries.isEmpty)
+    // 10 秒后：可读集合空了，但 `entries` 一条没少 —— 没有清扫者。
+    #expect(state.visibleEntries(at: clock.addingTimeInterval(10)).isEmpty)
+    #expect(state.entries.count == 2, "`entries` 被谁悄悄清掉了 —— 不该有定时器")
 }
 
-@Test func badgeFeedbackReducerClearWipesEverything() {
+// `badgeFeedbackReducerClearWipesEverything` 已删：它测的是「把数组设成空数组，然后断言它是空的」，
+// 而 `clear` 那条 action 没有任何派发者 —— 判据与它一起走了。
+
+@Test func badgeFeedbackIngestRejectsEmptyBadge() throws {
     var state = AppState.initial.badgeFeedback
-    state.entries.append(
-        BadgeFeedEntry(
-            badge: "待清",
-            turnID: nil,
-            tier: .unknown,
-            receivedAt: Date()
-        )
-    )
-
-    state.entries = []
-    state.lastTickAt = nil
-
+    state.ingest(badge: "", turnID: nil, tier: .unknown, at: Date())
     #expect(state.entries.isEmpty)
-    #expect(state.lastTickAt == nil)
-}
-
-@Test func badgeFeedbackReducerRejectsEmptyBadge() throws {
-    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
-    store.send(
-        .badgeFeedback(
-            .ingest(badge: "", turnID: nil, tier: .unknown, at: Date())
-        )
-    )
-    #expect(store.state.badgeFeedback.entries.isEmpty)
 }
 
 @Test func badgeFeedbackStateReportsVisibleEntriesByNow() {

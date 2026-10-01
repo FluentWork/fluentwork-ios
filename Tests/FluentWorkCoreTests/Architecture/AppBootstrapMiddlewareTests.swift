@@ -87,18 +87,19 @@ private func makeIsolatedContainer(
     let store = AppStoreFactory.make(container: container)
     let featureFlags = store.featureFlagsScope()
     let speakingRoom = store.speakingRoomScope()
-    let workspace = store.workspaceScope()
-
+    // 工作台那一格只读，所以直接读 store（`workspaceScope()` 已随 `WorkspaceAction` 一起删）。
+    // ⚠️ 读的是**值快照**，不是 scope 那种活视图 —— 所以必须在 bootstrap 之后再读，
+    // 写在 `dispatch` 前面会拿到启动前的那一份（这正是它第一次改完就红的原因）。
     store.dispatch(.lifecycle(.appLaunched))
     try await waitForBootstrap(store)
 
     #expect(store.state.bootstrapStatus == .ready)
     #expect(featureFlags.state.isRemoteLoaded)
     #expect(featureFlags.state.isEnabled(.speakingRoom))
-    #expect(workspace.state.activeSurface == .speakingRoom)
-    #expect(workspace.state.isBootstrapComplete)
+    #expect(store.state.workspace.activeSurface == .speakingRoom)
+    #expect(store.state.workspace.isBootstrapComplete)
     #expect(
-        workspace.state.availableModules.map(\.moduleName)
+        store.state.workspace.availableModules.map(\.moduleName)
             == ["SpeakingRoom", "Review", "DailyRead", "SessionHistory"]
     )
     #expect(speakingRoom.state.isBootstrapReady)

@@ -201,19 +201,19 @@ public enum SpeakingRoomAction: Equatable, Sendable, Action {
     /// Captures the session id bound by the speech client right before the
     /// transport closes, so the ended-state UI can offer "查看回顾".
     case sessionIDCaptured(String)
-    case bootstrapReady(Bool)
-    /// Local transcript overlay text; does not drive the session phase machine.
-    case userSpeechCaptured(String)
     /// B14: Server-side ASR transcript received via WSS relay from the voice provider.
     /// When this arrives, the middleware immediately calls `sendSpeechBoundary`
     /// with the authoritative server text (for badge hit detection) and dispatches
     /// this action so the reducer updates `liveTranscript` for display.
+    ///
+    /// ⚠️ **它有两条孪生 action 被删掉了**（`bootstrapReady` / `userSpeechCaptured`，
+    /// 以及下面那条 no-op 的 `aiTurnEndReceived`）：三条都长着「有东西在派我」的样子，
+    /// 而全仓没有任何派发者。它们各自要写的那一格，今天都有**真正生效的那条路**：
+    /// - `isBootstrapReady` 由功能开关投影写（`applyFeatureFlagProjection`，不经 action）；
+    /// - `liveTranscript` 由这条 action 写（服务端 ASR 才是那句话的权威来源）；
+    /// - `aiTurnEndReceived` 的 reducer 分支本来就是空的，而 `SocketTransportEventMapper`
+    ///   永远不会产出它（`ai.turn.end` 由中间件直接处理）。
     case serverASRReceived(text: String, turnID: String?)
-    /// B15: ai.turn.end received with explicit backend outcome. When outcome is
-    /// .timeout, the middleware dispatches .failed("turn_timeout") to match the
-    /// 70s client-side fallback behavior. Nil outcome means pre-B15 protocol.
-    /// B15-I3: log_id carries the vendor trace log_id for cross-layer correlation.
-    case aiTurnEndReceived(turnID: String?, outcome: WSControlFrame.TurnOutcome?, logID: String?)
     case rescueHintArmed
     case rescueHintBecameDue
     case rescueHintTapped
@@ -349,12 +349,6 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
     case let .sessionIDCaptured(sessionID):
         state.lastSessionID = sessionID
 
-    case let .bootstrapReady(isReady):
-        state.isBootstrapReady = isReady
-
-    case let .userSpeechCaptured(transcript):
-        state.liveTranscript = transcript
-
     case let .serverASRReceived(text, turnID):
         state.liveTranscript = text
         // Replace the open "正在听…" placeholder with the authoritative
@@ -382,12 +376,6 @@ public let speakingRoomReducer: Reducer<SpeakingRoomState, SpeakingRoomAction> =
                 )
             )
         }
-
-    // B15: aiTurnEndReceived is handled in SpeechSessionMiddleware (dispatches
-    // .session(.aiTurnEnd) / .aiTurnFinalized when outcome != timeout). The
-    // reducer just discards it — it has no display-side effect.
-    case .aiTurnEndReceived:
-        break
 
     case .rescueHintArmed:
         state.isRescueHintDue = false

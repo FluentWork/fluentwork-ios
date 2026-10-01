@@ -85,22 +85,17 @@ public struct BadgeFeedbackState: Equatable, Sendable, State {
     public var dedupeWindowSeconds: Double
     /// Cap on visible entries — defends against spam bursts.
     public var maxVisibleEntries: Int
-    /// Last time the reducer ran, used by tests + middleware to coalesce
-    /// ticks.
-    public var lastTickAt: Date?
 
     public init(
         entries: [BadgeFeedEntry] = [],
         visibleWindowSeconds: Double = 4.0,
         dedupeWindowSeconds: Double = 5.0,
-        maxVisibleEntries: Int = 3,
-        lastTickAt: Date? = nil
+        maxVisibleEntries: Int = 3
     ) {
         self.entries = entries
         self.visibleWindowSeconds = visibleWindowSeconds
         self.dedupeWindowSeconds = dedupeWindowSeconds
         self.maxVisibleEntries = maxVisibleEntries
-        self.lastTickAt = lastTickAt
     }
 
     /// Currently-visible entries, sorted by receivedAt ascending.
@@ -114,14 +109,14 @@ public struct BadgeFeedbackState: Equatable, Sendable, State {
     /// True when nothing should be rendered.
     public var isEmpty: Bool { entries.isEmpty }
 
-    /// In-place ingest helper — exposed so cross-cutting reducers that don't
-    /// have a `(inout, Action)` two-argument shape (e.g. inside
-    /// `appCrossCuttingReducer`) can still apply the same semantics.
+    /// 收下一条命中：去重、追加、按上限裁剪。
     ///
-    /// `phraseBlockID` is the corpus-side identifier the backend attached to
-    /// the `feedback.badge` frame. When present it extends the dedupe key
-    /// so the same badge for the same phrase block cannot re-render inside
-    /// the dedupe window even if the turnID was missed.
+    /// ⚠️ **这是唯一的入口，没有对应的 action。** 它从前有一个（`BadgeFeedbackAction.ingest`），
+    /// 而真正生效的是 `appCrossCuttingReducer` 里对它的**直接调用** —— 那个 action 一次都没被派发过。
+    /// 同一个类型里放两条写路径，只会让人以为屏幕上的那个按钮通向 action 那一支。
+    ///
+    /// `phraseBlockID` 是后端在 `feedback.badge` 帧里带上来的语料侧标识。有值时它会参与去重键，
+    /// 于是同一张语料块的同一个徽章在去重窗口内不会因为缺失 turnID 而重复渲染。
     public mutating func ingest(
         badge: String,
         turnID: String?,
@@ -150,41 +145,12 @@ public struct BadgeFeedbackState: Equatable, Sendable, State {
             )
         )
 
-        // Cap to most recent maxVisibleEntries to keep memory bounded even
-        // when the timer hasn't fired yet.
+        // Cap to most recent maxVisibleEntries to keep memory bounded. 不靠定时器清扫：
+        // 「哪些还在窗口里」由 `visibleEntries(at:)` 在**读**的时候算，所以没有 tick，
+        // 也没有为 tick 服务的 `lastTickAt`（那两样都曾存在，且都没人读）。
         if entries.count > maxVisibleEntries {
             let overflow = entries.count - maxVisibleEntries
             entries.removeFirst(overflow)
         }
-        lastTickAt = at
-    }
-}
-
-// MARK: - Actions
-
-public enum BadgeFeedbackAction: Equatable, Sendable, Action {
-    /// Add a new badge hit (deduped against recent same turnID+badge).
-    case ingest(badge: String, turnID: String?, tier: BadgeFeedEntry.Tier, at: Date)
-    /// Periodic tick — sweeps expired entries.
-    case tick(at: Date)
-    /// Wipe all entries (e.g. on bootstrap reset).
-    case clear
-}
-
-// MARK: - Reducer
-
-public let badgeFeedbackReducer: Reducer<BadgeFeedbackState, BadgeFeedbackAction> = { state, action in
-    switch action {
-    case let .ingest(badge, turnID, tier, at):
-        state.ingest(badge: badge, turnID: turnID, tier: tier, at: at)
-
-    case let .tick(at):
-        let cutoff = at.addingTimeInterval(-state.visibleWindowSeconds)
-        state.entries.removeAll { $0.receivedAt < cutoff }
-        state.lastTickAt = at
-
-    case .clear:
-        state.entries = []
-        state.lastTickAt = nil
     }
 }

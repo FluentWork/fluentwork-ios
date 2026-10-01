@@ -165,8 +165,10 @@ struct ScenarioDriverTableGuardTests {
         #expect(screen.count > 10_000, "屏幕层只读到 \(screen.count) 个字符 —— 作用域写坏了")
 
         // 这里刻意用与守卫 A 相同的入口，免得两处作用域悄悄分叉。
+        // 地板从 3 降到 2：守卫 A 的第三组（死 action 债单）在 2026-10-01 随 14 条死 action
+        // 一起删除 —— 债还清了，债单也该走。
         #expect(
-            ScreenEntryGuardTests.groups.count >= 3,
+            ScreenEntryGuardTests.groups.count >= 2,
             "守卫 A 的豁免表结构变了 —— 两个守卫共用的那部分要一起改"
         )
     }

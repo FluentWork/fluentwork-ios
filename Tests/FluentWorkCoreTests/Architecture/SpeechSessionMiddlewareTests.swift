@@ -1463,13 +1463,11 @@ struct SpeechSessionMiddlewarePassthroughTests {
         let store = AppStoreFactory.make(container: container)
 
         // These actions should not be intercepted by speechSessionMiddleware
-        // Just verify they don't crash and are handled by the reducer
-        store.dispatch(.speakingRoom(.bootstrapReady(true)))
-        try await waitUntil(timeoutNanoseconds: 100_000_000) {
-            store.state.speakingRoom.isBootstrapReady == true
-        }
-        #expect(store.state.speakingRoom.isBootstrapReady == true)
-
+        // Just verify they don't crash and are handled by the reducer.
+        //
+        // `isBootstrapReady` 那一格从前有一条 `bootstrapReady` action 可以试，那条已删：
+        // 它没有任何派发者，真正写这个字段的是功能开关投影（`applyFeatureFlagProjection`）。
+        // 从屏幕/中间件派得到的、非 `.session` 的动作由下面这条代表。
         store.dispatch(.speakingRoom(.badgeHit(badge: "test")))
         try await waitUntil(timeoutNanoseconds: 100_000_000) {
             store.state.speakingRoom.lastBadge == "test"

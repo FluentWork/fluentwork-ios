@@ -86,24 +86,6 @@ public let appReducer: Reducer<AppState, AppAction> = combineReducers(
     }
   ),
   pullback(
-    workspaceReducer,
-    state: \.workspace,
-    action: AppAction.workspace,
-    extract: {
-      guard case .workspace(let action) = $0 else { return nil }
-      return action
-    }
-  ),
-  pullback(
-    badgeFeedbackReducer,
-    state: \.badgeFeedback,
-    action: AppAction.badgeFeedback,
-    extract: {
-      guard case .badgeFeedback(let action) = $0 else { return nil }
-      return action
-    }
-  ),
-  pullback(
     networkConnectivityReducer,
     state: \.network,
     action: AppAction.network,

@@ -165,21 +165,10 @@ import TGReduxKitTesting
     #expect(store.state.featureFlags.localOverrides.isEmpty)
 }
 
-@Test func workspaceCanReceivePluginizedEntryModules() throws {
-    let store = TestStore(initialState: AppState.initial, reducer: appReducer)
-    let modules = [
-        FeaturePluginDescriptor(
-            feature: .speakingRoom,
-            moduleName: "SpeakingRoom",
-            entryRoute: "/speaking-room"
-        ),
-    ]
-
-    var expected = AppState.initial
-    expected.workspace.availableModules = modules
-    store.send(.workspace(.setAvailableModules(modules)))
-    try store.assert(equals: expected)
-}
+// `workspaceCanReceivePluginizedEntryModules` 已删：它派 `.workspace(.setAvailableModules(...))`，
+// 而那条 action（连同整个 `WorkspaceAction` 族）没有任何派发者 —— 真正写 `availableModules` 的是
+// `applyFeatureFlagProjection`。那条路已经由 `bootstrapSuccessUpdatesGlobalStateAndFeatureScopes`
+// 覆盖（它断言启动后 `availableModules` 正好是 first-wave 那四条）。
 
 @Test func appLaunchedSetsBootstrapLoading() throws {
     let store = TGReduxKitTesting.TestStore(initialState: AppState.initial, reducer: appReducer)

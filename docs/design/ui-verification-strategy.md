@@ -111,6 +111,17 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
 3. **表分三组**，理由的性质不同：中间件派（正常）/ 屏幕未落地（债，随 ④ 变短）/
    **没有任何派发者（死 action，14 条）**。第三组的「没有派发者」本身也有一条判据当场验证。
 
+   > **2026-10-01：第 ③ 组已随那 14 条一起删除**（债还清了，债单也该走 —— 否则它就是
+   > 那条「永远为真的债单」本身）。清理时量出来的东西比预想的有意思：那 14 条里**两整族**
+   > （`workspace.*` 四条、`badgeFeedback.*` 三条）的**所有权本来就不在 action 上** ——
+   > `WorkspaceState` 的五个字段全是派生值、`BadgeFeedbackState.ingest` 是被
+   > `appCrossCuttingReducer` 直接调的方法；那些 action 只是同一件事的第二条路，一条都没被派过。
+   > 剩下七条（`speakingRoom` 三条、`review.clear`、`corpus` 三条）各有孪生：`liveTranscript`
+   > 由服务端 ASR 那条写、`isBootstrapReady` 由开关投影写、outbox 出队由 `outboxReplayCompleted`
+   > 写、整格重置由横切 reducer 写。**清理顺带删掉两条「测的是测试自己」的判据**
+   > （`badgeFeedbackReducerTickDropsExpiredEntries` 把 cutoff 公式在测试里抄了一遍再断言自己
+   > 抄对了；`badgeFeedbackReducerClearWipesEverything` 测「把数组设空再断言它是空的」）。
+
 ### 守卫 B · 驱动与视图同一张表（`f302454` 落地）
 
 `Debug/DeviceScenarioDriver.swift` 是今天「自动点屏幕」的替代（仅 DEBUG、由 `FW_SCENARIO` 开，
@@ -235,7 +246,7 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
 | 步 | 状态 |
 |---|---|
 | ① 投影搬迁 | **✅ 9/9 完成**。`Review`（`4ce2e57`）、`speakingRoom`（`ba281dd`）、`dailyRead`（`79816e5`）、`sessionHistory` + `sessionDetail`（`66b7a78`）、`corpus` + `badgeFeedback`（`be1d22d`）、`settings` + `workbenchHome`（`2ffa112`）。`HostRootView` 里已无 `make*ViewModel` |
-| ② 两条守卫 | **✅ 完成**（`f302454`）。守卫 A `ScreenEntryGuardTests`（每个 `AppAction` case 要么在屏幕层被派发、要么在表里写明理由；表分三组：中间件派 64 / 屏幕未落地 18 / **死 action 14**）、守卫 B `ScenarioDriverTableGuardTests`（驱动与视图同一张表）。10 次变异全部咬住 |
+| ② 两条守卫 | **✅ 完成**（`f302454`）。守卫 A `ScreenEntryGuardTests`（每个 `AppAction` case 要么在屏幕层被派发、要么在表里写明理由）、守卫 B `ScenarioDriverTableGuardTests`（驱动与视图同一张表）。10 次变异全部咬住。**2026-10-01：第 ③ 组（死 action 14 条）已随那 14 条一起删除**，表从三组变两组；`ScenarioDriverTableGuardTests` 里那条「表结构变了要一起改」的地板跟着从 3 降到 2 |
 | ③ `AppRoute` | **✅ 完成**。`AppRoute` 补 `.drill` / `.topicCards`（`entryRoute` / `init?(entryRoute:)` / `defaultWorkbenchNavigationAction`）；`FeaturePluginCatalog` 补 `/topic-cards`；工作台四张表与 `Module.Kind` 跟着补；`HostRootView` 补两个目的地（占位，与 Tab 2 根**共用同一个视图**）。6 条变异全部咬住 |
 | ④ 逐屏 UI | **进行中**。① 话题建议屏（H1 / H2 / H3 + 86_ M11）**已落地**：`FluentWorkUI/Topic/TopicProjection.swift` + `TopicCardsRootView.swift` + Host 接线，10 条判据。② **D2 丢弃 / 编辑入口**（`81b4f0a`）。③ **回顾页骨架屏**（`ad0399e`，投影直通 Core 那条死规则 + 共用 `SkeletonBlock`）。④ **四处加载态统一成骨架块**（语料库 / 练习历史 / 会话详情 / 每日一读）。守卫 A 第 ② 组因此 18 条 → 11 条 → **7 条**（只剩闪测那 7 条）。**剩下两条都卡在决定上**：闪测卡在采集链路、工作台 Tab 1 卡在形态拍板（见 §7） |
 

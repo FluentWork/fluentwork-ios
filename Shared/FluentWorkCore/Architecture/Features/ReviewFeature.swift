@@ -142,7 +142,9 @@ public enum ReviewAction: Equatable, Sendable, Action {
     case refineCardEditChanged(cardID: String, field: RefineCardEditField, value: String)
     /// 放弃编辑，回到服务端给的那一版。
     case refineCardEditReverted(cardID: String)
-    case clear
+    // 没有 `.clear`：整屏重置这件事由 `.appear(sessionID: nil)`（→ `.idle`、清 payload、清草稿）
+    // 与 `.loadRequested` 覆盖，而它们各自还做对了 `.clear` 做不到的那一半（按内容剪枝）。
+    // 那个 action 从前存在，一次都没被派发过。
 }
 
 public let reviewReducer: Reducer<ReviewState, ReviewAction> = { state, action in
@@ -242,9 +244,6 @@ public let reviewReducer: Reducer<ReviewState, ReviewAction> = { state, action i
 
     case let .refineCardEditReverted(cardID):
         state.refineCardDrafts[cardID] = nil
-
-    case .clear:
-        state = ReviewState()
     }
 }
 

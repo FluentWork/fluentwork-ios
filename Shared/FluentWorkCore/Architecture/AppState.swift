@@ -131,8 +131,6 @@ public enum AppAction: Equatable, Sendable, Action {
   case sessionHistory(SessionHistoryAction)
   case drill(DrillAction)
   case topic(TopicAction)
-  case workspace(WorkspaceAction)
-  case badgeFeedback(BadgeFeedbackAction)
   case network(NetworkConnectivityAction)
   case navigation(AppNavigationAction)
 }
