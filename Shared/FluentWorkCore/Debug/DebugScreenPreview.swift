@@ -40,6 +40,8 @@ public enum DebugScreenPreview {
         case settings
         /// 登录 / 注册（屏 15）。
         case login
+        /// 闪测答题（屏 05）。
+        case drill
     }
 
     public static var configured: Screen? {
@@ -57,7 +59,7 @@ public enum DebugScreenPreview {
             container.corpusClient.register { PreviewCorpusClient(blocks: corpusFixture) }
         case .corpusEmpty:
             container.corpusClient.register { PreviewCorpusClient(blocks: []) }
-        case .createPractice, .review, .roomTalking, .roomRescue, .settings, .login:
+        case .createPractice, .review, .roomTalking, .roomRescue, .settings, .login, .drill:
             // 回顾页与说的房间**不换数据面**，而是直接派那条「轮询／会话回来了」——
             // 它们的数据面是 `SpeechSessionClientProtocol`（房间那个大协议），为截图去替身它，
             // 换来的是「截图能证明那条链路」的错觉。链路本身有中间件判据管着，
@@ -85,6 +87,9 @@ public enum DebugScreenPreview {
         case .login:
             // 屏 15 同属「全屏页（从入口推入）」，入口同上。
             store.dispatch(.navigation(.workbench(.push(.login))))
+        case .drill:
+            // 屏 05 是 Tab 2 的主屏，所以这一条是**切 tab**（不是推入）。
+            store.dispatch(.navigation(.selectTab(.flashTest)))
         case .review:
             // 先让产出落地，再把人送上去 —— 顺序反过来的话，那一帧是空的。
             if let response = reviewFixture {

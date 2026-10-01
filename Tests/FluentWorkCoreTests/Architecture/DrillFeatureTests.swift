@@ -194,8 +194,17 @@ import Testing
 
     store.dispatch(.drill(.startTapped(size: 10, sessionID: nil)))
 
-    try await waitUntil { store.state.drill.phase == .failed(message: "boom") }
-    #expect(store.state.drill.failureMessage == "boom")
+    try await waitUntil {
+        if case .failed = store.state.drill.phase { return true }
+        return false
+    }
+    let message = try #require(store.state.drill.failureMessage)
+    #expect(!message.isEmpty, "失败态没有带着消息 —— 屏幕只能显示「出错了」")
+    // ⚠️ 2026-10-02 改：这条判据此前钉的是「消息等于 `localizedDescription`」。
+    // 那正是**错的那一半**——`localizedDescription` 是给开发看的字符串，
+    // 而 屏 05 是给学员看的（截图里抓到过一句 `TokenError error 0.`）。
+    // 所以现在钉的是反面：**不能**是原来那句。
+    #expect(message != "boom", "把 localizedDescription 端到屏幕上了")
 }
 
 /// 空轮（没有到期的卡）不是错误：它是 `.empty`，屏幕可以说「今天没有要复习的」。

@@ -78,7 +78,7 @@ private func interpretDrillEffect(
                 return nil
             } catch {
                 guard !Task.isCancelled else { return nil }
-                return .drill(.roundLoadFailed(error.localizedDescription))
+                return .drill(.roundLoadFailed(drillErrorMessage(error)))
             }
         }
 
@@ -112,7 +112,7 @@ private func interpretDrillEffect(
                 return nil
             } catch {
                 guard !Task.isCancelled else { return nil }
-                return .drill(.attemptFailed(error.localizedDescription))
+                return .drill(.attemptFailed(drillErrorMessage(error)))
             }
         }
 
@@ -126,8 +126,36 @@ private func interpretDrillEffect(
                 return nil
             } catch {
                 guard !Task.isCancelled else { return nil }
-                return .drill(.attemptFailed(error.localizedDescription))
+                return .drill(.attemptFailed(drillErrorMessage(error)))
             }
         }
     }
+}
+
+/// 失败说人话。
+///
+/// ⚠️ 这里此前直接端的是 `error.localizedDescription` —— 于是屏幕上出现过
+/// 「The operation couldn't be completed. (FluentWorkCore.TokenError error 0.)」。
+/// 那是给开发看的字符串，而这一屏是给学员看的（截图里抓到的那一次就是它）。
+/// 与 `accountDataErrorMessage` / `accountAuthErrorMessage` 同一套写法。
+func drillErrorMessage(_ error: Error) -> String {
+    if let apiError = error as? APIError {
+        switch apiError {
+        case .network:
+            return "网络没通，这一轮没能开始。"
+        case .decoding:
+            return "这一轮没能开始，请稍后再试。"
+        case .cancelled:
+            return "这一轮已经取消了。"
+        case let .backend(code, message):
+            // 空语料是一个**可解释的前置条件**，不是故障：把它说成人话。
+            if code.contains("PRECONDITION") || code.contains("EMPTY") || code.contains("NOT_FOUND") {
+                return "语料库还是空的 —— 先完成一次「说」，攒下第一句话术块。"
+            }
+            if !message.isEmpty { return message }
+        case .unknown:
+            break
+        }
+    }
+    return "这一轮没能开始，请稍后再试。"
 }

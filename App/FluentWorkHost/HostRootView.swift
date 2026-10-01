@@ -14,7 +14,7 @@ struct HostRootView: View {
             navigation: store.state.navigation,
             dispatch: { store.dispatch($0) },
             workbenchRoot: { workbenchRoot },
-            flashRoot: { flashTestPlaceholder },
+            flashRoot: { drillRoot },
             corpusRoot: {
                 CorpusRootView(
                     model: CorpusViewModel.make(from: store.state.corpus),
@@ -356,7 +356,7 @@ struct HostRootView: View {
             // （`AppRoute.drill.defaultWorkbenchNavigationAction`），它不往栈里压页。
             // 但 `AppRoute` 是 `Codable` —— 深链与状态恢复都可能构造出它，
             // 那时一片空白比一句占位难查得多，所以目的地写在 Tab 根同一个视图上。
-            flashTestPlaceholder
+            drillRoot
         case .topicCards:
             TopicCardsRootView(
                 model: TopicCardsViewModel.make(from: store.state.topic),
@@ -414,10 +414,25 @@ struct HostRootView: View {
     ///
     /// 底部 Tab 2 的根与 `.drill` 这条路用的是**同一个视图**：同一个功能在两处出现时，
     /// 两处渲染出两样东西，本身就是一条误导。
-    private var flashTestPlaceholder: some View {
-        placeholderScreen(
-            title: "闪测（占位）",
-            detail: "训练卡流、判定与申诉、结算都还没落地。"
+    /// 屏 05 · 闪测答题。
+    ///
+    /// **Tab 根与 `AppRoute.drill` 的目的地是同一个视图** —— 那两条路都通向这一屏，
+    /// 写成两份会让「同一屏的两个名字」各自漂。
+    private var drillRoot: some View {
+        DrillCardStreamView(
+            // 投影吃的是**这一轮**的状态（`DrillState` 外面还裹着一层来源会话的信息，那是归因用的）。
+            model: DrillViewModel.make(from: store.state.drill.round),
+            onAppear: {
+                // 进这一屏就开始挑这一轮的题。规则由状态机判（空语料 → `.empty`）。
+                store.dispatch(.drill(.startTapped(size: 10, sessionID: nil)))
+            },
+            onExit: { store.dispatch(.drill(.exitTapped)) },
+            // 跳过要带时间戳：后端按它排「失败卡插到本轮尾部」。
+            onSkip: { store.dispatch(.drill(.skipTapped(at: Date()))) },
+            onStartPractice: {
+                // 空态的出路指向**开始一次练习** —— 那件事住在工作台。
+                store.dispatch(.navigation(.selectTab(.workbench)))
+            }
         )
     }
 

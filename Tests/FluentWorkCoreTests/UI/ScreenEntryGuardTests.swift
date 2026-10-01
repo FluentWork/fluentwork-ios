@@ -131,9 +131,11 @@ struct ScreenEntryGuardTests {
                 // `AppleSpeechClientASRTranscriber` / `VolcengineClientASRTranscriber`），
                 // 链路是有的；缺的是**把它接到 `.answerCaptured` 上**，而那正是界面那一票的事。
                 // 把「缺接线」说成「缺能力」会让人去重新造一遍已经有的东西。
-                "drill.startTapped", "drill.answerCaptured", "drill.skipTapped",
-                "drill.retryTapped", "drill.advanceTapped", "drill.appealTapped",
-                "drill.exitTapped",
+                // ⚠️ 2026-10-02：`startTapped` / `skipTapped` / `exitTapped` 已由 屏 05 派，
+                // 已离开这一组。留下的四条，`answerCaptured` 要等**采集链路接上**，
+                // 另外三条属于 屏 06/07（判定与申诉、结算）。
+                "drill.answerCaptured", "drill.retryTapped", "drill.advanceTapped",
+                "drill.appealTapped",
 
             ]
         ),
