@@ -24,6 +24,17 @@ DERIVED_DATA="${DERIVED_DATA:-$ROOT/.derivedData/shots}"
 OUT_DIR="${OUT_DIR:-$ROOT/.design-shots}"
 SETTLE_SECONDS="${SETTLE_SECONDS:-5}"
 
+# 后端地址：**模拟器与 Mac 共用网络栈，本机就是 127.0.0.1**。
+#
+# 不钉这一条，`AppEnvironment.current` 会回落到 `AppEnvironment.local` 里那个**写死的
+# 局域网 IP**（那是给真机用的 —— 真机得绕回 Mac 的局域网地址），见 `AGENTS.md`
+# 「Known Drift」第 1 条。后果不是报错而是**静默**：换机器或换网络之后，App 打不到后端，
+# 截出来的图只是「这一屏没有数据」，和「后端真的没数据」长得一模一样。
+# 真机那条腿在 `Scripts/smoke-device.sh`，它自己带 `LOCAL_HOST`。
+LOCAL_HOST="${LOCAL_HOST:-127.0.0.1}"
+# `simctl` 会把 `SIMCTL_CHILD_` 前缀的变量转发给被启动的 app（去掉前缀）。
+export SIMCTL_CHILD_LOCAL_HOST="$LOCAL_HOST"
+
 if [[ $# -eq 0 ]]; then
   echo "用法: $0 <FW_SCREEN> [<FW_SCREEN> ...]" >&2
   echo "可用的屏见 Shared/FluentWorkCore/Debug/DebugScreenPreview.swift" >&2
@@ -70,6 +81,7 @@ xcrun simctl install "$DEVICE_ID" "$APP_PATH"
 echo "模拟器: $DEVICE_NAME ($DEVICE_ID)"
 echo "产物:   $APP_PATH"
 echo "截图:   $OUT_DIR"
+echo "后端:   http://$LOCAL_HOST:8080/api/v1"
 echo
 
 for screen in "$@"; do
