@@ -81,16 +81,25 @@ extension SpeakingRoomViewModel {
 
     /// **禁止双重展示**（稿子 屏 02 的「三条易错点」之首）。
     ///
-    /// 稿子的原话：「录音中文本只在浮层；话音落下后归位到气泡，两者不同时显示同一句话」。
+    /// 稿子的两句话各守一件事：
     ///
-    /// 这一条不靠视图自律：`liveTranscript` 在录音结束后**仍然**留着那句话
-    /// （`serverASRReceived` 会把它写成权威转写，而同一句话也已经进了气泡），
-    /// 所以只要浮层无条件读它，屏幕上就会出现两份同样的字。判据在这里：
-    /// **不在录音态，浮层就没有内容**。
+    /// 1. 「**仅录音时出现**，话音落下后 200ms 淡入归位到气泡」⇒ 不在录音态就没有浮层；
+    /// 2. 「**不同时显示同一句话**」⇒ 那句话已经在气泡里了，浮层就不再显示它。
+    ///
+    /// 第 2 条不是第 1 条的马后炮：`serverASRReceived` **一次动作里同时**写 `liveTranscript`
+    /// 与那条气泡，而它到达时相位未必已经翻过录音态（极端时序下服务端转写会先到）。
+    /// 只守第 1 条的话，屏幕上就会出现两份同样的字 —— 这正是这一条纪律要挡的东西。
+    ///
+    /// ⚠️ **今天浮层实际上看不到内容**：`liveTranscript` 唯一的写入者是 `serverASRReceived`
+    /// （服务端转写），而它一到就把那句话也写进气泡 —— 于是第 2 条立刻把它从浮层撤掉。
+    /// 稿子的「浮层实时滚动」要的是**客户端侧的实时 ASR**，那条链路今天还没接
+    /// （`ClientASRTranscriber` 是一份没接线的文档）。见走查清单的「没做的」。
     private static func liveTranscriptFloat(from state: SpeakingRoomState) -> String? {
         guard state.phase == .recording else { return nil }
         let text = state.liveTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? nil : text
+        guard !text.isEmpty else { return nil }
+        let alreadyInABubble = state.timeline.contains { $0.speaker == .user && $0.text == text }
+        return alreadyInABubble ? nil : text
     }
 }
 

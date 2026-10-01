@@ -145,6 +145,24 @@ public struct SpeakingRoomViewModel: Equatable, Sendable {
         phase == .failed
     }
 
+    /// 说话键上方那一行状态（稿子 屏 02 的 `[status-line]`）。
+    ///
+    /// 录音时用稿子的原话「轮到你了 · 我正在听」—— 它一句话说了两件事：**该你了**，
+    /// 而且**我在听**。其余状态沿用既有的 `controlState.title`（那套中文在仓里已有判据与走查），
+    /// 不再另写一套同义的文案。
+    var statusLineText: String {
+        phase == .recording ? "轮到你了 · 我正在听" : controlState.title
+    }
+
+    /// 说话键下方那一行小字（稿子 屏 02 的 `[hint]`）。
+    ///
+    /// 录音时是稿子的安抚句「说错了没关系，结束后我们一起看」—— 它替学员挡掉的是
+    /// **当场自我纠正的冲动**（一纠正就卡壳，一卡壳这一轮就没了）。
+    /// 其余状态用它原本的角色：说明这个按钮怎么用。没有可说的就不写（`nil`）。
+    var dockHintText: String? {
+        phase == .recording ? "说错了没关系，结束后我们一起看" : controlState.detail
+    }
+
     public enum StartTapIntent: Equatable, Sendable {
         case startSession
         case beginTurn
@@ -390,6 +408,8 @@ public struct SpeakingRoomView: View {
     let model: SpeakingRoomViewModel
     let onStartTapped: () -> Void
     let onStopTapped: () -> Void
+    /// 顶部栏左边的返回（稿子 屏 02 的 `[app-icon-btn]`）。
+    let onClose: () -> Void
     let onRescueHintTapped: () -> Void
     let onHitTapped: (SpeakingRoomTimelineHit) -> Void
     let requestMicrophonePermission: @Sendable () async -> Bool
@@ -413,6 +433,7 @@ public struct SpeakingRoomView: View {
         model: SpeakingRoomViewModel,
         onStartTapped: @escaping () -> Void,
         onStopTapped: @escaping () -> Void,
+        onClose: @escaping () -> Void = {},
         onRescueHintTapped: @escaping () -> Void = {},
         onHitTapped: @escaping (SpeakingRoomTimelineHit) -> Void = { _ in },
         requestMicrophonePermission: @escaping @Sendable () async -> Bool = {
@@ -430,6 +451,7 @@ public struct SpeakingRoomView: View {
         self.model = model
         self.onStartTapped = onStartTapped
         self.onStopTapped = onStopTapped
+        self.onClose = onClose
         self.onRescueHintTapped = onRescueHintTapped
         self.onHitTapped = onHitTapped
         self.requestMicrophonePermission = requestMicrophonePermission
@@ -438,29 +460,16 @@ public struct SpeakingRoomView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
+        VStack(spacing: 0) {
+            topBar
 
-            // Recording button
-            recordingButton
-                .padding(.horizontal, 32)
+            timelineScroll
 
-            // Turn timeline (design 22) — fall back to the legacy single
-            // transcript while a session has not produced timeline rows yet.
-            if !model.timeline.isEmpty {
-                timelineView
-                    .frame(maxHeight: 260)
-                    .padding(.horizontal, 8)
-            } else if !model.liveTranscript.isEmpty {
-                transcriptView
-                    .padding(.horizontal, 24)
-            }
+            Spacer(minLength: DesignTokens.Spacing.s2)
 
-            // Stats
-            statsView
-                .padding(.horizontal, 24)
+            rescueSection
 
-            Spacer()
+            dock
 
             #if DEBUG
             // B12 / I11 debug surface. Hidden in release. The footer cycles
@@ -475,11 +484,7 @@ public struct SpeakingRoomView: View {
             }
             #endif
         }
-        .padding()
-        .overlay(alignment: .bottom) {
-            rescueHintButton
-        }
-        .animation(.easeInOut(duration: 0.35), value: model.isRescueHintAvailable)
+        .background(DesignTokens.Color.background)
         .alert("需要麦克风权限", isPresented: $showPermissionDeniedAlert) {
             Button("去设置", role: .none) {
                 openAppSettings()
@@ -489,6 +494,349 @@ public struct SpeakingRoomView: View {
             Text("FluentWork 需要麦克风权限来进行英语口语练习。请在设置中允许访问麦克风。")
         }
     }
+
+    // MARK: - 顶部栏（稿子 [room-top]：返回 / 场景与轮次 / 结束本轮）
+
+    private var topBar: some View {
+        HStack(alignment: .center, spacing: DesignTokens.Spacing.s3) {
+            Button(action: onClose) {
+                DesignTokens.Icon.chevronLeft.image
+                    .font(.system(size: DesignTokens.Component.iconPointSize * 0.8, weight: .medium))
+                    .foregroundStyle(DesignTokens.Color.textSecondary)
+                    .frame(
+                        width: DesignTokens.Component.minHitTarget,
+                        height: DesignTokens.Component.minHitTarget,
+                        alignment: .leading
+                    )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("返回")
+            .accessibilityIdentifier("room.back")
+
+            VStack(alignment: .leading, spacing: 1) {
+                if let scene = model.sceneLabel {
+                    Text(scene)
+                        .font(DesignTokens.Typography.cardTitle)
+                        .foregroundStyle(DesignTokens.Color.textPrimary)
+                }
+                // 「第 3 轮 · 标准会话」——两个事实各可能没有，**没有就不写那一段**，
+                // 不拿一个空的中隔点占位。
+                if let subtitle = topBarSubtitle {
+                    Text(subtitle)
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Color.textSecondary)
+                }
+            }
+
+            Spacer(minLength: DesignTokens.Spacing.s2)
+
+            Button {
+                onStopTapped()
+            } label: {
+                Text("结束本轮")
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Color.textSecondary)
+                    .padding(.horizontal, DesignTokens.Spacing.s3)
+                    .padding(.vertical, DesignTokens.Spacing.s1)
+                    .background(DesignTokens.Color.backgroundElevated, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("room.endTurn")
+        }
+        .padding(.horizontal, DesignTokens.Spacing.pageMargin)
+        .padding(.vertical, DesignTokens.Spacing.s2)
+    }
+
+    private var topBarSubtitle: String? {
+        switch (model.roundText, model.lengthText) {
+        case let (round?, length?):
+            return "\(round) · \(length)"
+        case let (round?, nil):
+            return round
+        case let (nil, length?):
+            return length
+        case (nil, nil):
+            return nil
+        }
+    }
+
+    // MARK: - 时间线
+
+    private var timelineScroll: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: DesignTokens.Spacing.s3) {
+                    ForEach(model.timeline) { row in
+                        timelineRow(row)
+                            .id(row.id)
+                    }
+                }
+                .padding(.horizontal, DesignTokens.Spacing.pageMargin)
+                .padding(.vertical, DesignTokens.Spacing.s2)
+            }
+            .onChange(of: model.timeline.count) { _, _ in
+                if let lastID = model.timeline.last?.id {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(lastID, anchor: .bottom)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 一条气泡：AI 靠左、学员靠右；命中标记挂在学员那条上；两个标记各自有出处。
+    @ViewBuilder
+    private func timelineRow(_ row: SpeakingRoomTimelineRow) -> some View {
+        HStack(spacing: DesignTokens.Spacing.s2) {
+            if row.isUser {
+                Spacer(minLength: DesignTokens.Spacing.s6)
+            }
+
+            VStack(alignment: row.isUser ? .trailing : .leading, spacing: DesignTokens.Spacing.s1) {
+                if !row.hits.isEmpty {
+                    HStack(spacing: DesignTokens.Spacing.s2) {
+                        ForEach(row.hits) { hit in
+                            Button {
+                                onHitTapped(hit)
+                            } label: {
+                                Label(hit.badge, systemImage: "sparkles")
+                                    .font(DesignTokens.Typography.caption)
+                                    .foregroundStyle(DesignTokens.Color.accent)
+                                    .padding(.horizontal, DesignTokens.Spacing.s2)
+                                    .padding(.vertical, 3)
+                                    .background(DesignTokens.Color.accent.opacity(0.14), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("收藏命中表达 \(hit.badge)")
+                        }
+                    }
+                }
+
+                bubble(row)
+
+                // 说话人 + 两个标记。**「重播 / 可回听」先不画**：那要音频通道
+                // （重播要这一段的时间戳，回听要录音），画一个点了没反应的按钮
+                // 比不画更糟。见走查清单的「没做的」一节。
+                HStack(spacing: DesignTokens.Spacing.s2) {
+                    Text(row.isUser ? "你说" : "AI")
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Color.textSecondary)
+
+                    if row.isStallPoint {
+                        marker(SpeakingRoomTimelineRow.stallPointMarker, color: DesignTokens.Color.training)
+                    }
+                    if row.wasInterrupted {
+                        marker(SpeakingRoomTimelineRow.interruptedMarker, color: DesignTokens.Color.textSecondary)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: row.isUser ? .trailing : .leading)
+
+            if !row.isUser {
+                Spacer(minLength: DesignTokens.Spacing.s6)
+            }
+        }
+    }
+
+    /// 气泡本体。**被打断的截断标记画在尾部**（稿子：AI 气泡尾部加灰色截断标记）——
+    /// 断在半句的地方就是读者会去找答案的地方。
+    @ViewBuilder
+    private func bubble(_ row: SpeakingRoomTimelineRow) -> some View {
+        HStack(alignment: .lastTextBaseline, spacing: DesignTokens.Spacing.s1) {
+            Text(row.text)
+                .font(DesignTokens.Typography.body)
+                .foregroundStyle(DesignTokens.Color.textPrimary)
+                .multilineTextAlignment(row.isUser ? .trailing : .leading)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if row.isListening {
+                Text("正在转写…")
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Color.textSecondary)
+            }
+
+            if row.wasInterrupted {
+                Text("…")
+                    .font(DesignTokens.Typography.body)
+                    .foregroundStyle(DesignTokens.Color.textSecondary)
+                    .accessibilityLabel(SpeakingRoomTimelineRow.interruptedMarker)
+            }
+        }
+        .padding(.horizontal, DesignTokens.Spacing.s3)
+        .padding(.vertical, DesignTokens.Spacing.s2)
+        .background(
+            row.isUser ? DesignTokens.Color.wash : DesignTokens.Color.backgroundElevated,
+            in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
+        )
+    }
+
+    private func marker(_ title: String, color: SwiftUI.Color) -> some View {
+        Text(title)
+            .font(DesignTokens.Typography.caption)
+            .foregroundStyle(color)
+            .padding(.horizontal, DesignTokens.Spacing.s2)
+            .padding(.vertical, 2)
+            .background(DesignTokens.Color.wash, in: Capsule())
+    }
+
+    // MARK: - 底部 dock（状态行 / 浮层 / 说话键 / 安抚句）
+
+    private var dock: some View {
+        VStack(spacing: DesignTokens.Spacing.s2) {
+            Text(model.statusLineText)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Color.textSecondary)
+                .accessibilityIdentifier("room.statusLine")
+
+            if let text = model.liveTranscriptFloat {
+                liveTranscriptFloat(text)
+            }
+
+            talkButton
+
+            if let hint = model.dockHintText {
+                Text(hint)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Color.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .accessibilityIdentifier("room.dockHint")
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, DesignTokens.Spacing.pageMargin)
+        .padding(.top, DesignTokens.Spacing.s2)
+        .background(DesignTokens.Color.backgroundElevated)
+    }
+
+    /// 实时转录浮层：**只在录音时存在**（稿子：仅录音时出现，话音落下后归位到气泡）。
+    ///
+    /// 「同一句话不出现在两处」这条规则住在投影里（`liveTranscriptFloat`），
+    /// 视图只负责把它画出来 —— 所以这里读不到值就是真的没有。
+    private func liveTranscriptFloat(_ text: String) -> some View {
+        HStack(spacing: DesignTokens.Spacing.s2) {
+            DesignTokens.Icon.wave.image
+                .font(.system(size: DesignTokens.Component.iconPointSize * 0.7))
+                .foregroundStyle(DesignTokens.Color.accent)
+                .symbolEffect(.variableColor.iterative, options: .repeating)
+
+            Text(text)
+                .font(DesignTokens.Typography.body)
+                .foregroundStyle(DesignTokens.Color.textPrimary)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, DesignTokens.Spacing.s3)
+        .padding(.vertical, DesignTokens.Spacing.s2)
+        .background(
+            DesignTokens.Color.background,
+            in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
+        )
+        .accessibilityIdentifier("room.liveTranscript")
+    }
+
+    /// **72pt 胶囊三态**（稿子 屏 02 的「说话键」）。
+    ///
+    /// - 等待说话：静态，3 秒周期 3% 幅度的呼吸缩放（不是闪烁 —— 闪烁在催人，呼吸在等人）；
+    /// - 录音中：胶囊换成录音色，浮层在它上方滚动；
+    /// - 处理中：环形进度 ＋ 三点动效，**不显示百分比**（进度百分比在这一屏没有意义：
+    ///   学员既不知道它算到哪，也不能做任何事）。
+    @ViewBuilder
+    private var talkButton: some View {
+        let control = model.controlState
+
+        Button {
+            switch control.primaryAction {
+            case .start:
+                Task { await requestStartWithPermission() }
+            case .stop:
+                onStopTapped()
+            case nil:
+                break
+            }
+        } label: {
+            ZStack {
+                Capsule()
+                    .fill(talkButtonFill(control.accent))
+                    .frame(height: 72)
+
+                if model.phase == .processing {
+                    HStack(spacing: DesignTokens.Spacing.s3) {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .tint(DesignTokens.Color.textPrimary)
+                        ThreeDotsIndicator()
+                    }
+                } else {
+                    HStack(spacing: DesignTokens.Spacing.s2) {
+                        Image(systemName: model.isRecording ? "checkmark" : "mic.fill")
+                            .font(.system(size: DesignTokens.Component.iconPointSize, weight: .semibold))
+                        Text(primaryActionTitle(control.primaryAction))
+                            .font(DesignTokens.Typography.cardTitle)
+                    }
+                    .foregroundStyle(DesignTokens.Color.textPrimary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(control.primaryAction == nil)
+        .modifier(BreathingCapsule(isActive: model.phase == .waitingUser))
+        .accessibilityIdentifier("room.talkButton")
+    }
+
+    private func primaryActionTitle(_ action: SpeakingRoomControlState.PrimaryAction?) -> String {
+        switch action {
+        case let .start(title, _), let .stop(title, _):
+            return title
+        case nil:
+            // 不可点的时候（自动 VAD 的等待态、处理中）按钮上写的是**状态**，不是动作 ——
+            // 一个写着「开始说话」却按不动的按钮，是在骗人去点。
+            return model.isRecording ? "我正在听" : "等待中"
+        }
+    }
+
+    private func talkButtonFill(_ accent: SpeakingRoomControlState.Accent) -> LinearGradient {
+        LinearGradient(
+            colors: [backgroundColor(for: accent), backgroundColor(for: accent).opacity(0.72)],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
+    /// 救援：三句一组（稿子 屏 03 的 `[status-line]` ＋ `[hint]` ＋ 按钮）。
+    @ViewBuilder
+    private var rescueSection: some View {
+        if let headline = model.rescueHeadline {
+            VStack(spacing: DesignTokens.Spacing.s2) {
+                Text(headline)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Color.textSecondary)
+
+                Button {
+                    onRescueHintTapped()
+                } label: {
+                    Label(model.rescueButtonTitle, systemImage: "lightbulb")
+                        .font(DesignTokens.Typography.cardTitle)
+                        .foregroundStyle(DesignTokens.Color.textPrimary)
+                        .padding(.horizontal, DesignTokens.Spacing.s4)
+                        .frame(minHeight: DesignTokens.Component.minHitTarget)
+                        .background(DesignTokens.Color.brandStrong, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("room.rescueHint")
+
+                Text(model.rescueReassurance)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Color.textSecondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, DesignTokens.Spacing.pageMargin)
+            .padding(.bottom, DesignTokens.Spacing.s2)
+            .transition(.opacity)
+            .animation(.easeInOut(duration: 0.24), value: model.isRescueHintAvailable)
+            .accessibilityIdentifier("room.rescue")
+        }
+    }
+
 
     #if DEBUG
     private func debugBadgeFooter(
@@ -536,211 +884,6 @@ public struct SpeakingRoomView: View {
 
     // MARK: - Recording Button
 
-    private var recordingButton: some View {
-        let controlState = model.controlState
-
-        return VStack(spacing: 16) {
-            if controlState.showsProgress {
-                ProgressView()
-                    .scaleEffect(1.25)
-            } else {
-                Image(systemName: symbolName(for: controlState))
-                    .font(.system(size: 48, weight: .semibold))
-                    .foregroundStyle(accentColor(for: controlState.accent))
-            }
-
-            Text(controlState.title)
-                .font(.headline)
-                .foregroundStyle(accentColor(for: controlState.accent))
-
-            if let detail = controlState.detail {
-                Text(detail)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-
-            if let action = controlState.primaryAction {
-                primaryActionButton(action)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 32)
-        .padding(.horizontal, 20)
-        .background(backgroundColor(for: controlState.accent))
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-    }
-
-    @ViewBuilder
-    private func primaryActionButton(_ action: SpeakingRoomControlState.PrimaryAction) -> some View {
-        switch action {
-        case let .start(title, systemImage):
-            Button {
-                // # weak-required: SpeakingRoomView is a struct; Task hops the Button action onto async permission.
-                Task {
-                    await requestStartWithPermission()
-                }
-            } label: {
-                Label(title, systemImage: systemImage)
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(Color.blue.gradient)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-
-        case let .stop(title, systemImage):
-            Button {
-                onStopTapped()
-            } label: {
-                Label(title, systemImage: systemImage)
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(Color.red)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var rescueHintButton: some View {
-        if model.isRescueHintAvailable {
-            Button {
-                onRescueHintTapped()
-            } label: {
-                Label("给我点儿提示", systemImage: "lightbulb")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 11)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .overlay(Capsule().strokeBorder(.quaternary, lineWidth: 0.5))
-            }
-            .buttonStyle(.plain)
-            .padding(.bottom, 12)
-            .transition(.opacity)
-        }
-    }
-
-    // MARK: - Transcript View
-
-    private var timelineView: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 10) {
-                    ForEach(model.timeline) { row in
-                        timelineRow(row)
-                            .id(row.id)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-            .onChange(of: model.timeline.count) { _, _ in
-                if let lastID = model.timeline.last?.id {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(lastID, anchor: .bottom)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func timelineRow(_ row: SpeakingRoomTimelineRow) -> some View {
-        HStack(spacing: 8) {
-            if row.isUser {
-                Spacer(minLength: 48)
-            }
-
-            VStack(alignment: row.isUser ? .trailing : .leading, spacing: 4) {
-                Text(row.text)
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                    .multilineTextAlignment(row.isUser ? .trailing : .leading)
-
-                if row.isListening {
-                    Text("正在听…")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-
-                if !row.hits.isEmpty {
-                    HStack(spacing: 6) {
-                        ForEach(row.hits) { hit in
-                            Button {
-                                onHitTapped(hit)
-                            } label: {
-                                Label(hit.badge, systemImage: "sparkles")
-                                    .font(.caption2.weight(.medium))
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 3)
-                                    .background(Color.orange.opacity(0.14), in: Capsule())
-                                    .foregroundStyle(.orange)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("收藏命中表达 \(hit.badge)")
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                row.isUser
-                    ? AnyShapeStyle(Color.blue.opacity(0.12))
-                    : AnyShapeStyle(Color.secondary.opacity(0.12)),
-                in: RoundedRectangle(cornerRadius: 14)
-            )
-
-            if !row.isUser {
-                Spacer(minLength: 48)
-            }
-        }
-    }
-
-    private var transcriptView: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("实时转写", systemImage: "waveform")
-                .font(.caption.bold())
-                .foregroundColor(.secondary)
-
-            Text(model.liveTranscript)
-                .font(.body)
-                .lineSpacing(4)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
-                .background(Color.blue.opacity(0.05))
-                .cornerRadius(12)
-        }
-    }
-
-    // MARK: - Stats View
-
-    private var statsView: some View {
-        HStack(spacing: 20) {
-            if let badge = model.lastBadge {
-                Label(badge, systemImage: "star.fill")
-                    .font(.subheadline)
-                    .foregroundColor(.orange)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.orange.opacity(0.1))
-                    .cornerRadius(8)
-            }
-
-            if model.badgeHits > 0 {
-                Label("\(model.badgeHits) Badge", systemImage: "checkmark.circle")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-
-    // MARK: - Helper Methods
-
     private func openAppSettings() {
         openSettingsAction()
     }
@@ -756,20 +899,6 @@ public struct SpeakingRoomView: View {
         }
     }
 
-    private func accentColor(for accent: SpeakingRoomControlState.Accent) -> Color {
-        switch accent {
-        case .primary:
-            return .blue
-        case .secondary:
-            return .indigo
-        case .neutral:
-            return .secondary
-        case .recording:
-            return .red
-        case .warning:
-            return .orange
-        }
-    }
 
     private func backgroundColor(for accent: SpeakingRoomControlState.Accent) -> Color {
         switch accent {
@@ -786,18 +915,59 @@ public struct SpeakingRoomView: View {
         }
     }
 
-    private func symbolName(for state: SpeakingRoomControlState) -> String {
-        switch state.accent {
-        case .primary:
-            return "mic.circle.fill"
-        case .secondary:
-            return "message.circle.fill"
-        case .neutral:
-            return "waveform.circle"
-        case .recording:
-            return "record.circle.fill"
-        case .warning:
-            return "exclamationmark.triangle.fill"
+}
+
+// MARK: - 说话键上的两个小动效
+
+/// 等待说话时的**呼吸**：3 秒一个周期、幅度 3%（稿子 屏 02 的语音状态机表）。
+///
+/// 呼吸与闪烁的区别不是审美：闪烁在**催**人（它有一种「快点」的意味），
+/// 而这一屏恰恰要等一个刚开口的人。所以周期长、幅度小、不停顿。
+private struct BreathingCapsule: ViewModifier {
+    let isActive: Bool
+
+    @State private var isExpanded = false
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(isExpanded ? 1.03 : 1.0)
+            .onAppear { updateAnimation() }
+            .onChange(of: isActive) { _, _ in updateAnimation() }
+    }
+
+    private func updateAnimation() {
+        guard isActive else {
+            withAnimation(.easeOut(duration: 0.2)) { isExpanded = false }
+            return
+        }
+        // 1.5s 单程 + 自动往返 = 3s 一个周期。
+        withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
+            isExpanded = true
+        }
+    }
+}
+
+/// 处理中的三个点。**不显示百分比**：学员既不知道它算到哪，也不能做任何事 ——
+/// 一个数字只会让他盯着它。
+private struct ThreeDotsIndicator: View {
+    @State private var phase = 0
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(DesignTokens.Color.textPrimary)
+                    .frame(
+                        width: DesignTokens.Component.statusDotDiameter * 0.7,
+                        height: DesignTokens.Component.statusDotDiameter * 0.7
+                    )
+                    .opacity(phase == index ? 1 : 0.35)
+            }
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: false)) {
+                phase = 1
+            }
         }
     }
 }

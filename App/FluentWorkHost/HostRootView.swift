@@ -100,7 +100,9 @@ struct HostRootView: View {
             // 那一刻重新算出来的另一份。把模型提到前面，两边读的就是同一个值。
             let room = SpeakingRoomViewModel.make(
                 from: store.state.speakingRoom,
-                usesAutoVAD: store.state.usesVoiceVadAuto
+                usesAutoVAD: store.state.usesVoiceVadAuto,
+                // 场景与「标准/迷你」是**创建练习那一屏**定下来的：房间只消费，不自己判断。
+                creation: store.state.createPractice.pendingCreation
             )
             ZStack(alignment: .top) {
                 SpeakingRoomView(
@@ -124,6 +126,12 @@ struct HostRootView: View {
                         case .none:
                             break
                         }
+                    },
+                    onClose: {
+                        // 顶部栏左边的返回（稿子 屏 02 的 `[app-icon-btn]`）。
+                        // 从前这一下是宿主盖在页面上的悬浮 ✕ —— 它会压住顶部栏的第一行
+                        // （回顾页那边已经栽过一次），所以退回按钮收进这一屏自己。
+                        closeSpeakingRoom()
                     },
                     onRescueHintTapped: {
                         store.dispatch(.speakingRoom(.rescueHintTapped))
@@ -189,20 +197,6 @@ struct HostRootView: View {
                 }
             } message: {
                 Text("会话会结束并生成回顾，本轮要点会保留。")
-            }
-            .overlay(alignment: .topLeading) {
-                Button {
-                    closeSpeakingRoom()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(10)
-                        .background(.ultraThinMaterial, in: Circle())
-                }
-                .padding(.leading, 16)
-                .padding(.top, 8)
-                .accessibilityLabel("关闭说的房间")
             }
             .safeAreaInset(edge: .bottom) {
                 speakingRoomBottomBar

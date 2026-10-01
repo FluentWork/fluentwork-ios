@@ -32,6 +32,10 @@ public enum DebugScreenPreview {
         case corpusEmpty
         /// 回顾页（屏 04），带样例产出。
         case review
+        /// 说的房间（屏 02）：对话中，正在录音。
+        case roomTalking
+        /// 说的房间（屏 03）：卡壳救援。
+        case roomRescue
     }
 
     public static var configured: Screen? {
@@ -49,10 +53,10 @@ public enum DebugScreenPreview {
             container.corpusClient.register { PreviewCorpusClient(blocks: corpusFixture) }
         case .corpusEmpty:
             container.corpusClient.register { PreviewCorpusClient(blocks: []) }
-        case .createPractice, .review:
-            // 回顾页**不换数据面**，而是直接派一条「轮询回来了」——这一屏的数据面是
-            // `SpeechSessionClientProtocol`（房间那个大协议），为截图去替身它，
-            // 换来的是「截图能证明轮询路径」的错觉。轮询本身有中间件判据管着，
+        case .createPractice, .review, .roomTalking, .roomRescue:
+            // 回顾页与说的房间**不换数据面**，而是直接派那条「轮询／会话回来了」——
+            // 它们的数据面是 `SpeechSessionClientProtocol`（房间那个大协议），为截图去替身它，
+            // 换来的是「截图能证明那条链路」的错觉。链路本身有中间件判据管着，
             // 这里要看的是**产出到手之后那一屏长什么样**。
             break
         }
@@ -89,6 +93,91 @@ public enum DebugScreenPreview {
                 guard let response = reviewFixture, store.state.review.phase != .ready else { continue }
                 store.dispatch(.review(.applyPoll(response)))
             }
+        case .roomTalking, .roomRescue:
+            seedRoom(into: store, rescueMode: screen == .roomRescue)
+        }
+    }
+
+    /// 把房间摆出来：**走真实那几条 action**，而不是往 `timeline` 里塞数组。
+    ///
+    /// 于是一次截图顺带证明了：AI 气泡是 `aiTurnTextDelta` 拼出来的、命中标记挂在学员那条上、
+    /// 卡壳点来自 `rescueHintBecameDue`、打断标记来自 `aiSpeaking → recording` 那对相位。
+    /// 塞数组的话，这张图只能说明「视图能画这些行」。
+    ///
+    /// 先派 `.createPractice(.created(...))`：它既把场景/时长交给顶部栏（`pendingCreation`），
+    /// 又走**真实那次交接**把人送进房间。
+    @MainActor
+    private static func seedRoom(into store: AppStore, rescueMode: Bool) {
+        store.dispatch(
+            .createPractice(
+                .created(
+                    PracticeCreation(materialID: "preview-material", sceneType: "standup", length: .standard)
+                )
+            )
+        )
+
+        var session = SpeechSessionState.initial
+        session.phase = .waitingUser
+        session.userTurnCount = 2
+        store.dispatch(.speakingRoom(.applySession(session)))
+
+        store.dispatch(
+            .speakingRoom(
+                .aiTurnTextDelta(
+                    text: "Morning! What did you get done on the rate-limit work yesterday?",
+                    turnID: "t-1"
+                )
+            )
+        )
+        store.dispatch(.speakingRoom(.aiTurnFinalized(turnID: "t-1")))
+
+        store.dispatch(
+            .speakingRoom(
+                .serverASRReceived(
+                    text: "Yesterday I finished the rate-limit design and got it reviewed.",
+                    turnID: "t-2"
+                )
+            )
+        )
+        store.dispatch(
+            .speakingRoom(
+                .badgeHit(badge: "地道表达 +1", phraseBlockID: "preview-block", tier: .sameTurnConfirm, turnID: "t-2")
+            )
+        )
+
+        // 第二句被学员开口打断：`aiSpeaking → recording` 那一对相位。
+        var aiSpeaking = session
+        aiSpeaking.phase = .aiSpeaking
+        store.dispatch(.speakingRoom(.applySession(aiSpeaking)))
+        store.dispatch(
+            .speakingRoom(
+                .aiTurnTextDelta(
+                    text: "Nice — “got it reviewed” is exactly how I'd put it. Any blockers on your side?",
+                    turnID: "t-3"
+                )
+            )
+        )
+        store.dispatch(.speakingRoom(.aiTurnFinalized(turnID: "t-3")))
+
+        var recording = aiSpeaking
+        recording.phase = .recording
+        store.dispatch(.speakingRoom(.applySession(recording)))
+        store.dispatch(
+            .speakingRoom(
+                .serverASRReceived(
+                    // 录音中那句话：它只出现在浮层里（录音结束就归位到气泡）。
+                    text: "One thing I want to flag is the cache eviction policy…",
+                    turnID: "t-4"
+                )
+            )
+        )
+
+        if rescueMode {
+            // 静默到点：救援块出现，同时给**学员那一轮**打上卡壳点。
+            var waiting = recording
+            waiting.phase = .waitingUser
+            store.dispatch(.speakingRoom(.applySession(waiting)))
+            store.dispatch(.speakingRoom(.rescueHintBecameDue))
         }
     }
 

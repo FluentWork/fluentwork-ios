@@ -196,6 +196,23 @@ struct SpeakingRoomScreenRebuildTests {
         #expect(model.timeline.contains { $0.text == spoken }, "同一句话应当在气泡里")
     }
 
+    /// 非录音态 ＋ 那句话**还不在气泡里**：浮层同样不给 —— 这一条单独守「仅录音时出现」。
+    ///
+    /// 上一条判据在这个 fixture 上会被「已经在气泡里」那半条规则一起挡住，于是相位那半条
+    /// **没有被单独守住**（变异验证当场发现的：把相位判断删掉，那条判据照样绿）。
+    /// 这一条补的就是那个空档：真实时序里它对应「学员刚说完、服务端转写还没回来」那一小段。
+    @Test func 不在录音态时浮层就没内容() {
+        let model = SpeakingRoomViewModel.make(
+            from: state(phase: .processing, liveTranscript: "One thing I want to flag is…"),
+            usesAutoVAD: false
+        )
+
+        #expect(
+            model.liveTranscriptFloat == nil,
+            "稿子写的是「仅录音时出现」—— 处理中那句话该等它归位到气泡，不是继续挂在浮层上"
+        )
+    }
+
     /// 录音中但还没听到任何字：浮层不显示（一个空浮层会占着位置闪）。
     @Test func 录音中还没有字时不出浮层() {
         let model = SpeakingRoomViewModel.make(
@@ -204,6 +221,25 @@ struct SpeakingRoomScreenRebuildTests {
         )
 
         #expect(model.liveTranscriptFloat == nil)
+    }
+
+    /// **仍在录音态，但那句话已经进了气泡** —— 浮层同样要撤。
+    ///
+    /// 这条是最刁的一种：`serverASRReceived` **一次动作里同时**写 `liveTranscript` 与气泡，
+    /// 而它到达时相位未必已经翻过录音态。只守「仅录音时出现」的话，屏幕上就是两份同样的字
+    /// （截图里撞到过）。
+    @Test func 那句话已经进了气泡时浮层要撤() {
+        let spoken = "One thing I want to flag is the cache eviction policy…"
+        var recorded = state(timeline: [userItem(spoken)], phase: .recording, liveTranscript: spoken)
+        recorded.timeline[0].status = .finalized
+
+        let model = SpeakingRoomViewModel.make(from: recorded, usesAutoVAD: false)
+
+        #expect(
+            model.liveTranscriptFloat == nil,
+            "同一句话在浮层与气泡里各出现一次 —— 这正是稿子第一条易错点要挡的东西"
+        )
+        #expect(model.timeline.contains { $0.text == spoken }, "气泡里那份要在")
     }
 
     // MARK: - 救援（屏 03）
@@ -255,5 +291,29 @@ struct SpeakingRoomScreenRebuildTests {
         #expect(rows[0].wasInterrupted)
         #expect(rows[1].isStallPoint)
         #expect(rows[0].isStallPoint == false)
+    }
+
+    // MARK: - 说话键那一区的两句文案（屏 02 的 [status-line] 与 [hint]）
+
+    /// 录音时的状态行是稿子的原话：「轮到你了 · 我正在听」—— 一句话说了两件事。
+    @Test func 录音时状态行同时说了该你了与我在听() {
+        let recording = SpeakingRoomViewModel.make(from: state(phase: .recording), usesAutoVAD: false)
+        let waiting = SpeakingRoomViewModel.make(from: state(phase: .waitingUser), usesAutoVAD: false)
+
+        #expect(recording.statusLineText == "轮到你了 · 我正在听")
+        #expect(waiting.statusLineText == "轮到你了", "等待态沿用既有那套中文，不另写一句同义的")
+        #expect(recording.statusLineText != waiting.statusLineText)
+    }
+
+    /// 录音时按钮下方是**安抚句**，不是操作说明 —— 它挡掉的是当场自我纠正的冲动。
+    @Test func 录音时按钮下方是安抚句() {
+        let recording = SpeakingRoomViewModel.make(from: state(phase: .recording), usesAutoVAD: false)
+        let waiting = SpeakingRoomViewModel.make(from: state(phase: .waitingUser), usesAutoVAD: false)
+
+        #expect(recording.dockHintText == "说错了没关系，结束后我们一起看")
+        #expect(
+            waiting.dockHintText != recording.dockHintText,
+            "等待态要说的是这个按钮怎么用，不是安抚"
+        )
     }
 }
