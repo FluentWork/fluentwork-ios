@@ -97,6 +97,11 @@ struct ScreenEntryGuardTests {
                 "drill.readinessElapsed", "drill.answerDeadlineReached", "drill.roundLoaded",
                 "drill.roundLoadFailed", "drill.verdictReceived", "drill.attemptFailed",
                 "drill.appealResolved", "drill.applyRound",
+                // 闪测的识别结果：由 `drillMiddleware` 解释 `.captureAnswer` 效应后派
+                // （听一句话 → 客户端转写 → 派它）。**屏幕派它等于替学员造一句他说过的话**，
+                // 而判定是照着这句话下的 —— 这是这一组里最不能由屏幕碰的一类。
+                // 2026-10-02 从第 ② 组搬来：它等的那条采集链路接通了。
+                "drill.answerCaptured",
                 "topic.cardsLoaded", "topic.cardsFailed", "topic.statsLoaded",
                 "topic.checkinSucceeded", "topic.checkinFailed", "topic.dismissSucceeded",
                 "topic.dismissFailed",
@@ -132,10 +137,13 @@ struct ScreenEntryGuardTests {
                 // 链路是有的；缺的是**把它接到 `.answerCaptured` 上**，而那正是界面那一票的事。
                 // 把「缺接线」说成「缺能力」会让人去重新造一遍已经有的东西。
                 // ⚠️ 2026-10-02：`startTapped` / `skipTapped` / `exitTapped` 已由 屏 05 派，
-                // 已离开这一组。留下的四条，`answerCaptured` 要等**采集链路接上**，
-                // 另外三条属于 屏 06/07（判定与申诉、结算）。
-                "drill.answerCaptured", "drill.retryTapped", "drill.advanceTapped",
-                "drill.appealTapped",
+                // 已离开这一组。
+                // ⚠️ 2026-10-02 又一次：`answerCaptured` 也离开了 —— 采集链路接通了
+                // （机器在进入 `.answering` 时发 `.captureAnswer`，中间件听一句话、
+                // 客户端转写、派 `.answerCaptured`）。它**不该**再回到这张表里：
+                // 它现在有真生产者，回来就意味着那条链路断了。
+                // 剩下的三条属于 屏 06/07（判定与申诉、结算）。
+                "drill.retryTapped", "drill.advanceTapped", "drill.appealTapped",
 
             ]
         ),

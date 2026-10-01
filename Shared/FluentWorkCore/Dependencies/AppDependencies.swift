@@ -167,31 +167,43 @@ public enum SpeechBoundaryMode: Equatable, Sendable {
 public protocol AudioEngineProtocol: AudioSink {
     func startCapture() async throws
     func events() -> AsyncStream<AudioEngineEvent>
-    /// 采集到的 PCM16（16 kHz mono），**与 `events()` 里那批 `pcmChunk` 是同一份字节的第二路**。
+    /// **采集事件的第二条出口**，给「不建会话的读者」用（今天只有一个：闪测 / 屏 05）。
     ///
-    /// ## 为什么需要第二路（2026-10-02，为闪测 / 屏 05）
+    /// ## 为什么需要第二条（2026-10-02）
     ///
     /// `events()` 是**进程级单消费者**流：房间的 `audioEventPump` 在第一次 `.sessionStartTap`
     /// 之后一直读着它（那里写着「两个进程级流的读者」）。`AsyncStream` 的多个迭代器**会各自
-    /// 分到一部分元素** —— 所以第二个读者不是「多一双眼睛」，而是**和房间抢帧**，两边都拿不全。
+    /// 分到一部分元素** —— 所以第二个读者不是「多一双眼睛」，而是**和房间抢帧**，两边都拿不全，
+    /// 而症状只是「识别不出来」。
     ///
-    /// 闪测要的是「这一轮学员说了什么」：它不建会话、不走网关，只做「采集 → 客户端转写」。
-    /// 给它一路自己的流，比让它去房间那条路上抢便宜，而且**不用改写 `events()` 的语义**
-    /// （「进程级单消费者」是事实，把事实改成「其实是个扇出」才是让下一个人踩坑的那种注释）。
+    /// 闪测只做「采集 → 客户端转写」，它不建会话；复用房间那条 pump 也不行 ——
+    /// 那条 pump 同时要往会话发 speech boundary、派 `.vadSpeechStart`，闪测没有会话，
+    /// 那等于向一个不存在的会话开一轮。
     ///
     /// ## 契约
     ///
-    /// - **与 `events()` 同寿命**：进程级、在引擎构造时建好、不 `finish`。中途开始读的人
-    ///   拿到的是**此后**的音频 —— 这正是「这一轮」要的语义。
-    /// - **两路都拿全量**：每发一个 `pcmChunk`，两路各得**同一份字节**。少了这条保证，
-    ///   这一路就是个隐性抢帧器。
-    /// - 只发采集的音频，**不含** `.speechStarted` / `.speechEnded` 等控制事件 ——
-    ///   需要边界的人从 `events()` 之外的地方拿（闪测按 5 秒窗口收尾），别在音频里编协议。
+    /// - **与 `events()` 同寿命**：进程级、构造时建好、不 `finish`。中途开始读的人拿到的是
+    ///   **此后**的事件 —— 这正是「这一轮」要的语义。
+    /// - **两路都拿全量**：每发一个事件，两路各得**同一份**。少了这条保证，这一路就是个
+    ///   隐性抢帧器。
+    /// - 带的是**采集里跟「这一句话」有关的那三个**：`.speechStarted` / `.pcmChunk` /
+    ///   `.speechEnded`。
+    ///   ⚠️ **`.speechEnded` 必须在**，这不是顺手带的：2026-10-02 这一路的第一版只带 PCM，
+    ///   契约里还写着「闪测按 5 秒窗口收尾，别在音频里编协议」—— **那句话是错的**。
+    ///   稿子说收尾靠「**话音落下**」→ 300ms 翻转判定中，而 PCM 里没有「落下」这个信号；
+    ///   死等 5 秒还会和 `answerDeadlineReached`（到点就带空文本提交）撞车，把转写结果丢掉。
+    /// - **不带** `.failedWithDetail` / `.routeChanged` / `.voiceProcessing` / `.captureDropped`
+    ///   这些会话级故障与遥测：不建会话的读者对它们没有处置权，给了只会让人以为该处理。
     ///
     /// 这是**协议要求**，不是扩展默认值：扩展方法在 `any AudioEngineProtocol` 上**静态派发**，
-    /// 默认实现会顶掉真引擎的实现 —— 于是测试全绿而真机上一条 PCM 都没有。
+    /// 默认实现会顶掉真引擎的实现 —— 于是测试全绿而真机上一条事件都没有。
     /// （同 `setVoiceProcessingEnabled` / `releaseSessionClaim` 那条注释。）
-    func capturePCMStream() -> AsyncStream<Data>
+    ///
+    /// ## 只有两条，是刻意的
+    ///
+    /// 今天恰好两类读者（房间、闪测）。**再来第三类，就应该把 `events()` 做成多播**，
+    /// 而不是开第三条 —— 三条的意义与「谁在读」会开始互相说不清。
+    func captureEventStream() -> AsyncStream<AudioEngineEvent>
     func stopCapture() async
     /// 播放已经解码好的 16kHz mono PCM16。
     ///
@@ -248,7 +260,7 @@ extension AudioEngineProtocol {
     /// ⚠️ 这条默认值**不会**顶掉真引擎的实现：它在协议里是**要求**，所以实现者写了自己的就
     /// 用自己的（哪怕调用方拿的是 `any AudioEngineProtocol`）。本仓记过的那个坑说的是
     /// 「**只**在扩展里声明」的方法 —— 那种才会静态派发。
-    public func capturePCMStream() -> AsyncStream<Data> {
+    public func captureEventStream() -> AsyncStream<AudioEngineEvent> {
         AsyncStream { continuation in
             continuation.finish()
         }
@@ -528,14 +540,14 @@ enum TestProcess {
 
 public final class PlaceholderAudioEngine: AudioEngineProtocol, Sendable {
     private nonisolated let stream: AsyncStream<AudioEngineEvent>
-    private nonisolated let pcmStream: AsyncStream<Data>
+    private nonisolated let captureStream: AsyncStream<AudioEngineEvent>
 
     public init() {
         self.stream = AsyncStream { continuation in
             continuation.finish()
         }
         // 立刻结束的空流：这个引擎不采任何东西，两路都如实地说「没有」。
-        self.pcmStream = AsyncStream { continuation in
+        self.captureStream = AsyncStream { continuation in
             continuation.finish()
         }
     }
@@ -550,8 +562,8 @@ public final class PlaceholderAudioEngine: AudioEngineProtocol, Sendable {
         stream
     }
 
-    public func capturePCMStream() -> AsyncStream<Data> {
-        pcmStream
+    public func captureEventStream() -> AsyncStream<AudioEngineEvent> {
+        captureStream
     }
 
     public func play(pcm: Data) async {}
@@ -1004,6 +1016,37 @@ public extension Container {
                 sessionAPI: self.sessionAPIClient(),
                 tokens: self.authTokenStore()
             )
+        }.shared
+    }
+
+    /// 闪测「听一句话」的那一半：引擎采集 + 客户端转写。
+    var drillAnswerCapturer: Factory<DrillAnswerCapturing> {
+        self {
+            DefaultDrillAnswerCapturer(
+                audioEngine: self.audioEngine(),
+                transcriber: self.clientASRTranscriber()
+            )
+        }.shared
+    }
+
+    /// 客户端转写器。
+    ///
+    /// ⚠️ **它此前根本没有注册点** —— `ClientASRTranscriber` 只在
+    /// `ClientASRTranscriber.swift` 的文档注释里出现过一次，三个实现谁都没进过容器，
+    /// 这正是「闪测采集链路只差接线」这句话的字面内容。
+    ///
+    /// 语言选 `en-US`：屏 05 的作答是**英文**（题干给中文意图，学员说英文表达）。
+    /// ⚠️ 这条是**产品口径**，如果哪天闪测也考中文，它要跟着变 —— 写在注册点而不是
+    /// 散在调用处，就是为了让那件事只有一个地方要改。
+    var clientASRTranscriber: Factory<ClientASRTranscriber> {
+        self {
+            #if DEBUG
+            // 转写替身（`FW_MOCK_ASR`）：与 `FW_MOCK_MIC` 配对，让整条链无人值守可跑。
+            if let script = ScriptedClientASRTranscriber.Script.fromEnvironment() {
+                return ScriptedClientASRTranscriber(script: script)
+            }
+            #endif
+            return AppleSpeechClientASRTranscriber(locale: Locale(identifier: "en-US"))
         }.shared
     }
 

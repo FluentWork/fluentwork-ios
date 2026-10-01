@@ -115,4 +115,16 @@ public enum DrillRoundEffect: Equatable, Sendable {
     case cancelTimers
     case submitAttempt(blockID: String, asrText: String, responseMS: Int)
     case appeal(recordID: Int64)
+    /// 这一题的作答窗口（= 采集窗口）开了：**听一句话**。
+    ///
+    /// 它与 `scheduleAnswerDeadline` 成对出现，但**是两件事**：那个是「5 秒到点就带空文本提交」
+    /// 的兜底，这个是「把这一句转成文字」的正路。少了它，每一题都只走超时那条路 ——
+    /// 提交上去的永远是空字符串，而服务端照常判定为失败。
+    case captureAnswer(seconds: Double)
+    /// 这一轮的采集结束，把音频会话的认领还回去。
+    ///
+    /// **必须**与第一次 `captureAnswer` 成对：认领不还的后果不是「没有声音」，是**别人的声音
+    /// 被关掉**（名册上那个名字等不到归还，此后任何一次归还都判「还有人占着」。
+    /// 见 `AudioEngineProtocol.releaseSessionClaim()` 的注释）。
+    case stopListening
 }

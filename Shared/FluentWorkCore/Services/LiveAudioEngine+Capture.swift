@@ -84,9 +84,9 @@ extension LiveAudioEngine {
                 return
             }
             continuation.yield(.pcmChunk(pcm))
-            // 第二路：同一份字节。**两路都拿全量**是 `capturePCMStream()` 的契约 ——
+            // 第二路：同一份事件。**两路都拿全量**是 `captureEventStream()` 的契约 ——
             // 只往 `events()` 发，第二路就成了一个安静的空流（读它的人等一场没有结果的采集）。
-            pcmContinuation.yield(pcm)
+            captureContinuation.yield(.pcmChunk(pcm))
             updateSpeechState(using: pcm)
         } catch {
             // `message` 保持原样（改用户可见文案是产品决定，见 R5-b 的先例），
@@ -113,6 +113,10 @@ extension LiveAudioEngine {
     /// 都被同样地度量。一条直接发边界的路径会安静地什么都不贡献给分布，
     /// 而缺失的数据看起来会像一个平静的星期，不像一个 bug。
     func yieldSpeechBoundary(_ event: AudioEngineEvent) {
+        // 第二路只带「跟这一句话有关」的那个开合（见 `captureEventStream()` 的契约）：
+        // `.speechStarted` / `.speechEnded`。`.speechEndpointed` 是会话级的收尾遥测，不带。
+        captureContinuation.yield(event)
+
         switch event {
         case .speechStarted:
             speechStartedAt = clock.now

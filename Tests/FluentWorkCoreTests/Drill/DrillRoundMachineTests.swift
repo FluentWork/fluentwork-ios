@@ -100,7 +100,41 @@ private func drive(
 
     let answering = drive(&state, .readinessElapsed(at: origin))
     #expect(state.phase == .answering)
-    #expect(answering == [.scheduleAnswerDeadline(seconds: 5)])
+    // ⚠️ 2026-10-02 改：进入作答**同时**发两个效应，顺序是「先采集、后定时器」。
+    // 这不是顺手加的一条：稿子的两句话 ——「作答 5 秒**从开始录音起算**」与
+    // 「response_ms 的计时起点是**准备期结束**」—— 只有在「录音就在准备期结束那一刻开始」
+    // 时才同时成立。而这个数组正是那句设计在代码里的唯一落点。
+    // 另一条理由是这里的顺序会被读法影响：`captureAnswer` 是正路，
+    // `scheduleAnswerDeadline` 是「到点还没听清就带空文本提交」的兜底。
+    #expect(
+        answering == [
+            .captureAnswer(seconds: 5),
+            .scheduleAnswerDeadline(seconds: 5),
+        ]
+    )
+}
+
+/// 作答期间来的 `.attemptFailed` **被机器忽略** —— 这是「采集出错不该把这一轮判失败」的那张底。
+///
+/// 值得单独钉住，是因为它是**兜底而不是设计**：`reduce` 的 `default: return []` 恰好把它吞掉。
+/// 哪天有人给 `.answering` 加一条 `attemptFailed` 分支（比如想让采集失败直接判失败），
+/// 这条会红 —— 而那正是该有人拍的时候。
+///
+/// ⚠️ 反向那一半是必要的：少了它，「这个事件谁都不管」也能让上面那条通过。
+@Test func anAttemptFailureWhileAnsweringIsIgnoredByTheMachine() {
+    var state = DrillRoundState()
+    _ = drive(&state, .start(size: 10), .roundLoaded(round(["b1"])), .readinessElapsed(at: origin))
+    #expect(state.phase == .answering)
+
+    let ignored = DrillRoundMachine.reduce(&state, event: .attemptFailed(message: "mic down"))
+    #expect(ignored.isEmpty, "作答期间被判失败 —— 采集出错的那张兜底没了")
+    #expect(state.phase == .answering)
+
+    // 反向：**判定中**是接受的 —— 这条让「忽略」成为一个有边界的规则，而不是「没人管」。
+    _ = drive(&state, .answerCaptured(asrText: "x", at: origin))
+    #expect(state.phase == .judging)
+    _ = DrillRoundMachine.reduce(&state, event: .attemptFailed(message: "boom"))
+    #expect(state.phase == .failed(message: "boom"))
 }
 
 @Test func thePromptTypeCarriesNothingThatWouldGiveTheAnswerAway() {

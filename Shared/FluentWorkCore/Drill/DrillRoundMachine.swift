@@ -36,7 +36,13 @@ public enum DrillRoundMachine {
         case (.ready, .readinessElapsed(let date)):
             state.readinessEndedAt = date
             state.phase = .answering
-            return [.scheduleAnswerDeadline(seconds: state.policy.answerSeconds)]
+            // 两件事一起发，顺序说明了它们的关系：**采集是正路，定时器是兜底**。
+            // 「作答 5 秒从开始录音起算」＋「response_ms 计时起点是准备期结束」这两句
+            // 只有在这里同时成立 —— 录音就是在准备期结束那一刻开始的。
+            return [
+                .captureAnswer(seconds: state.policy.answerSeconds),
+                .scheduleAnswerDeadline(seconds: state.policy.answerSeconds),
+            ]
 
         case (.answering, .answerCaptured(let text, let date)):
             return submit(&state, asrText: text, at: date)
@@ -71,7 +77,7 @@ public enum DrillRoundMachine {
 
         case (.judging, .attemptFailed(let message)):
             state.phase = .failed(message: message)
-            return [.cancelTimers]
+            return [.cancelTimers, .stopListening]
 
         case (.verdict, .retryTapped) where state.awaitingConfirmation:
             guard let submission = state.lastSubmission else { return [] }
@@ -87,7 +93,8 @@ public enum DrillRoundMachine {
         case (.verdict, .advanceTapped):
             guard !state.queue.isEmpty else {
                 state.phase = .settled
-                return []
+                // 这一轮问完了：把采集的认领还回去（与第一次 `captureAnswer` 成对）。
+                return [.stopListening]
             }
             state.current = state.queue.removeFirst()
             state.position += 1
@@ -117,7 +124,7 @@ public enum DrillRoundMachine {
             state.lastAppeal = nil
             state.lastSubmission = nil
             state.readinessEndedAt = nil
-            return [.cancelTimers]
+            return [.cancelTimers, .stopListening]
 
         default:
             return []

@@ -14,9 +14,12 @@ public enum DrillTaskID {
     public static let appeal: CancellationID = "drill.appeal"
     public static let readiness: CancellationID = "drill.readiness"
     public static let answerDeadline: CancellationID = "drill.answer-deadline"
+    /// 听并转写这一句话。与 `answerDeadline` **同一道窗口、两个作用**：
+    /// 它被下一题的 `.captureAnswer` 或收尾的 `.stopListening` 取消。
+    public static let capture: CancellationID = "drill.capture"
 
     public static var all: [CancellationID] {
-        [fetchRound, judge, appeal, readiness, answerDeadline]
+        [fetchRound, judge, appeal, readiness, answerDeadline, capture]
     }
 }
 
@@ -35,6 +38,7 @@ public enum DrillTaskID {
 /// 提交（`responseMS = answerSeconds * 1000`）。视图只负责把学员说的话交上来。
 public func drillMiddleware(container: Container) -> Middleware<AppState, AppAction> {
     let client = container.drillClient()
+    let capturer = container.drillAnswerCapturer()
 
     return { store, action, next in
         guard case let .drill(drillAction) = action,
@@ -56,7 +60,12 @@ public func drillMiddleware(container: Container) -> Middleware<AppState, AppAct
 
         let apply = next(.drill(.applyRound(round, sourceSessionID: carriedSessionID)))
         let interpreted = effects.map {
-            interpretDrillEffect($0, client: client, sessionID: carriedSessionID)
+            interpretDrillEffect(
+                $0,
+                client: client,
+                capturer: capturer,
+                sessionID: carriedSessionID
+            )
         }
         return .merge([apply] + interpreted)
     }
@@ -65,9 +74,33 @@ public func drillMiddleware(container: Container) -> Middleware<AppState, AppAct
 private func interpretDrillEffect(
     _ effect: DrillRoundEffect,
     client: DrillClient,
+    capturer: DrillAnswerCapturing,
     sessionID: String?
 ) -> Effect<AppAction> {
     switch effect {
+    case let .captureAnswer(seconds):
+        return .task(id: DrillTaskID.capture) {
+            do {
+                let text = try await capturer.captureAnswer(seconds: seconds)
+                guard !Task.isCancelled, let text else { return nil }
+                return .drill(.answerCaptured(asrText: text, at: Date()))
+            } catch is CancellationError {
+                return nil
+            } catch {
+                // **刻意不派失败。** 「这一句没听清」不是「这一轮坏了」：5 秒到点的
+                // `.answerDeadlineReached` 会带着空文本照常提交，服务端照常判定。
+                // 中间件在这里再报一次，屏幕上就会出现两个互相矛盾的说法
+                // （「会话没能继续」＋「这一轮没能开始」），而学员真正该做的事还是「再说一次」。
+                return nil
+            }
+        }
+
+    case .stopListening:
+        return .task(id: DrillTaskID.capture) {
+            await capturer.stopListening()
+            return nil
+        }
+
     case let .fetchRound(size):
         return .task(id: DrillTaskID.fetchRound) {
             do {

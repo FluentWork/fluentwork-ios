@@ -18,12 +18,12 @@ public actor LiveAudioEngine: AudioEngineProtocol {
     nonisolated static let maxCaptureRecoveries = 3
     private nonisolated let stream: AsyncStream<AudioEngineEvent>
     let continuation: AsyncStream<AudioEngineEvent>.Continuation
-    /// 第二路：同一份 PCM 的另一条出口，给不建会话的读者（闪测的客户端转写）用。
-    /// 两路都在**发的时候**各拿一份，见 `capturePCMStream()` 的契约。
-    private nonisolated let pcmStream: AsyncStream<Data>
-    /// 与 `continuation` 一样是 internal 而不是 `private`：采集 tap 在
+    /// 第二条采集出口，给不建会话的读者（闪测的客户端转写）用。
+    /// 两路都在**发的时候**各拿一份，见 `captureEventStream()` 的契约。
+    private nonisolated let captureStream: AsyncStream<AudioEngineEvent>
+    /// 与 `continuation` 一样是 internal 而不是 `private`：采集与边界都在
     /// `LiveAudioEngine+Capture.swift` 里，另一个文件要用它扇出第二路。
-    let pcmContinuation: AsyncStream<Data>.Continuation
+    let captureContinuation: AsyncStream<AudioEngineEvent>.Continuation
 
     var converter: AVAudioConverter?
     var sourceFormat: AVAudioFormat?
@@ -156,14 +156,14 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         )
         self.stream = pair.stream
         self.continuation = pair.continuation
-        // 第二路与 `events()` **同寿命**（进程级、不 finish）：中途开始读的人拿到的是此后的
-        // 音频。缓冲策略与上面一致，理由也一样 —— 读得慢的人应该丢旧的，不是把引擎堵住。
-        let pcmPair = AsyncStream.makeStream(
-            of: Data.self,
+        // 第二路与 `events()` **同寿命**（进程级、不 finish）：中途开始读的人拿到的是此后的事件。
+        // 缓冲策略与上面一致，理由也一样 —— 读得慢的人应该丢旧的，不是把引擎堵住。
+        let capturePair = AsyncStream.makeStream(
+            of: AudioEngineEvent.self,
             bufferingPolicy: .bufferingNewest(64)
         )
-        self.pcmStream = pcmPair.stream
-        self.pcmContinuation = pcmPair.continuation
+        self.captureStream = capturePair.stream
+        self.captureContinuation = capturePair.continuation
         self.sessionOwner = sessionOwner
         self.decoder = decoder
         self.interruptionObserver = interruptionObserver
@@ -182,8 +182,8 @@ public actor LiveAudioEngine: AudioEngineProtocol {
         stream
     }
 
-    nonisolated public func capturePCMStream() -> AsyncStream<Data> {
-        pcmStream
+    nonisolated public func captureEventStream() -> AsyncStream<AudioEngineEvent> {
+        captureStream
     }
 
     public func startCapture() async throws {

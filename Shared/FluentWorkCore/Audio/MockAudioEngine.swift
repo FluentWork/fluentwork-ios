@@ -108,10 +108,10 @@ public actor MockAudioEngine: AudioEngineProtocol {
     /// 调用方在任意上下文里取流，不能要求先跳到这个 actor 上。
     private nonisolated let stream: AsyncStream<AudioEngineEvent>
     private let continuation: AsyncStream<AudioEngineEvent>.Continuation
-    /// 第二路（见 `AudioEngineProtocol.capturePCMStream()`）。替身也必须有 —— 它正是
+    /// 第二路（见 `AudioEngineProtocol.captureEventStream()`）。替身也必须有 —— 它正是
     /// 「无人值守验证闪测采集」时唯一在产音频的那一路。
-    private nonisolated let pcmStream: AsyncStream<Data>
-    private let pcmContinuation: AsyncStream<Data>.Continuation
+    private nonisolated let captureStream: AsyncStream<AudioEngineEvent>
+    private let captureContinuation: AsyncStream<AudioEngineEvent>.Continuation
 
     private var utteranceTask: Task<Void, Never>?
     private var autoTask: Task<Void, Never>?
@@ -134,14 +134,21 @@ public actor MockAudioEngine: AudioEngineProtocol {
         let pair = AsyncStream.makeStream(of: AudioEngineEvent.self)
         self.stream = pair.stream
         self.continuation = pair.continuation
-        let pcmPair = AsyncStream.makeStream(of: Data.self)
-        self.pcmStream = pcmPair.stream
-        self.pcmContinuation = pcmPair.continuation
+        let capturePair = AsyncStream.makeStream(of: AudioEngineEvent.self)
+        self.captureStream = capturePair.stream
+        self.captureContinuation = capturePair.continuation
     }
 
     // MARK: - Capture (mocked)
 
+    /// 起了几次采集。真引擎的 `startCapture()` **不幂等**（会拆了重装 tap），所以
+    /// 「整轮只起一次」这条契约得有人在替身上钉住 —— 记数就是为了让它可断言。
+    private(set) var startCaptureCalls = 0
+    /// 同上，停了几次。
+    private(set) var stopCaptureCalls = 0
+
     public func startCapture() async throws {
+        startCaptureCalls += 1
         // 不碰麦克风、不申请权限 —— 这正是这个替身存在的理由。会话只配成播放：
         // 生产那条 `.playAndRecord` 会让系统全程显示麦克风在用。
         try preparePlaybackSession?()
@@ -157,6 +164,7 @@ public actor MockAudioEngine: AudioEngineProtocol {
     }
 
     public func stopCapture() async {
+        stopCaptureCalls += 1
         autoTask?.cancel()
         autoTask = nil
         utteranceTask?.cancel()
@@ -171,8 +179,8 @@ public actor MockAudioEngine: AudioEngineProtocol {
         stream
     }
 
-    public nonisolated func capturePCMStream() -> AsyncStream<Data> {
-        pcmStream
+    public nonisolated func captureEventStream() -> AsyncStream<AudioEngineEvent> {
+        captureStream
     }
 
     public func setVoiceProcessingEnabled(_ enabled: Bool) async {
@@ -185,6 +193,7 @@ public actor MockAudioEngine: AudioEngineProtocol {
         guard !isSpeaking else { return }
         isSpeaking = true
         continuation.yield(.speechStarted)
+        captureContinuation.yield(.speechStarted)
 
         let interval = script.chunkInterval
         let chunkCount = max(
@@ -227,8 +236,8 @@ public actor MockAudioEngine: AudioEngineProtocol {
         }
         let chunk = Self.toneChunk(offset: sampleOffset)
         continuation.yield(.pcmChunk(chunk))
-        // 两路同一份字节，见 `capturePCMStream()` 的契约。
-        pcmContinuation.yield(chunk)
+        // 两路同一份事件，见 `captureEventStream()` 的契约。
+        captureContinuation.yield(.pcmChunk(chunk))
         sampleOffset += Self.samplesPerChunk
     }
 
@@ -238,6 +247,8 @@ public actor MockAudioEngine: AudioEngineProtocol {
         utteranceTask = nil
         isSpeaking = false
         continuation.yield(.speechEnded)
+        // ⚠️ 第二路**必须**有这个收尾：闪测按「话音落下」收尾（稿子），不是死等 5 秒。
+        captureContinuation.yield(.speechEnded)
     }
 
     /// 20ms 的 1kHz 正弦（16kHz mono PCM16）。

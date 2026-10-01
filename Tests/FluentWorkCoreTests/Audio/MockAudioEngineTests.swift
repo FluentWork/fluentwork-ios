@@ -36,14 +36,17 @@ struct MockAudioEngineTests {
         )
     }
 
-    /// **第二路 PCM 流与 `events()` 都拿全量**（`capturePCMStream()` 的契约）。
+    /// **第二路与 `events()` 都拿全量**（`captureEventStream()` 的契约）。
     ///
     /// 这条判据钉的不是「多一个读者」，而是「**不和另一个读者抢帧**」：`AsyncStream` 的多个
     /// 迭代器会各自分到**一部分**元素 —— 在 Swift 里「再开一路读同一件事」不是免费的，
     /// 发的人必须两边都发。少了这条，闪测读到的会是一段被房间啃掉一半的音频，
     /// 而它在屏幕上只表现为「识别不出来」——最难查的那种症状。
-    @Test("两个读者各拿全量：events() 与 capturePCMStream() 得到同一批字节")
-    func bothReadersSeeEveryChunk() async {
+    ///
+    /// ⚠️ 断言里**必须有 `.speechEnded`**：第一版只带 PCM，于是闪测只能死等 5 秒，
+    /// 而那会和 `answerDeadlineReached`（到点就带空文本提交）撞车。收尾信号是契约的一部分。
+    @Test("两个读者各拿全量：events() 与 captureEventStream() 得到同一批事件")
+    func bothReadersSeeEveryCaptureEvent() async {
         let engine = MockAudioEngine(
             script: MockAudioEngine.Script(
                 utteranceDuration: .milliseconds(60),
@@ -52,14 +55,14 @@ struct MockAudioEngineTests {
             playback: RecordingPlaybackEngine()
         )
         let events = engine.events()
-        let pcm = engine.capturePCMStream()
+        let secondary = engine.captureEventStream()
         let eventBox = EventBox()
-        let chunkBox = ChunkBox()
+        let secondaryBox = EventBox()
 
         // 两个读者**同时**挂着读 —— 这正是房间里那条 pump 已经在读时，闪测又来读的样子。
         await withTaskGroup(of: Void.self) { group in
             group.addTask { for await event in events { await eventBox.append(event) } }
-            group.addTask { for await chunk in pcm { await chunkBox.append(chunk) } }
+            group.addTask { for await event in secondary { await secondaryBox.append(event) } }
             group.addTask {
                 await engine.beginManualSpeech()
                 try? await Task.sleep(for: .milliseconds(400))
@@ -68,21 +71,44 @@ struct MockAudioEngineTests {
             group.cancelAll()
         }
 
-        let fromEvents = await eventBox.events.compactMap { event -> Data? in
-            if case let .pcmChunk(data) = event { return data }
-            return nil
+        /// 第二路按契约只带这三个；`events()` 里还混着 `.captureFirstBuffer` 等会话级遥测，
+        /// 拿它整条比会把「第二路少了遥测」误判成失败。
+        func spokenPart(_ events: [AudioEngineEvent]) -> [AudioEngineEvent] {
+            events.filter { event in
+                switch event {
+                case .speechStarted, .speechEnded, .pcmChunk: return true
+                default: return false
+                }
+            }
         }
-        let fromPCM = await chunkBox.chunks
 
-        #expect(fromEvents.count == 3, "events() 只拿到 \(fromEvents.count) 块")
+        let fromEvents = spokenPart(await eventBox.events)
+        let fromSecondary = await secondaryBox.events
+
         #expect(
-            fromPCM.count == 3,
+            fromEvents.first == .speechStarted && fromEvents.last == .speechEnded,
+            "前提没成立：`events()` 自己就没拿全（\(fromEvents.count) 条），下面比什么都说明不了"
+        )
+        #expect(
+            fromSecondary.first == .speechStarted,
+            "第二路没有开头：它拿不到 `.speechStarted`，闪测就不知道一轮是什么时候起的"
+        )
+        #expect(
+            fromSecondary.last == .speechEnded,
             """
-            第二路只拿到 \(fromPCM.count) 块 —— 两路在抢同一批，被分掉了。
-            契约是「两路都拿全量」：发一个 `pcmChunk` 就要往两边各发一份。
+            第二路最后一个是 \(String(describing: fromSecondary.last))，不是 `.speechEnded` ——
+            这正是 2026-10-02 第一版写窄的地方：没有收尾信号，闪测只能死等 5 秒。
             """
         )
-        #expect(fromPCM == fromEvents, "两路的字节必须逐块相同")
+        #expect(
+            fromSecondary == fromEvents,
+            """
+            两路拿到的事件必须逐条相同（顺序与内容）。
+            契约是「两路都拿全量」：发一个事件就要往两边各发一份。
+            events()=\(fromEvents.count) 条，第二路=\(fromSecondary.count) 条
+            """
+        )
+        #expect(fromSecondary.count == 5, "speechStarted + 3 块 + speechEnded，实际 \(fromSecondary.count)")
     }
 
     /// **交付第一块 PCM 之前上报 `.captureFirstBuffer`，且整条进程只报一次。**
@@ -341,11 +367,6 @@ private func collect(
         group.cancelAll()
     }
     return await box.events
-}
-
-private actor ChunkBox {
-    private(set) var chunks: [Data] = []
-    func append(_ chunk: Data) { chunks.append(chunk) }
 }
 
 private actor EventBox {
