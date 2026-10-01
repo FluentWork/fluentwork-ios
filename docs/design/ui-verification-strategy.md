@@ -193,44 +193,66 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
   **已在 F2 落地时一并做完**（`8bd2808`，投影 + 视图 + 5 条判据）。
 - **G2 语音偏好（含 AI 语速）**：仍然成立 —— 语速是合成参数，跨仓，要先定走哪条路。
 - ⚠️ **闪测屏（E1/E2/E4）卡在一条不存在的采集链路上** —— ④ 动工时才发现，**这是 §7 这一节
-  第一次没能提前看出来的前置条件**：
-  - `DrillAction.answerCaptured(asrText:at:)` 要的是**文本**，而客户端今天没有任何东西产出它。
-    `ClientASRTranscriber`（`Shared/FluentWorkCore/Services/ClientASRTranscriber.swift`）是一份
-    **只有文档注释、从未接线**的协议：`clientASRTranscriber` 在全仓的唯一出现就是它自己注释里的
-    `Container.shared.clientASRTranscriber()`；`pcmAudioStream()` 同理零实现。
-  - 唯一真实的采集路径是对话房间的 `LiveAudioEngine.startCapture()`，绑在
-    `SpeechSessionMiddleware` 的 WSS 会话上。
-  - 技术方案（`fluentwork-meta` `32_…iOS App端技术设计文档.md:127`）把 E1–E4 的落点写成
-    「**计时 + 异步判定 + 队列调度**」，并且 `:224` 写着「闪测/对话/跟读**共用一次授权**」——
-    也就是说「说的话怎么变成文本」被划在了 E1–E4 之外，属音频链路。
-  - ⇒ 闪测屏要动，先要有一个决定：复用房间的 WSS ASR、还是上设备端 Apple Speech、
-    还是 Volcengine。这条决定的方向会牵到 `SharedAudioSessionOwner` 的租约名册（F6/R1–R10 那一摊）。
-    **在它定下来之前，闪测屏保持占位**；守卫 A 的第 ② 组留着那 7 条 `drill.*` 并写明了原因。
-- **投影搬迁**（第 2 节）。
-- ⚠️ **工作台 Tab 1（屏 01）是 ④ 里唯一同时缺「一条拍板 + 两个字段 + 一个页面」的屏。**
-  下面五条都是读码量出来的，动手前先摆出来，免得又靠印象：
+  第一次没能提前看出来的前置条件**。把**已经存在**的那条链路与**断掉的两格**摆清楚
+  （2026-10-01 逐层核过）：
 
-  1. **形态本身要先拍板。** 09-26 稿 屏 01 是六段（问候条 · 今日三件事 · 今日入口卡 ·
-     每日一读卡 · 话题建议卡 · 练习历史）；而 `77_` **P0-13**（用户原话「产品需求其实就跟
-     deepseek app 的会话列表一样」）说房间入口应是**会话列表**。这两条**互相取代**，不是叠加
-     （`问题总清单-PRD模块轴.md:245` 记着这件事）。选哪边决定 Tab 1 还要不要「今日入口卡」，
-     也决定现有那个「功能入口模块列表」留不留。
-  2. **「本周练习次数」（问候条的进度环）没有数据源。** `GET /api/v1/sessions` 的回包是
+  | 层 | 状态 | 证据 |
+  |---|---|---|
+  | 后端 API | ✅ 三条全在 | `GET /api/v1/drill/round`、`POST /drill/judge`、`POST /drill/appeal`（`internal/drill/http.go:31-33`） |
+  | iOS 契约 | ✅ | `DrillModels.swift`：`DrillCard` / `DrillRound` / `DrillVerdict`（含 `asrText`、`promoted`、`canAppeal`）/ `DrillAppealOutcome` |
+  | 数据面（带 token） | ✅ | `DefaultDrillClient`（`dueRound` / `judge` / `appeal`） |
+  | 容器注册 | ✅ | `AppDependencies.swift:892` 的 `drillAPIClient()` |
+  | 状态机（纯函数） | ✅ | `DrillRoundMachine` + `DrillRoundState`（9 个相位：idle / loading / empty / ready / answering / judging / verdict / settled / failed） |
+  | 中间件（发效应） | ✅ | `DrillMiddleware`：取题 / 准备期 1s / **5 秒作答截止** / 判定 / 申诉 —— 五条可取消任务挂在 `DrillTaskID` 固定 id 上；「5 秒限时」这条规则只写在机器里一份 |
+  | store 接线 | ✅ | `AppReducer` 里 `pullback(drillReducer, …)`，唯一写入口是 `.applyRound` |
+  | 派生层 | ✅ | `DrillState` 自带投影访问器（`recognitionText` / `successRate` / `automatedDelta` / `canAppeal` / `awaitingConfirmation`）——**这一层本来就是给屏幕备的** |
+  | 导航 | ✅ | ③：`AppRoute.drill` → `.selectTab(.flashTest)`；Tab 2「闪测」在 `AppRootTabView` 里 |
+  | **屏幕** | ❌ | `HostRootView.flashTestPlaceholder`（`.drill` 与 Tab 2 根共用同一个占位） |
+  | **作答文本的来源** | ❌ | `DrillAction.answerCaptured(asrText:at:)` 要文本，**客户端没有任何东西产出它** |
+
+  两条**看起来像、实际不是**的路（都核过）：
+  - `ClientASRTranscriber`（`Services/ClientASRTranscriber.swift`）：**只有文档注释**，
+    零实现、零注册 —— `clientASRTranscriber` 在全仓的唯一出现就是它自己注释里的示例，
+    `pcmAudioStream()` 同理。
+  - **每日一读「跟读」也不采音频**：`DailyReadMiddleware` 发的是
+    `client.submitFollowRead(dailyReadID:audioURL: **nil**)` —— 它只是「我读过了」的信号。
+
+  唯一真实的采集路径是对话房间那条：`LiveAudioEngine.startCapture()` → WSS →
+  服务端 ASR → `speakingRoom.serverASRReceived`，绑在 `SpeechSessionMiddleware` 的会话上。
+
+  ⇒ **要做的决定**：复用房间的 WSS ASR / 设备端 Apple Speech / Volcengine。
+  方向会牵到 `SharedAudioSessionOwner` 的租约名册（F6/R1–R10 那一摊）。
+  **在它定下来之前闪测屏保持占位**；守卫 A 的第 ② 组留着那 7 条 `drill.*` 并写明了原因。
+- **投影搬迁**（第 2 节）。
+- ⚠️ **工作台 Tab 1（屏 01）** —— **形态已定：以 09-26 稿 屏 01 为准**（2026-10-01 核对：
+  稿子里 `会话列表` / `deepseek` / `房间列表` / `新建会话` **零命中**，而 `继续上次` / `入口卡`
+  各 6 命中 ⇒ 稿子给的就是 PRD §六 那套六段式；`77_` P0-13「房间入口＝会话列表」写于 09-11，
+  比稿子早，没有被吸收）。**剩下的不是形态问题，是三个字段缺 + 一个页面缺**，
+  下面五条都是读码量出来的：
+
+  1. **稿子 屏 01 的六段**（自上而下）：问候条 · 今日三件事 · 今日入口卡 · 每日一读卡 ·
+     话题建议卡 · 练习历史。**现成的有四段**：每日一读卡（`DailyReadState`）、话题建议卡
+     （`TopicState`）、练习历史的列表（`SessionHistoryState`）、入口卡的「继续上次」
+     （`sessionHistory` 最近一场 + `enterRoom(continueFrom:)`）。
+  2. **「本周练习次数」（问候条的进度环 2/3）没有数据源。** `GET /api/v1/sessions` 的回包是
      `items` / `next_cursor` / `size`（`internal/sessionhistory/model.go:24-28`），**没有 total**；
-     语料库列表同理（`ListPhraseBlocksResponse` 只有 `items` / `next_cursor` / `cursor_reset`）。
      客户端是分页的，**从已加载的那一页数不出「本周几次」** —— 要后端补 total 或 count。
   3. **「话术块 N · 已自动化 M」有现成数据源，但它住在话题模块的端点上。**
      `GET /topic-cards/stats` 的 `blocks_total` / `green_blocks` 就是**整个语料**与其中的绿子集
-     （`internal/topic/stats.go:38-43`，注释明写 "the whole corpus"）。而 iOS 侧今天**零读点**
-     （`blocksTotal` / `greenBlocks` 全仓无命中）。要用它，得先定：工作台直接调这个端点，
-     还是后端另给一个。
+     （`internal/topic/stats.go:38-43`，注释明写 "the whole corpus"）。
+     而 iOS 侧今天**零读点**。要用它，得先定：工作台直接调这个端点，还是后端另给一个。
   4. **「今日三件事」（练一次 / 读一篇 / 闪测一轮，完成即勾销）没有任何落点。**
      iOS 全仓搜 `三件事` / `todayTask` / `weeklyGoal` / `本周` / `progressRing` **零命中**，
-     服务端也没有「今天做了什么」的状态。要么后端加，要么从形态里去掉。
-  5. **「开始新练习」指向的创建练习弹层（屏 11）标着「缺（关键路径）」**（`brief.md:51`）。
+     服务端也没有「今天做了什么」的状态。**前两件客户端能近似算出来（今天有没有练习过 /
+     今天有没有读过），第三件不行** —— 闪测今天连「一轮完成」都没有落点，
+     客户端自己记一重启就没了，那会是一条**会话级的谎**。要么后端加，要么从形态里去掉。
+  5. **「开始新练习」指向的创建练习弹层（屏 11）标着「缺（关键路径）」**（`brief.md:51`）；
+     练习历史条目也缺「标题」与「新增话术块数」（`SessionHistoryItem` 只有
+     `session_id` / `scene_type` / `status` / `started_at` / `duration_sec` / `material_id`）。
 
-  ⇒ **在 1 定下来之前，Tab 1 的绝大部分工作是在赌一种形态。** 能不等这条决定就做的，
-  只剩 Tab 1 之外的**回顾页骨架屏**（D2 已在 ④ 里做完）。
+  ⇒ **这三件里有两件是跨仓契约**（补 total、补统计端点），一件是产品决定（今日三件事留不留）。
+  不依赖它们也能先做的：问候条问候语、入口卡的「继续上次」、每日一读卡、话题建议卡、
+  练习历史列表 —— **五段里四段是现成的**。
 
 ---
 
@@ -255,7 +277,7 @@ P2 的断言必须落在**投影后**的值上，不是 `state` 上 —— 否�
 | 项 | 状态 |
 |---|---|
 | **闪测（E1/E2/E4）** | ⏸ 一条**不存在的采集链路**（见 §7 那条 ⚠️）—— 要定 WSS ASR / Apple Speech / Volcengine |
-| **工作台 Tab 1（屏 01）** | ⏸ **形态本身没拍板**（PRD §六 六段式 vs P0-13 会话列表式）+ 两个字段缺 + 关键路径页缺（见 §7 那条 ⚠️） |
+| **工作台 Tab 1（屏 01）** | **形态已定**（09-26 稿 屏 01，2026-10-01 核对）—— 卡的是**两个跨仓契约字段 + 一个产品决定**：进度环缺 total、统计住在话题端点、今日三件事无落点（见 §7 那条 ⚠️）。五段里四段是现成的 |
 | 话题建议屏（H1–H3 + M11） | **✅ 已完成**（`2528bdf`）。10 条判据，守卫 A 第 ② 组因此缩了 7 条 |
 | D2 丢弃 / 编辑入口 | **✅ 已完成**（`81b4f0a`）。投影补 `sceneTag` / `functionTag` / `canEdit` / `canDiscard`，视图补编辑面板（按 `RefineCardEditField.allCases` 铺开）+ 「已丢弃」段的撤回入口；3 条新判据，8 条变异全部咬住 |
 | 回顾页骨架屏 | **✅ 已完成**（`ad0399e`）。投影**直通** `state.showsSkeleton`（那条死规则第一次有人读），新增共用组件；2 条新判据，变异 2/2 咬住 |
