@@ -103,6 +103,12 @@ struct ScreenEntryGuardTests {
                 // 创建练习（屏 11）：素材建好 / 建失败，由 `createPracticeMiddleware` 派。
                 // 屏幕派它们等于自己造一个「素材已经建好了」的结果。
                 "createPractice.created", "createPractice.submissionFailed",
+                // 命中徽章：由**传输层**派（socket 的 `feedback.badge` 帧 →
+                // `appCrossCuttingReducer` → `BadgeFeedbackReducer` → 屏幕上的徽章层）。
+                // 屏幕上曾经有一个 DEBUG 注入页脚，它是这个 action 唯一的**屏幕**入口 ——
+                // 那条页脚连着「注入徽章」一起删掉了（它不在稿子里），所以这里要写明理由，
+                // 而不是让守卫以为「数据层做完了、屏幕上没有入口」。
+                "speakingRoom.badgeHit",
                 "network.connectivityChanged",
             ]
         ),

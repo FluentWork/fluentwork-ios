@@ -152,30 +152,6 @@ struct HostRootView: View {
                             isFavorite: true,
                             pinned: true
                         )))
-                    },
-                    onDebugBadgeInjected: { tier, hitNumber in
-                        // DEBUG-only B12 / I11 verification path. Mirrors the
-                        // shape of the backend `feedback.badge` frame so the
-                        // full wiring — SpeakingRoomFeature.badgeHit →
-                        // appCrossCuttingReducer → BadgeFeedbackReducer →
-                        // BadgeFeedbackOverlay — can be exercised without a
-                        // real B12 corpus hit.
-                        let sample = [
-                            "地道表达 +1",
-                            "ship it",
-                            "let's wrap up",
-                            "表达自然"
-                        ][(hitNumber - 1) % 4]
-                        store.dispatch(
-                            .speakingRoom(
-                                .badgeHit(
-                                    badge: sample,
-                                    phraseBlockID: "debug-\(hitNumber)",
-                                    tier: tier,
-                                    turnID: "turn-debug-\(hitNumber)"
-                                )
-                            )
-                        )
                     }
                 )
                 .navigationTitle("说的房间")

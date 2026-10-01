@@ -414,20 +414,8 @@ public struct SpeakingRoomView: View {
     let onHitTapped: (SpeakingRoomTimelineHit) -> Void
     let requestMicrophonePermission: @Sendable () async -> Bool
     let openSettingsAction: @Sendable () -> Void
-    /// DEBUG-only — wired by `HostRootView` to dispatch a `.speakingRoom(.badgeHit(...))`
-    /// action so the I11 overlay can be visually verified without needing a real
-    /// B12 corpus match. Production builds leave this `nil` and the debug footer
-    /// is hidden.
-    let onDebugBadgeInjected: ((BadgeFeedEntry.Tier, Int) -> Void)?
 
     @State private var showPermissionDeniedAlert = false
-    #if DEBUG
-    /// 0 = unknown, 1 = badgeOnly, 2 = nextTurnConfirm, 3 = sameTurnConfirm.
-    /// Cycles on every inject tap so the developer can compare all four visual
-    /// weights without leaving DEBUG.
-    @State private var debugBadgeTierIndex: Int = 0
-    @State private var debugBadgeHitCount: Int = 0
-    #endif
 
     public init(
         model: SpeakingRoomViewModel,
@@ -445,8 +433,7 @@ public struct SpeakingRoomView: View {
                 UIApplication.shared.open(url)
             }
             #endif
-        },
-        onDebugBadgeInjected: ((BadgeFeedEntry.Tier, Int) -> Void)? = nil
+        }
     ) {
         self.model = model
         self.onStartTapped = onStartTapped
@@ -456,7 +443,6 @@ public struct SpeakingRoomView: View {
         self.onHitTapped = onHitTapped
         self.requestMicrophonePermission = requestMicrophonePermission
         self.openSettingsAction = openSettingsAction
-        self.onDebugBadgeInjected = onDebugBadgeInjected
     }
 
     public var body: some View {
@@ -471,18 +457,6 @@ public struct SpeakingRoomView: View {
 
             dock
 
-            #if DEBUG
-            // B12 / I11 debug surface. Hidden in release. The footer cycles
-            // through all four badge tiers (unknown / soft / highlight /
-            // celebrate) on every tap so the developer can confirm the
-            // overlay visually renders each visual weight without depending
-            // on real B12 corpus hits. Wired in `HostRootView` to dispatch
-            // `.speakingRoom(.badgeHit(...))` — i.e. the same action the
-            // backend `feedback.badge` frame lands in.
-            if let onDebugBadgeInjected {
-                debugBadgeFooter(onTap: onDebugBadgeInjected)
-            }
-            #endif
         }
         .background(DesignTokens.Color.background)
         .alert("需要麦克风权限", isPresented: $showPermissionDeniedAlert) {
@@ -836,53 +810,6 @@ public struct SpeakingRoomView: View {
             .accessibilityIdentifier("room.rescue")
         }
     }
-
-
-    #if DEBUG
-    private func debugBadgeFooter(
-        onTap: @escaping (BadgeFeedEntry.Tier, Int) -> Void
-    ) -> some View {
-        let tier: BadgeFeedEntry.Tier
-        switch debugBadgeTierIndex {
-        case 1: tier = .badgeOnly
-        case 2: tier = .nextTurnConfirm
-        case 3: tier = .sameTurnConfirm
-        default: tier = .unknown
-        }
-        return VStack(spacing: 4) {
-            Divider().opacity(0.3)
-            HStack {
-                Image(systemName: "ladybug.fill")
-                    .foregroundStyle(.orange)
-                Text("DEBUG · 注入徽章 (\(tierName(tier)))")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("× \(debugBadgeHitCount)")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 24)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                debugBadgeTierIndex = (debugBadgeTierIndex + 1) % 4
-                debugBadgeHitCount += 1
-                onTap(tier, debugBadgeHitCount)
-            }
-        }
-    }
-
-    private func tierName(_ tier: BadgeFeedEntry.Tier) -> String {
-        switch tier {
-        case .unknown: return "unknown"
-        case .badgeOnly: return "soft"
-        case .nextTurnConfirm: return "highlight"
-        case .sameTurnConfirm: return "celebrate"
-        }
-    }
-    #endif
-
-    // MARK: - Recording Button
 
     private func openAppSettings() {
         openSettingsAction()
