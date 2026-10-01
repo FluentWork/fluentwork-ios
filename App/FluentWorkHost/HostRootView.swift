@@ -85,6 +85,14 @@ struct HostRootView: View {
         // this same presenter dismisses that cover (TTS keeps playing).
         .onChange(of: store.state.speakingRoom.phase) { _, phase in
             showsEndSessionConfirmation = phase.presentingEndSessionConfirmation(showsEndSessionConfirmation)
+            // **练完落到回顾页**（稿子 屏 04：「首次体验的 wow moment 承载页」）。
+            // 从前这一步是房间底栏上的「查看回顾」按钮 —— 而那条底栏不在稿子里
+            // （稿子 屏 02/03 只有顶部栏与说话键那一区）。去掉按钮就少了唯一的入口，
+            // 所以改成「会话结束 ⇒ 回顾自己出现」，与稿子的叙事一致：
+            // 练完就该看到这一轮学到了什么。没有 sessionID 时不跳（那时回顾也没东西可读）。
+            if phase == .ended, store.state.speakingRoom.lastSessionID != nil {
+                openReviewForLastSession()
+            }
         }
     }
 
@@ -198,9 +206,14 @@ struct HostRootView: View {
             } message: {
                 Text("会话会结束并生成回顾，本轮要点会保留。")
             }
-            .safeAreaInset(edge: .bottom) {
-                speakingRoomBottomBar
-            }
+            // 稿子 屏 02/03 的房间**没有底部栏**：所有动作都在顶部栏（返回 / 结束本轮）与
+            // 说话键那一区（状态行 / 浮层 / 键 / 安抚句）。原来那条红「结束练习」底栏
+            // 是自造的 —— 全仓搜过稿子，`结束练习`／`结束这次`／`结束会话` **零命中**，
+            // 只有 4 处 `结束本轮`。所以整条底栏（含 `.ended` 那半）去掉。
+            //
+            // 「练完之后去哪」不靠底栏上的按钮，靠**练完自动落到回顾页**（见外层那条
+            // `onChange(of: speakingRoom.phase)`）—— 稿子 屏 04 自称「首次体验的 wow moment
+            // 承载页」，它本来就是紧跟一次练习出现的那一屏。
             .onAppear {
                 // The route's `sessionID` is the session to *continue from*,
                 // and this is where it stops being a route parameter and
@@ -420,87 +433,6 @@ struct HostRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    @ViewBuilder
-    private var speakingRoomBottomBar: some View {
-        switch store.state.speakingRoom.phase {
-        case .idle, .failed:
-            EmptyView()
-        case .ended:
-            VStack(spacing: 8) {
-                let hits = currentRoundHits()
-                if !hits.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("本轮要点")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        ForEach(hits, id: \.self) { hit in
-                            Label(hit.badge, systemImage: "sparkles")
-                                .font(.caption)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.orange.opacity(0.14), in: Capsule())
-                                .foregroundStyle(.orange)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                HStack(spacing: 12) {
-                    Button {
-                        openReviewForLastSession()
-                    } label: {
-                        Label("查看回顾", systemImage: "doc.text.magnifyingglass")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(store.state.speakingRoom.lastSessionID == nil)
-
-                    Button {
-                        dismissWorkbenchModal()
-                    } label: {
-                        Label("返回工作台", systemImage: "xmark.circle")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
-        case .connecting, .recording, .waitingUser,
-             .processing,
-             .aiSpeaking, .degradedText:
-            // This ends the whole session, not the current turn — the label has
-            // to say so, and a mis-tap must not be enough to lose a practice run.
-            Button {
-                store.dispatch(.speakingRoom(.session(.endSessionConfirmShown)))
-                showsEndSessionConfirmation = true
-            } label: {
-                Label("结束练习", systemImage: "xmark.circle.fill")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
-            // Alert is on the ZStack, before this bar. Opening pauses TTS;
-            // 确定 ends the session; 取消 resumes.
-        }
-    }
-
-    private func currentRoundHits() -> [BadgeHitRef] {
-        var seen = Set<String>()
-        var unique: [BadgeHitRef] = []
-        for hit in store.state.speakingRoom.timeline.flatMap(\.hits) {
-            let key = hit.phraseBlockID ?? hit.badge
-            if seen.insert(key).inserted {
-                unique.append(hit)
-            }
-        }
-        return unique
-    }
-
     private func openReviewForLastSession() {
         guard let sessionID = store.state.speakingRoom.lastSessionID,
               !sessionID.isEmpty else {
@@ -588,8 +520,14 @@ struct HostRootView: View {
 
     private func closeSpeakingRoom() {
         showsEndSessionConfirmation = false
+        // **一次正在进行中的练习，不能因为一下误触就没了** —— 从前这条保护挂在底栏那颗
+        // 红「结束练习」上，而那条底栏不在稿子里（稿子 屏 02/03 只有顶部栏与说话键那一区）。
+        // 现在顶部栏左边的返回键是唯一的退出入口，于是这条保护跟着它走：
+        // 会话在跑就问一句，没在跑就直接退出。
         if store.state.speakingRoom.phase != .idle && store.state.speakingRoom.phase != .ended {
-            store.dispatch(.speakingRoom(.session(.endTap)))
+            store.dispatch(.speakingRoom(.session(.endSessionConfirmShown)))
+            showsEndSessionConfirmation = true
+            return
         }
         dismissWorkbenchModal()
     }
