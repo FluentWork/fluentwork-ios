@@ -128,6 +128,14 @@ struct ScreenEntryGuardTests {
                 "drill.startTapped", "drill.answerCaptured", "drill.skipTapped",
                 "drill.retryTapped", "drill.advanceTapped", "drill.appealTapped",
                 "drill.exitTapped",
+
+                // 账号表单（屏 12 的账号链路，A3）—— **状态机与判据已就位，屏幕与中间件还没落地**：
+                // 4 条表单动作将来由登录页派，3 条结果动作将来由 `accountAuthMiddleware` 派
+                // （屏幕派 `.succeeded` 等于自己造一个「已经登录成功了」的结果）。
+                // 落在这一段时，登录页还不存在 —— 所以这一组是**下一段的清单**，不是长期状态。
+                "accountAuth.modeChanged", "accountAuth.emailChanged",
+                "accountAuth.passwordChanged", "accountAuth.submitTapped",
+                "accountAuth.credentialAccepted", "accountAuth.succeeded", "accountAuth.failed",
             ]
         ),
 

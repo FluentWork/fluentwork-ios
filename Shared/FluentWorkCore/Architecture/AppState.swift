@@ -70,6 +70,8 @@ public struct AppState: Equatable, Sendable, State {
   public var createPractice: CreatePracticeState
   /// 「删除我的全部素材」那条不可逆操作的相位（屏 12）。
   public var accountData: AccountDataState
+  /// 账号密码那张表单（屏 12 的账号链路）。相位 ＋ 输入 ＋ 上一次失败。
+  public var accountAuth: AccountAuthState
   public var workspace: WorkspaceState
   public var badgeFeedback: BadgeFeedbackState
   public var network: NetworkConnectivityState
@@ -89,6 +91,7 @@ public struct AppState: Equatable, Sendable, State {
     topic: TopicState = TopicState(),
     createPractice: CreatePracticeState = CreatePracticeState(),
     accountData: AccountDataState = AccountDataState(),
+    accountAuth: AccountAuthState = AccountAuthState(),
     workspace: WorkspaceState = WorkspaceState(),
     badgeFeedback: BadgeFeedbackState = BadgeFeedbackState(),
     network: NetworkConnectivityState = NetworkConnectivityState(),
@@ -107,6 +110,7 @@ public struct AppState: Equatable, Sendable, State {
     self.topic = topic
     self.createPractice = createPractice
     self.accountData = accountData
+    self.accountAuth = accountAuth
     self.workspace = workspace
     self.badgeFeedback = badgeFeedback
     self.network = network
@@ -141,6 +145,7 @@ public enum AppAction: Equatable, Sendable, Action {
   case topic(TopicAction)
   case createPractice(CreatePracticeAction)
   case accountData(AccountDataAction)
+  case accountAuth(AccountAuthAction)
   case network(NetworkConnectivityAction)
   case navigation(AppNavigationAction)
 }

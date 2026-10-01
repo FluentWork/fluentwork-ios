@@ -86,6 +86,15 @@ public let appReducer: Reducer<AppState, AppAction> = combineReducers(
     }
   ),
   pullback(
+    accountAuthReducer,
+    state: \.accountAuth,
+    action: AppAction.accountAuth,
+    extract: {
+      guard case .accountAuth(let action) = $0 else { return nil }
+      return action
+    }
+  ),
+  pullback(
     accountDataReducer,
     state: \.accountData,
     action: AppAction.accountData,
