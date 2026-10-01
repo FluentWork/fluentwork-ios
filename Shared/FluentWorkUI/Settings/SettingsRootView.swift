@@ -53,10 +53,19 @@ public struct SettingsViewModel: Equatable, Sendable {
 /// flags live in a section that only exists in **DEBUG builds**, so what ships
 /// is a settings page with nothing experimental in it.
 ///
-/// Reachable without a flag gating it, deliberately: every other surface is a
-/// `FeaturePluginDescriptor` filtered by its own flag, and a settings page
-/// behind a flag could only be opened by someone who had already turned that
-/// flag on — which is the one thing it exists to let you do.
+/// **它是全屏页，不是 tab**（稿子 §03：设置与说的房间/回顾页/每日一读/话题建议同属
+/// 「全屏页（从入口推入）」），所以它自己带 `.fullScreenPage()`。
+///
+/// 版式按稿子 屏 12 的 `set-group` / `set-row` 几何还原 —— 每一行是**一张独立的圆角卡**，
+/// 而不是 iOS 分组列表那种带分隔线的整块表：
+///
+/// | 稿子 | 数值 |
+/// |---|---|
+/// | `.set-row` | `padding: 13px 15px`，`gap: 12px`，圆角 `--fw-r-card` = 12，底 `--fw-bg-elev` |
+/// | `.set-row + .set-row` | 行间 8px（**卡与卡之间留缝，不是画线**） |
+/// | `.sr-ico` | 30×30、圆角 9、底为强调色 13%，图标 17px 用强调色 |
+/// | `.sr-body b` / `span` | 标题 14.5/600；说明 12、次要色 |
+/// | `.set-group > h3` | 组标题 12px、次要色 |
 public struct SettingsRootView: View {
     private let model: SettingsViewModel
     private let onToggleFlag: (String, Bool) -> Void
@@ -88,17 +97,37 @@ public struct SettingsRootView: View {
     }
 
     public var body: some View {
-        List {
-            if let rows = model.sceneRows {
-                accountSection(rows)
-                voiceSection(rows)
-                privacySection(rows)
+        ScrollView {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.s6) {
+                if let rows = model.sceneRows {
+                    group("账号") {
+                        infoCard(rows.account)
+                    }
+                    group("语音偏好") {
+                        ForEach(rows.voice) { infoCard($0) }
+                    }
+                    group("隐私与数据") {
+                        ForEach(rows.privacy.filter { $0.id != "privacy.delete" }) { infoCard($0) }
+                        deleteCard(
+                            rows.deleteFlow,
+                            icon: rows.privacy.first { $0.id == "privacy.delete" }?.icon
+                        )
+                    }
+                }
+                group("关于") {
+                    versionCard
+                }
+                #if DEBUG
+                    developerGroup
+                #endif
             }
-            aboutSection
-            #if DEBUG
-                developerSection
-            #endif
+            .padding(.horizontal, DesignTokens.Spacing.pageMargin)
+            .padding(.vertical, DesignTokens.Spacing.s4)
         }
+        .background(DesignTokens.Color.background)
+        // 稿子 §03：「全屏页（从入口推入）」—— 推入这件事由导航栈做，
+        // **盖住底部 tab bar** 这一条由这个修饰符补齐（否则只是半个全屏页）。
+        .fullScreenPage()
         .navigationTitle("设置")
         .alert(
             model.sceneRows?.deleteFlow.confirmationTitle ?? "删除我的全部素材？",
@@ -115,139 +144,164 @@ public struct SettingsRootView: View {
         }
     }
 
-    // MARK: - 屏 12 的三组
+    // MARK: - 版式的三块（组 / 卡 / 图标方块）
 
-    private func accountSection(_ rows: SettingsViewModel.SceneRows) -> some View {
-        Section("账号") {
-            infoRow(rows.account)
-        }
-    }
-
-    private func voiceSection(_ rows: SettingsViewModel.SceneRows) -> some View {
-        Section("语音偏好") {
-            ForEach(rows.voice) { row in
-                infoRow(row)
+    /// 一组：组标题（12px 次要色）＋ 若干张卡（卡间 8px，稿子 `.set-row + .set-row`）。
+    private func group<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.s2) {
+            Text(title)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Color.textSecondary)
+            VStack(spacing: DesignTokens.Spacing.s2) {
+                content()
             }
         }
     }
 
-    private func privacySection(_ rows: SettingsViewModel.SceneRows) -> some View {
-        Section {
-            ForEach(rows.privacy.filter { $0.id != "privacy.delete" }) { row in
-                infoRow(row)
-            }
-            deleteRow(rows.deleteFlow, icon: rows.privacy.first { $0.id == "privacy.delete" }?.icon)
-        } header: {
-            Text("隐私与数据")
-        } footer: {
-            // 回执与失败都写在这一组的脚下：**它们是这一组的结果**，
-            // 弹窗关掉之后就没了，而「删掉了多少」这件事值得留在屏幕上。
-            if let result = rows.deleteFlow.resultMessage {
-                Text(result)
-            } else if let error = rows.deleteFlow.errorMessage {
-                Text(error)
-            }
+    /// 一张卡：`padding 13×15`、圆角 12、底 `bg-elev`。
+    private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: DesignTokens.Spacing.s3) {
+            content()
         }
+        .padding(.horizontal, 15)
+        .padding(.vertical, 13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DesignTokens.Color.backgroundElevated)
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous))
     }
 
-    private func infoRow(_ row: SettingsInfoRow) -> some View {
-        HStack(alignment: .top, spacing: DesignTokens.Spacing.s3) {
-            // 行首图标（稿子 屏 12 的 `[sr-ico]`）。用已有的图标令牌，不引新资源。
-            if let icon = row.icon {
+    /// 行首图标：**30×30 的圆角方块**，底为强调色 13%，图标用强调色（稿子 `.sr-ico`）。
+    ///
+    /// 它不是「裸图标」——这是我第一版的错处之一：一个灰色的裸图标和一枚带底的方块，
+    /// 在列表里的分量完全不同（后者是这一行的身份，前者只是一个记号）。
+    private func iconChip(_ icon: DesignTokens.Icon) -> some View {
+        RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .fill(DesignTokens.Color.accent.opacity(0.13))
+            .frame(width: 30, height: 30)
+            .overlay {
                 icon.image
-                    .font(.system(size: DesignTokens.Component.iconPointSize * 0.8))
-                    .foregroundStyle(.secondary)
-                    .frame(width: DesignTokens.Component.iconPointSize, alignment: .center)
+                    .font(.system(size: 17, weight: .regular))
+                    .foregroundStyle(DesignTokens.Color.accent)
+            }
+    }
+
+    private func infoCard(_ row: SettingsInfoRow) -> some View {
+        card {
+            if let icon = row.icon {
+                iconChip(icon)
             }
             VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(row.title)
-                    if row.hasDisclosure {
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                    }
-                }
+                Text(row.title)
+                    .font(DesignTokens.Typography.body)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(DesignTokens.Color.textPrimary)
                 if let detail = row.detail {
                     Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Color.textSecondary)
                 }
+            }
+            if row.hasDisclosure {
+                Spacer(minLength: DesignTokens.Spacing.s2)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(DesignTokens.Color.textSecondary)
             }
         }
     }
 
-    /// 「删除我的全部素材」：**待改进色，不是纯红**（稿子原话，与全局色彩纪律一致）。
+    private var versionCard: some View {
+        card {
+            Text("版本")
+                .font(DesignTokens.Typography.body)
+                .fontWeight(.semibold)
+                .foregroundStyle(DesignTokens.Color.textPrimary)
+            Spacer(minLength: DesignTokens.Spacing.s2)
+            Text(model.appVersion)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Color.textSecondary)
+        }
+    }
+
+    /// 「删除我的全部素材」：标题用**待改进色，不是纯红**（稿子原话，与全局色彩纪律一致）。
+    /// 图标方块仍是强调色底（稿子 `.sr-ico` 只有一种底），要小心的是**字**。
     @ViewBuilder
-    private func deleteRow(_ flow: SettingsDeleteFlow, icon: DesignTokens.Icon?) -> some View {
+    private func deleteCard(_ flow: SettingsDeleteFlow, icon: DesignTokens.Icon?) -> some View {
         Button {
             onDeleteTapped()
             isShowingDeleteConfirmation = true
         } label: {
-            HStack(alignment: .top, spacing: DesignTokens.Spacing.s3) {
+            card {
                 if let icon {
-                    icon.image
-                        .font(.system(size: DesignTokens.Component.iconPointSize * 0.8))
-                        .foregroundStyle(DesignTokens.Color.improve)
-                        .frame(width: DesignTokens.Component.iconPointSize, alignment: .center)
+                    iconChip(icon)
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text("删除我的全部素材")
+                        .font(DesignTokens.Typography.body)
+                        .fontWeight(.semibold)
                         .foregroundStyle(DesignTokens.Color.improve)
                     Text(flow.isDeleting ? "正在删除…" : "二次确认后即时生效，并级联删除衍生的话术块")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Color.textSecondary)
                 }
-                Spacer()
                 if flow.isDeleting {
+                    Spacer(minLength: DesignTokens.Spacing.s2)
                     ProgressView().progressViewStyle(.circular)
                 }
             }
         }
-        .disabled(flow.canDelete == false)
-        // **`.plain` 不是为了好看**：`List` 里的 `Button` 会把整个 label 染成强调色，
-        // 于是那一行说明文字变成蓝的（截图里抓到的），而行内两种颜色各有各的意思 ——
-        // 标题是「待改进色」（这是要小心的一步），说明是次要灰（这是在说什么事）。
         .buttonStyle(.plain)
+        .disabled(flow.canDelete == false)
         .accessibilityIdentifier("settings.deleteAllMaterials")
     }
 
-    // MARK: - 关于 / 开发者
-
-    private var aboutSection: some View {
-        Section("关于") {
-            LabeledContent("版本", value: model.appVersion)
-        }
-    }
-
     #if DEBUG
-        private var developerSection: some View {
-            Section {
+        /// 开发者组（不在稿子里，只在 DEBUG 构建里存在）。
+        ///
+        /// 它沿用同一套卡，所以这一屏只有一种行形状 —— 混两种行样式会让「这是一屏」变成两屏。
+        private var developerGroup: some View {
+            group("开发者") {
                 ForEach(model.flags) { row in
-                    Toggle(isOn: binding(for: row)) {
+                    card {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(row.title)
+                                .font(DesignTokens.Typography.body)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(DesignTokens.Color.textPrimary)
                             if row.isOverridden {
                                 Text("已被本地覆盖")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .font(DesignTokens.Typography.caption)
+                                    .foregroundStyle(DesignTokens.Color.textSecondary)
                             }
                         }
+                        Spacer(minLength: DesignTokens.Spacing.s2)
+                        Toggle("", isOn: binding(for: row))
+                            .labelsHidden()
                     }
                 }
 
                 // The escape hatch a device run needs. An override set on a
                 // phone outlives the test that set it, and there is no other
                 // way back to the build's defaults short of reinstalling.
-                Button("清除全部本地覆盖", role: .destructive) {
+                Button {
                     onClearOverrides()
+                } label: {
+                    card {
+                        Text("清除全部本地覆盖")
+                            .font(DesignTokens.Typography.body)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(
+                                model.hasOverrides
+                                    ? DesignTokens.Color.improve
+                                    : DesignTokens.Color.textSecondary
+                            )
+                    }
                 }
+                .buttonStyle(.plain)
                 .disabled(!model.hasOverrides)
-            } header: {
-                Text("开发者")
-            } footer: {
-                Text("本地覆盖只影响这台设备，不会写进版本库。真机验证需要开关的实验性能力时用它。")
             }
         }
 
