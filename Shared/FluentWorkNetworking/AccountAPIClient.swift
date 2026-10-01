@@ -9,6 +9,20 @@ import Moya
 public protocol AccountAPIClientProtocol: Sendable {
     /// 删掉我自己的全部数据（A4）。**不可逆**（软删 + 备份保留期）。
     func deleteAllMyData(accessToken: String) async throws -> DeleteAccountDataResponse
+
+    /// 账号密码注册（A1）。返回**注册身份**的令牌（`isGuest == false`）。
+    ///
+    /// 放在这个 client 而不是 `SessionAPIClient`：这两条端点在后端属于
+    /// `internal/account` 模块，而这里的边界就是照着后端模块划的。
+    /// （顺带一个实证：往 `SessionAPIClientProtocol` 上加方法会一次打破**四个**既有测试桩 ——
+    /// 协议加宽是有代价的，代价落在哪就该在哪划界。）
+    func registerEmail(email: String, password: String) async throws -> TokenResponse
+
+    /// 账号密码登录（A1）。
+    ///
+    /// ⚠️ 两种失败（邮箱不存在 / 口令不对）服务端给**同一句话**，客户端不要试图分辨 ——
+    /// 那是服务端**有意**不提供的信息（分开报错等于送一个免费的账号枚举器）。
+    func loginEmail(email: String, password: String) async throws -> TokenResponse
 }
 
 public final class AccountAPIClient: AccountAPIClientProtocol, Sendable {
@@ -27,6 +41,14 @@ public final class AccountAPIClient: AccountAPIClientProtocol, Sendable {
         self.baseURL = baseURL
     }
 
+    public func registerEmail(email: String, password: String) async throws -> TokenResponse {
+        try await decode(TokenResponse.self, .registerEmail(email: email, password: password))
+    }
+
+    public func loginEmail(email: String, password: String) async throws -> TokenResponse {
+        try await decode(TokenResponse.self, .loginEmail(email: email, password: password))
+    }
+
     public func deleteAllMyData(accessToken: String) async throws -> DeleteAccountDataResponse {
         let data = try await network.requestData(
             for: AbsoluteFluentWorkTarget(
@@ -37,8 +59,23 @@ public final class AccountAPIClient: AccountAPIClientProtocol, Sendable {
                 )
             )
         )
+        return try decode(DeleteAccountDataResponse.self, from: data)
+    }
+
+    private func decode<T: Decodable>(_ type: T.Type, _ target: FluentWorkAPI) async throws -> T {
+        let data = try await network.requestData(
+            for: AbsoluteFluentWorkTarget(baseURL: baseURL, api: target)
+        )
         do {
-            return try JSONDecoder().decode(DeleteAccountDataResponse.self, from: data)
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw APIError.decoding(description: error.localizedDescription)
+        }
+    }
+
+    private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
         } catch {
             throw APIError.decoding(description: error.localizedDescription)
         }

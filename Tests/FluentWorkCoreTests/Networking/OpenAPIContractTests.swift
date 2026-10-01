@@ -129,6 +129,15 @@ private let clientOperations: [ClientOperation] = [
         path: "/materials", method: "POST"),
     // 屏 12「删除我的全部素材」：契约里一直有 A4 这条（`operationId: deleteAccountData`），
     // 客户端此前从没调过。**它是 DELETE**，且要带 `confirmation_code`。
+    // 账号密码（A1，2026-10-01）：两条都**不带令牌** —— 它们就是「拿到令牌」那一步。
+    ClientOperation(
+        name: "registerEmail",
+        api: .registerEmail(email: "tango@example.com", password: "a good password"),
+        path: "/auth/register", method: "POST"),
+    ClientOperation(
+        name: "loginEmail",
+        api: .loginEmail(email: "tango@example.com", password: "a good password"),
+        path: "/auth/login", method: "POST"),
     ClientOperation(
         name: "deleteMyData",
         api: .deleteMyData(accessToken: "t", confirmationCode: "DELETE-MY-DATA"),

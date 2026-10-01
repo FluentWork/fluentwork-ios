@@ -39,6 +39,7 @@ public final class SessionAPIClient: SessionAPIClientProtocol, Sendable {
         try await decode(TokenResponse.self, .issueGuest(deviceID: deviceID))
     }
 
+
     public func mergeGuestAccount(deviceID: String, accessToken: String) async throws -> MergeResponse {
         try await decode(
             MergeResponse.self,

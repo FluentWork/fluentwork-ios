@@ -5,6 +5,13 @@ import Moya
 public enum FluentWorkAPI: FluentWorkTargetType {
   case issueGuest(deviceID: String)
   case mergeGuestAccount(deviceID: String, accessToken: String)
+  /// `POST /api/v1/auth/register` — 账号密码注册（邮箱 ＋ 口令）。
+  ///
+  /// **不带 accessToken**：这条路的意义就是「第一次成为注册用户」，
+  /// 那时候手上只有游客令牌，而它对这个调用没有任何用。
+  case registerEmail(email: String, password: String)
+  /// `POST /api/v1/auth/login` — 账号密码登录。
+  case loginEmail(email: String, password: String)
   case refreshToken(refreshToken: String)
   case createSession(
     accessToken: String,
@@ -88,6 +95,10 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       return "/auth/guest"
     case .mergeGuestAccount:
       return "/account/merge"
+    case .registerEmail:
+      return "/auth/register"
+    case .loginEmail:
+      return "/auth/login"
     case .refreshToken:
       return "/auth/refresh"
     case .createSession:
@@ -145,6 +156,8 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       return .put
     case .issueGuest,
       .mergeGuestAccount,
+      .registerEmail,
+      .loginEmail,
       .refreshToken,
       .createSession,
       .createMaterial,
@@ -165,6 +178,11 @@ public enum FluentWorkAPI: FluentWorkTargetType {
     case .issueGuest(let deviceID):
       return .requestParameters(
         parameters: ["device_id": deviceID],
+        encoding: JSONEncoding.default
+      )
+    case .registerEmail(let email, let password), .loginEmail(let email, let password):
+      return .requestParameters(
+        parameters: ["email": email, "password": password],
         encoding: JSONEncoding.default
       )
     case .mergeGuestAccount(let deviceID, _):
@@ -317,7 +335,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
 
   private var accessToken: String? {
     switch self {
-    case .issueGuest, .refreshToken:
+    case .issueGuest, .refreshToken, .registerEmail, .loginEmail:
       return nil
     case .deleteMyData(let token, _),
       .mergeGuestAccount(_, let token),
