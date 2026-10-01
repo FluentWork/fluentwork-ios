@@ -167,6 +167,31 @@ public enum SpeechBoundaryMode: Equatable, Sendable {
 public protocol AudioEngineProtocol: AudioSink {
     func startCapture() async throws
     func events() -> AsyncStream<AudioEngineEvent>
+    /// 采集到的 PCM16（16 kHz mono），**与 `events()` 里那批 `pcmChunk` 是同一份字节的第二路**。
+    ///
+    /// ## 为什么需要第二路（2026-10-02，为闪测 / 屏 05）
+    ///
+    /// `events()` 是**进程级单消费者**流：房间的 `audioEventPump` 在第一次 `.sessionStartTap`
+    /// 之后一直读着它（那里写着「两个进程级流的读者」）。`AsyncStream` 的多个迭代器**会各自
+    /// 分到一部分元素** —— 所以第二个读者不是「多一双眼睛」，而是**和房间抢帧**，两边都拿不全。
+    ///
+    /// 闪测要的是「这一轮学员说了什么」：它不建会话、不走网关，只做「采集 → 客户端转写」。
+    /// 给它一路自己的流，比让它去房间那条路上抢便宜，而且**不用改写 `events()` 的语义**
+    /// （「进程级单消费者」是事实，把事实改成「其实是个扇出」才是让下一个人踩坑的那种注释）。
+    ///
+    /// ## 契约
+    ///
+    /// - **与 `events()` 同寿命**：进程级、在引擎构造时建好、不 `finish`。中途开始读的人
+    ///   拿到的是**此后**的音频 —— 这正是「这一轮」要的语义。
+    /// - **两路都拿全量**：每发一个 `pcmChunk`，两路各得**同一份字节**。少了这条保证，
+    ///   这一路就是个隐性抢帧器。
+    /// - 只发采集的音频，**不含** `.speechStarted` / `.speechEnded` 等控制事件 ——
+    ///   需要边界的人从 `events()` 之外的地方拿（闪测按 5 秒窗口收尾），别在音频里编协议。
+    ///
+    /// 这是**协议要求**，不是扩展默认值：扩展方法在 `any AudioEngineProtocol` 上**静态派发**，
+    /// 默认实现会顶掉真引擎的实现 —— 于是测试全绿而真机上一条 PCM 都没有。
+    /// （同 `setVoiceProcessingEnabled` / `releaseSessionClaim` 那条注释。）
+    func capturePCMStream() -> AsyncStream<Data>
     func stopCapture() async
     /// 播放已经解码好的 16kHz mono PCM16。
     ///
@@ -218,6 +243,17 @@ public protocol AudioEngineProtocol: AudioSink {
 }
 
 extension AudioEngineProtocol {
+    /// 默认给一条**立刻结束的空流** —— 「这个引擎不采集」，如实地说没有。
+    ///
+    /// ⚠️ 这条默认值**不会**顶掉真引擎的实现：它在协议里是**要求**，所以实现者写了自己的就
+    /// 用自己的（哪怕调用方拿的是 `any AudioEngineProtocol`）。本仓记过的那个坑说的是
+    /// 「**只**在扩展里声明」的方法 —— 那种才会静态派发。
+    public func capturePCMStream() -> AsyncStream<Data> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
+
     public func setSpeechBoundaryMode(_ mode: SpeechBoundaryMode) async {}
     public func setVoiceProcessingEnabled(_ enabled: Bool) async {}
     public func beginManualSpeech() async {}
@@ -492,9 +528,14 @@ enum TestProcess {
 
 public final class PlaceholderAudioEngine: AudioEngineProtocol, Sendable {
     private nonisolated let stream: AsyncStream<AudioEngineEvent>
+    private nonisolated let pcmStream: AsyncStream<Data>
 
     public init() {
         self.stream = AsyncStream { continuation in
+            continuation.finish()
+        }
+        // 立刻结束的空流：这个引擎不采任何东西，两路都如实地说「没有」。
+        self.pcmStream = AsyncStream { continuation in
             continuation.finish()
         }
     }
@@ -507,6 +548,10 @@ public final class PlaceholderAudioEngine: AudioEngineProtocol, Sendable {
 
     public func events() -> AsyncStream<AudioEngineEvent> {
         stream
+    }
+
+    public func capturePCMStream() -> AsyncStream<Data> {
+        pcmStream
     }
 
     public func play(pcm: Data) async {}

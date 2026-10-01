@@ -108,6 +108,10 @@ public actor MockAudioEngine: AudioEngineProtocol {
     /// 调用方在任意上下文里取流，不能要求先跳到这个 actor 上。
     private nonisolated let stream: AsyncStream<AudioEngineEvent>
     private let continuation: AsyncStream<AudioEngineEvent>.Continuation
+    /// 第二路（见 `AudioEngineProtocol.capturePCMStream()`）。替身也必须有 —— 它正是
+    /// 「无人值守验证闪测采集」时唯一在产音频的那一路。
+    private nonisolated let pcmStream: AsyncStream<Data>
+    private let pcmContinuation: AsyncStream<Data>.Continuation
 
     private var utteranceTask: Task<Void, Never>?
     private var autoTask: Task<Void, Never>?
@@ -130,6 +134,9 @@ public actor MockAudioEngine: AudioEngineProtocol {
         let pair = AsyncStream.makeStream(of: AudioEngineEvent.self)
         self.stream = pair.stream
         self.continuation = pair.continuation
+        let pcmPair = AsyncStream.makeStream(of: Data.self)
+        self.pcmStream = pcmPair.stream
+        self.pcmContinuation = pcmPair.continuation
     }
 
     // MARK: - Capture (mocked)
@@ -162,6 +169,10 @@ public actor MockAudioEngine: AudioEngineProtocol {
 
     public nonisolated func events() -> AsyncStream<AudioEngineEvent> {
         stream
+    }
+
+    public nonisolated func capturePCMStream() -> AsyncStream<Data> {
+        pcmStream
     }
 
     public func setVoiceProcessingEnabled(_ enabled: Bool) async {
@@ -214,7 +225,10 @@ public actor MockAudioEngine: AudioEngineProtocol {
             hasReportedFirstBuffer = true
             continuation.yield(.captureFirstBuffer)
         }
-        continuation.yield(.pcmChunk(Self.toneChunk(offset: sampleOffset)))
+        let chunk = Self.toneChunk(offset: sampleOffset)
+        continuation.yield(.pcmChunk(chunk))
+        // 两路同一份字节，见 `capturePCMStream()` 的契约。
+        pcmContinuation.yield(chunk)
         sampleOffset += Self.samplesPerChunk
     }
 

@@ -84,6 +84,9 @@ extension LiveAudioEngine {
                 return
             }
             continuation.yield(.pcmChunk(pcm))
+            // 第二路：同一份字节。**两路都拿全量**是 `capturePCMStream()` 的契约 ——
+            // 只往 `events()` 发，第二路就成了一个安静的空流（读它的人等一场没有结果的采集）。
+            pcmContinuation.yield(pcm)
             updateSpeechState(using: pcm)
         } catch {
             // `message` 保持原样（改用户可见文案是产品决定，见 R5-b 的先例），

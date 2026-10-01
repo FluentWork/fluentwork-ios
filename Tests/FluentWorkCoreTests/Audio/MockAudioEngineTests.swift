@@ -36,6 +36,55 @@ struct MockAudioEngineTests {
         )
     }
 
+    /// **第二路 PCM 流与 `events()` 都拿全量**（`capturePCMStream()` 的契约）。
+    ///
+    /// 这条判据钉的不是「多一个读者」，而是「**不和另一个读者抢帧**」：`AsyncStream` 的多个
+    /// 迭代器会各自分到**一部分**元素 —— 在 Swift 里「再开一路读同一件事」不是免费的，
+    /// 发的人必须两边都发。少了这条，闪测读到的会是一段被房间啃掉一半的音频，
+    /// 而它在屏幕上只表现为「识别不出来」——最难查的那种症状。
+    @Test("两个读者各拿全量：events() 与 capturePCMStream() 得到同一批字节")
+    func bothReadersSeeEveryChunk() async {
+        let engine = MockAudioEngine(
+            script: MockAudioEngine.Script(
+                utteranceDuration: .milliseconds(60),
+                chunkInterval: .milliseconds(20)
+            ),
+            playback: RecordingPlaybackEngine()
+        )
+        let events = engine.events()
+        let pcm = engine.capturePCMStream()
+        let eventBox = EventBox()
+        let chunkBox = ChunkBox()
+
+        // 两个读者**同时**挂着读 —— 这正是房间里那条 pump 已经在读时，闪测又来读的样子。
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { for await event in events { await eventBox.append(event) } }
+            group.addTask { for await chunk in pcm { await chunkBox.append(chunk) } }
+            group.addTask {
+                await engine.beginManualSpeech()
+                try? await Task.sleep(for: .milliseconds(400))
+            }
+            await group.next()
+            group.cancelAll()
+        }
+
+        let fromEvents = await eventBox.events.compactMap { event -> Data? in
+            if case let .pcmChunk(data) = event { return data }
+            return nil
+        }
+        let fromPCM = await chunkBox.chunks
+
+        #expect(fromEvents.count == 3, "events() 只拿到 \(fromEvents.count) 块")
+        #expect(
+            fromPCM.count == 3,
+            """
+            第二路只拿到 \(fromPCM.count) 块 —— 两路在抢同一批，被分掉了。
+            契约是「两路都拿全量」：发一个 `pcmChunk` 就要往两边各发一份。
+            """
+        )
+        #expect(fromPCM == fromEvents, "两路的字节必须逐块相同")
+    }
+
     /// **交付第一块 PCM 之前上报 `.captureFirstBuffer`，且整条进程只报一次。**
     ///
     /// 房间的 `.connecting` 等的是 `socketReady` **与** `captureLive` 两半，而后者只由这条
@@ -292,6 +341,11 @@ private func collect(
         group.cancelAll()
     }
     return await box.events
+}
+
+private actor ChunkBox {
+    private(set) var chunks: [Data] = []
+    func append(_ chunk: Data) { chunks.append(chunk) }
 }
 
 private actor EventBox {
