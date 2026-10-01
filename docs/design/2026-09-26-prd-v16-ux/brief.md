@@ -32,28 +32,30 @@
 | 08 | 无障碍 |
 | 09 | 覆盖对照（按页面 / 按功能模块 / 明确不在范围内） |
 
-## 屏号索引 × iOS 现状（2026-09-29 实测）
+## 屏号索引 × iOS 现状
 
-`App/FluentWorkHost/HostRootView.swift` 的 `flashRoot` 目前是 `Text("闪测（占位）")`。
+**口径（2026-10-01 改定）**：`FluentWorkUI/` 的现有页面不是视觉基线，它们只承担「业务逻辑跑得通」。
+逐屏还原的差距、前置条件与顺序见 **`../ui-rebuild-plan.md`** —— 那张表以那里为准，本表不再重复它。
 
-| 屏 | 页面 | iOS 落点 | 状态 |
+| 屏 | 页面 | iOS 落点 | 差距性质 |
 |---|---|---|---|
-| 01 | 工作台（首页） | `FluentWorkUI/Workbench/WorkbenchHomeView.swift` | 有视图，未对齐令牌 |
-| 02 | 说的房间 · 对话中 | `FluentWorkUI/SpeakingRoom/SpeakingRoomView.swift` | 有视图，未对齐令牌 |
-| 03 | 说的房间 · 卡壳救援 | 同上（B8 用户自取那一格） | 部分 |
-| 04 | 回顾页 | `FluentWorkUI/Review/ReviewRootView.swift` | 有视图，未对齐令牌 |
-| 05 | 闪测 · 答题（E1/E4/E5） | — | **缺** |
-| 06 | 闪测 · 判定与申诉（E2） | — | **缺** |
-| 07 | 闪测 · 结算 | — | **缺** |
-| 08 | 语料库 | `FluentWorkUI/Corpus/CorpusRootView.swift` | 有视图，缺进步证据 |
-| 09 | 每日一读 | `FluentWorkUI/DailyRead/DailyReadRootView.swift` | 有视图，缺跟读自评 |
-| 10 | 话题建议页（H1–H3） | — | **缺** |
-| 11 | 创建练习弹层（A1/A2） | — | **缺（关键路径）** |
-| 12 | 设置页 | `FluentWorkUI/Settings/SettingsRootView.swift` | 有视图，未对齐令牌 |
-| 13 | 订阅页 | — | **后置**（`21_` §4.8：MVP 期入口隐藏，服务端开关） |
-| 14 | 回顾页 · 段落层 | — | **缺** |
+| 01 | 工作台（首页） | `FluentWorkUI/Workbench/WorkbenchHomeView.swift` | ② 形态不是稿子的（现为模块入口列表） |
+| 02 | 说的房间 · 对话中 | `FluentWorkUI/SpeakingRoom/SpeakingRoomView.swift` | ② |
+| 03 | 说的房间 · 卡壳救援 | 同上（B8 只是 `rescueHintButton` 一个按钮） | ② |
+| 04 | 回顾页 | `FluentWorkUI/Review/ReviewRootView.swift` | ② ＋ 汇总字段未投影 |
+| 05 | 闪测 · 答题（E1/E4/E5） | — | ① 缺；**卡在采集链路** |
+| 06 | 闪测 · 判定与申诉（E2） | — | ① 缺；同上 |
+| 07 | 闪测 · 结算 | — | ① 缺；同上 |
+| 08 | 语料库 | `FluentWorkUI/Corpus/CorpusRootView.swift` | ② ＋ `realUseCount` 未投影 |
+| 09 | 每日一读 | `FluentWorkUI/DailyRead/DailyReadRootView.swift` | ② ＋ 注释字段与跟读链路 |
+| 10 | 话题建议页（H1–H3） | `FluentWorkUI/Topic/TopicCardsRootView.swift` | 已落地（`2528bdf`），欠块状态与自评 |
+| 11 | 创建练习弹层（A1/A2） | — | ① 缺（**后端齐**，差 iOS 参数链） |
+| 12 | 设置页 | `FluentWorkUI/Settings/SettingsRootView.swift` | ②（现为版本 ＋ DEBUG 开关） |
+| 13 | 订阅页 | — | 后置（`21_` §4.8：MVP 期入口隐藏，服务端开关） |
+| 14 | 回顾页 · 段落层 | — | ① 缺；后端无段落层产物 |
 
-另有 `FluentWorkUI/SessionHistory/SessionHistoryRootView.swift`（屏 01 的历史列表）、
+另有 `FluentWorkUI/SessionHistory/SessionHistoryRootView.swift` 与 `SessionDetailView.swift`
+（稿子里练习历史是**屏 01 的一段**，没有独立的历史页与会话详情页 —— 归属待确认，见还原计划 §4）、
 `BadgeFeedback/BadgeFeedbackOverlay.swift`（屏 02 的 B7 徽章）。
 
 ## 稿子自述的边界
