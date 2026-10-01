@@ -267,6 +267,26 @@ public struct RefineCard: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// `DELETE /account/data` 的回执（A4）。
+///
+/// `cascaded` 是**删完之后**服务端数出来的级联计数（表名 → 行数）。
+/// 它是这一屏唯一能拿到的「删了多少」的真相 —— 见 `AccountDataFeature` 里
+/// 「确认之前拿不到 N」那段说明。
+public struct DeleteAccountDataResponse: Codable, Equatable, Sendable {
+    public var cascaded: [String: Int]
+    /// 备份彻底清除的时间点。**不显示**，但它在契约里，且它是「删除」这个承诺的一部分
+    /// （软删 + 备份保留期），所以照样解码下来。
+    public var backupPurgeAt: String
+    /// 第二次调用时为 true（幂等）。屏幕上据此说「数据已经不在了」，而不是报错。
+    public var alreadyDeleted: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case cascaded
+        case backupPurgeAt = "backup_purge_at"
+        case alreadyDeleted = "already_deleted"
+    }
+}
+
 public struct ReviewDoc: Codable, Equatable, Sendable {
     public var goalAchievement: GoalAchievement
     public var issues: [ReviewIssue]

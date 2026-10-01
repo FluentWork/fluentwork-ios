@@ -86,6 +86,15 @@ public let appReducer: Reducer<AppState, AppAction> = combineReducers(
     }
   ),
   pullback(
+    accountDataReducer,
+    state: \.accountData,
+    action: AppAction.accountData,
+    extract: {
+      guard case .accountData(let action) = $0 else { return nil }
+      return action
+    }
+  ),
+  pullback(
     createPracticeReducer,
     state: \.createPractice,
     action: AppAction.createPractice,

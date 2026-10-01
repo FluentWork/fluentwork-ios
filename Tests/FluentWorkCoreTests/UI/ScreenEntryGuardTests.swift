@@ -109,6 +109,10 @@ struct ScreenEntryGuardTests {
                 // 那条页脚连着「注入徽章」一起删掉了（它不在稿子里），所以这里要写明理由，
                 // 而不是让守卫以为「数据层做完了、屏幕上没有入口」。
                 "speakingRoom.badgeHit",
+                // 删数据（屏 12 的「删除我的全部素材」）：**回执与失败由 `accountDataMiddleware` 派**。
+                // 屏幕派它们等于自己造一个「已经删掉了」的结果 —— 而这条链路是不可逆的，
+                // 屏幕上唯一该做的是把「确认」派出去、然后等真实回执。
+                "accountData.deleteSucceeded", "accountData.deleteFailed",
                 "network.connectivityChanged",
             ]
         ),

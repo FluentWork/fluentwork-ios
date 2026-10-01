@@ -70,6 +70,12 @@ public enum FluentWorkAPI: FluentWorkTargetType {
   case topicStats(accessToken: String, days: Int?)
   /// `POST /api/v1/topic-cards/:id/dismiss` — 带原因地忽略一张卡（86_ M11）。
   case topicDismiss(accessToken: String, cardID: String, reason: TopicDismissReason)
+  /// `DELETE /api/v1/account/data` — 删掉我自己的全部数据（A4，屏 12 的「删除我的全部素材」）。
+  ///
+  /// 契约要求带 `confirmation_code: DELETE-MY-DATA`。这个常量**不住在这里**：
+  /// 它由调用方传进来（`AccountAPIClient`），因为它是**一次确认**的内容，
+  /// 而不是一个协议细节 —— 埋进请求构造器里会让人以为「删数据不用确认」。
+  case deleteMyData(accessToken: String, confirmationCode: String)
 
   public var baseURL: URL {
     // Overridden by SessionAPIClient via AbsoluteURL target wrapper — unused.
@@ -88,6 +94,8 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       return "/sessions"
     case .createMaterial:
       return "/materials"
+    case .deleteMyData:
+      return "/account/data"
     case .getSessionReview(let sessionID, _):
       return "/sessions/\(sessionID)/review"
     case .sendSessionMessage(let sessionID, _, _, _):
@@ -131,7 +139,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
     case .getDailyReadToday, .getSessionReview, .listCorpusBlocks, .listSessions,
       .getSessionDetail, .drillRound, .topicCards, .topicStats:
       return .get
-    case .deleteCorpusBlock:
+    case .deleteCorpusBlock, .deleteMyData:
       return .delete
     case .updateCorpusBlock:
       return .put
@@ -187,6 +195,11 @@ public enum FluentWorkAPI: FluentWorkTargetType {
     case .createMaterial(_, let kind, let content):
       return .requestParameters(
         parameters: ["kind": kind, "content": content],
+        encoding: JSONEncoding.default
+      )
+    case .deleteMyData(_, let confirmationCode):
+      return .requestParameters(
+        parameters: ["confirmation_code": confirmationCode],
         encoding: JSONEncoding.default
       )
     case .getSessionReview, .getSessionDetail:
@@ -306,7 +319,8 @@ public enum FluentWorkAPI: FluentWorkTargetType {
     switch self {
     case .issueGuest, .refreshToken:
       return nil
-    case .mergeGuestAccount(_, let token),
+    case .deleteMyData(let token, _),
+      .mergeGuestAccount(_, let token),
       .createSession(let token, _, _, _),
       .getSessionReview(_, let token),
       .sendSessionMessage(_, let token, _, _),

@@ -864,6 +864,25 @@ public extension Container {
         }.shared
     }
 
+    var accountAPIClient: Factory<AccountAPIClientProtocol> {
+        self {
+            AccountAPIClient(
+                network: self.networkClient(),
+                baseURL: self.appEnvironment().apiBaseURL
+            )
+        }.cached
+    }
+
+    var accountDataClient: Factory<AccountDataClientProtocol> {
+        self {
+            DefaultAccountDataClient(
+                api: self.accountAPIClient(),
+                sessionAPI: self.sessionAPIClient(),
+                tokens: self.authTokenStore()
+            )
+        }.shared
+    }
+
     var materialsClient: Factory<MaterialsClientProtocol> {
         self {
             DefaultMaterialsClient(

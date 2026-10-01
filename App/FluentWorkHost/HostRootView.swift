@@ -59,7 +59,9 @@ struct HostRootView: View {
                         from: store.state.featureFlags,
                         // 版本号是 app 层的事实：投影里读 `Bundle.main` 会在测试进程里读到
                         // 测试 runner 的 bundle —— 恰好是你想核对版本的那一处读到错的那份。
-                        appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+                        appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+                        // 「删除我的全部素材」的那条不可逆链路（A4）。
+                        accountData: store.state.accountData
                     ),
                     onToggleFlag: { rawValue, isEnabled in
                         guard let flag = AppFeatureFlag(rawValue: rawValue) else { return }
@@ -67,6 +69,18 @@ struct HostRootView: View {
                     },
                     onClearOverrides: {
                         store.dispatch(.featureFlags(.clearLocalOverrides))
+                    },
+                    onDeleteTapped: {
+                        // 「按下」只把确认摆出来（reducer 进 `.confirming`），**不删任何东西**。
+                        store.dispatch(.accountData(.deleteTapped))
+                    },
+                    onDeleteConfirmed: {
+                        // 「确定」才发请求 —— 而 reducer 里那条守卫要求相位已经是 `.confirming`，
+                        // 所以这里就算被误调也删不动。
+                        store.dispatch(.accountData(.confirmed))
+                    },
+                    onDeleteCancelled: {
+                        store.dispatch(.accountData(.confirmationCancelled))
                     }
                 )
             },

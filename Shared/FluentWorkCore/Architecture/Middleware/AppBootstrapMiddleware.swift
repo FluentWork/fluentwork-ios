@@ -9,6 +9,7 @@ public enum AppTaskID {
     public static let bootstrap: CancellationID = "app.bootstrap"
     public static let networkMonitor: CancellationID = "app.networkMonitor"
     public static let reviewPoll: CancellationID = "review.poll"
+    public static let accountDataDelete: CancellationID = "accountData.delete"
     public static let corpusHydrate: CancellationID = "corpus.hydrate"
     public static let corpusRefresh: CancellationID = "corpus.refresh"
     public static let corpusLoadMore: CancellationID = "corpus.load-more"
@@ -42,6 +43,7 @@ public func makeAppMiddlewares(container: Container) -> [Middleware<AppState, Ap
         drillMiddleware(container: container),
         topicMiddleware(container: container),
         createPracticeMiddleware(container: container),
+        accountDataMiddleware(container: container),
         speechSessionMiddleware(container: container),
         appBootstrapMiddleware(container: container),
         appNetworkMonitorMiddleware(container: container),

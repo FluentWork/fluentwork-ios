@@ -127,6 +127,12 @@ private let clientOperations: [ClientOperation] = [
         name: "createMaterial",
         api: .createMaterial(accessToken: "t", kind: "sentence", content: "x"),
         path: "/materials", method: "POST"),
+    // 屏 12「删除我的全部素材」：契约里一直有 A4 这条（`operationId: deleteAccountData`），
+    // 客户端此前从没调过。**它是 DELETE**，且要带 `confirmation_code`。
+    ClientOperation(
+        name: "deleteMyData",
+        api: .deleteMyData(accessToken: "t", confirmationCode: "DELETE-MY-DATA"),
+        path: "/account/data", method: "DELETE"),
 ]
 
 @Test func everyClientOperationIsDeclaredInTheMirroredContract() throws {

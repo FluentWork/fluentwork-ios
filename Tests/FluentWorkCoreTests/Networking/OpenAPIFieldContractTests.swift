@@ -40,6 +40,8 @@ private let boundModels: [ModelBinding] = [
     ModelBinding(swiftType: "TopicPracticeStats", source: .schema("TopicPracticeStats")),
     ModelBinding(swiftType: "TopicDismissResult", source: .schema("TopicDismissResult")),
     ModelBinding(swiftType: "CreateMaterialResponse", source: .schema("CreateMaterialResponse")),
+    // 屏 12「删除我的全部素材」的回执（A4）。
+    ModelBinding(swiftType: "DeleteAccountDataResponse", source: .schema("DeleteAccountDataResponse")),
 ]
 
 private let decodedTypesWithoutRESTBinding: [String: String] = [
