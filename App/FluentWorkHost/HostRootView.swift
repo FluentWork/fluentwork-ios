@@ -82,6 +82,18 @@ struct HostRootView: View {
     @ViewBuilder
     private func routeDestination(_ route: AppRoute) -> some View {
         switch route {
+        case .login:
+            // 屏 15。四个回调全是**屏幕该派的那几个**；结果（`.succeeded` / `.failed`）
+            // 由 `accountAuthMiddleware` 派 —— 屏幕派它们等于自己造一个「登录成功」。
+            LoginView(
+                model: LoginViewModel.make(from: store.state.accountAuth),
+                onModeChanged: { mode in store.dispatch(.accountAuth(.modeChanged(mode))) },
+                onEmailChanged: { email in store.dispatch(.accountAuth(.emailChanged(email))) },
+                onPasswordChanged: { password in
+                    store.dispatch(.accountAuth(.passwordChanged(password)))
+                },
+                onSubmit: { store.dispatch(.accountAuth(.submitTapped)) }
+            )
         case .settings:
             // 屏 12：**工作台那条栈上的一页**（稿子 §03：底部导航固定 3 项；
             // 屏 12 的顶栏是「← 返回工作台 ＋ 设置」）。返回交给导航栈自己画。

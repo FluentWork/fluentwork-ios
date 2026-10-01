@@ -39,6 +39,13 @@ public enum AppRoute: TGRoute, Codable {
     /// 同样不带 `sessionID`，理由同上。
     case topicCards
 
+    /// 登录 / 注册（屏 15）。
+    ///
+    /// 与设置同为「**全屏页（从入口推入）**」：从工作台那条栈推入，页面上自带
+    /// `.fullScreenPage()` 盖住底部 tab bar。入口今天有两处：设置页的账号组、
+    /// 以及屏 04 的 G4 注册时机（后者还没做）。
+    case login
+
     /// 设置（屏 12）。
     ///
     /// **它是推入页，不是 tab**（2026-10-01 按稿子拍板）。稿子 屏 12 的顶栏是
@@ -78,6 +85,8 @@ public enum AppRoute: TGRoute, Codable {
             return "/practice/new"
         case .settings:
             return "/settings"
+        case .login:
+            return "/login"
         }
     }
 
@@ -100,6 +109,8 @@ public enum AppRoute: TGRoute, Codable {
             self = .topicCards
         case "/settings":
             self = .settings
+        case "/login":
+            self = .login
         case "/practice/new":
             self = .createPractice
         // Note what is *not* here: `/sessions/<id>`. That path exists on the
@@ -130,7 +141,7 @@ public enum AppRoute: TGRoute, Codable {
         switch self {
         case .speakingRoom, .review:
             return .workbench(.present(self, style: .fullScreenCover))
-        case .dailyRead, .sessionHistory, .sessionDetail, .topicCards, .settings:
+        case .dailyRead, .sessionHistory, .sessionDetail, .topicCards, .settings, .login:
             return .workbench(.push(self))
         case .createPractice:
             // 弹层（稿子 §03）。`.sheet` 也是 `present` 的默认值，写出来是因为

@@ -132,10 +132,6 @@ struct ScreenEntryGuardTests {
                 "drill.retryTapped", "drill.advanceTapped", "drill.appealTapped",
                 "drill.exitTapped",
 
-                // 账号表单（屏 15）—— **中间件已经落地，缺的是屏幕**：
-                // 这 4 条都由登录页派，而登录页还没写。屏 15 一落地它们就离开这一组。
-                "accountAuth.modeChanged", "accountAuth.emailChanged",
-                "accountAuth.passwordChanged", "accountAuth.submitTapped",
             ]
         ),
 
