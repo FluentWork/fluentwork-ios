@@ -150,7 +150,27 @@ struct SettingsDeleteTests {
         )
     }
 
-    // MARK: - 飞行中不可点
+    // MARK: - 行图标（稿子 `[sr-ico]`）
+
+    /// 稿子 屏 12 的每一行都带行首图标，而且**全是已有的图标令牌**。
+    ///
+    /// 第一版漏了这一处（把 `[sr-ico]` 当成了装饰没提取），所以这条判据是按
+    /// 「稿子的行 ↔ 稿子的图标」逐个对上的 —— 它挡的是「少了一个图标」这种
+    /// 只有对着稿子才会发现的差。
+    @Test func 每一行都带稿子指定的图标() {
+        let rows = SettingsViewModel.sceneRows(from: AccountDataState())
+
+        let expected: [(String, DesignTokens.Icon)] = [
+            ("account.phone", .talk),
+            ("voice.timbre", .mic),
+            ("privacy.purpose", .shield),
+            ("privacy.delete", .trash),
+        ]
+        for (id, icon) in expected {
+            let row = ([rows.account] + rows.voice + rows.privacy).first { $0.id == id }
+            #expect(row?.icon == icon, "\(id) 的行首图标不是稿子指定的那一个")
+        }
+    }
 
     /// 请求在飞时那一行不可点（重复发两次会让幂等回包看起来像没生效）。
     @Test func 删除中不可再点() {

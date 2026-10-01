@@ -136,7 +136,7 @@ public struct SettingsRootView: View {
             ForEach(rows.privacy.filter { $0.id != "privacy.delete" }) { row in
                 infoRow(row)
             }
-            deleteRow(rows.deleteFlow)
+            deleteRow(rows.deleteFlow, icon: rows.privacy.first { $0.id == "privacy.delete" }?.icon)
         } header: {
             Text("隐私与数据")
         } footer: {
@@ -151,32 +151,47 @@ public struct SettingsRootView: View {
     }
 
     private func infoRow(_ row: SettingsInfoRow) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text(row.title)
-                if row.hasDisclosure {
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            if let detail = row.detail {
-                Text(detail)
-                    .font(.caption)
+        HStack(alignment: .top, spacing: DesignTokens.Spacing.s3) {
+            // 行首图标（稿子 屏 12 的 `[sr-ico]`）。用已有的图标令牌，不引新资源。
+            if let icon = row.icon {
+                icon.image
+                    .font(.system(size: DesignTokens.Component.iconPointSize * 0.8))
                     .foregroundStyle(.secondary)
+                    .frame(width: DesignTokens.Component.iconPointSize, alignment: .center)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text(row.title)
+                    if row.hasDisclosure {
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                if let detail = row.detail {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
 
     /// 「删除我的全部素材」：**待改进色，不是纯红**（稿子原话，与全局色彩纪律一致）。
     @ViewBuilder
-    private func deleteRow(_ flow: SettingsDeleteFlow) -> some View {
+    private func deleteRow(_ flow: SettingsDeleteFlow, icon: DesignTokens.Icon?) -> some View {
         Button {
             onDeleteTapped()
             isShowingDeleteConfirmation = true
         } label: {
-            HStack {
+            HStack(alignment: .top, spacing: DesignTokens.Spacing.s3) {
+                if let icon {
+                    icon.image
+                        .font(.system(size: DesignTokens.Component.iconPointSize * 0.8))
+                        .foregroundStyle(DesignTokens.Color.improve)
+                        .frame(width: DesignTokens.Component.iconPointSize, alignment: .center)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text("删除我的全部素材")
                         .foregroundStyle(DesignTokens.Color.improve)

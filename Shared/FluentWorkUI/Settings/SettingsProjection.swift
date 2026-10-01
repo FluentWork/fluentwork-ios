@@ -9,12 +9,23 @@ public struct SettingsInfoRow: Equatable, Sendable, Identifiable {
     public var detail: String?
     /// 有 `destination` 的行是可以点进去的（稿子在行尾画了 `›`）。
     public var hasDisclosure: Bool
+    /// 行首图标。稿子 屏 12 的 `[sr-ico]` 六行都有，而且**全是已有的图标令牌**
+    /// （`i-talk` / `i-wave` / `i-mic` / `i-info` / `i-shield` / `i-trash`）——
+    /// 所以它不是新资源，是我第一版漏掉的一处形态。
+    public var icon: DesignTokens.Icon?
 
-    public init(id: String, title: String, detail: String? = nil, hasDisclosure: Bool = false) {
+    public init(
+        id: String,
+        title: String,
+        detail: String? = nil,
+        hasDisclosure: Bool = false,
+        icon: DesignTokens.Icon? = nil
+    ) {
         self.id = id
         self.title = title
         self.detail = detail
         self.hasDisclosure = hasDisclosure
+        self.icon = icon
     }
 }
 
@@ -91,7 +102,8 @@ extension SettingsViewModel {
                 // 今天只有游客身份，也没有任何登录 UI。写「未绑定」是实话；
                 // 编一个号码或者摆一个点了没反应的「换绑」，是这一屏最不该做的事。
                 detail: "未绑定 · 现在用的是游客身份",
-                hasDisclosure: false
+                hasDisclosure: false,
+                icon: .talk
             ),
             voice: [
                 SettingsInfoRow(
@@ -99,7 +111,8 @@ extension SettingsViewModel {
                     title: "音色",
                     // 稿子原文就是这个括号。其余音色随 V1.1，所以这一行不是「没做完」，是「还没到」。
                     detail: "默认音色（其余音色随 V1.1）",
-                    hasDisclosure: true
+                    hasDisclosure: true,
+                    icon: .mic
                 )
             ],
             privacy: [
@@ -107,7 +120,8 @@ extension SettingsViewModel {
                     id: "privacy.purpose",
                     title: "数据用途说明",
                     detail: "素材与录音不用于训练",
-                    hasDisclosure: true
+                    hasDisclosure: true,
+                    icon: .shield
                 ),
                 SettingsInfoRow(
                     id: "privacy.delete",
@@ -115,7 +129,8 @@ extension SettingsViewModel {
                     // 稿子：用**待改进色**而不是纯红（与全局色彩纪律一致），
                     // 而且「二次确认后才执行」—— 那一层在 `deleteFlow` 里。
                     detail: "二次确认后即时生效，并级联删除衍生的话术块",
-                    hasDisclosure: false
+                    hasDisclosure: false,
+                    icon: .trash
                 )
             ],
             deleteFlow: deleteFlow(from: accountData)
