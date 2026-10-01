@@ -113,6 +113,23 @@ public struct ReviewViewModel: Equatable, Sendable {
     public var refineCards: [ReviewRefineCardRow]
     /// 被丢掉的那几张，供「撤回」用。`refineCards` 里没有它们。
     public var discardedRefineCards: [ReviewRefineCardRow]
+
+    // MARK: 屏 04 的版式（09-26 稿）
+
+    /// 顶部那一条：`12 分钟 · 9 回合 · +4 新增话术块`。少一项就少一块。
+    public var summary: ReviewSummaryViewData?
+    /// 目标达成。**排在问题清单前面**（先肯定后改进）。
+    public var goal: ReviewGoalViewData?
+    /// 「问题清单 3 条」/「提高建议 2 条」。为 0 时是 `nil`（不显示一个「0 条」的标签）。
+    public var issueCountText: String?
+    public var suggestionCountText: String?
+    /// 这一句最值得改：Top 1 ＋ 其余 ＋「1 / 5」。
+    public var comparisonSection: ReviewComparisonSection?
+    public var issueSection: ReviewInsightSection?
+    public var suggestionSection: ReviewInsightSection?
+    /// 「3 个待入库」。入库完就没了。
+    public var pendingRefineText: String?
+
     /// 该给学员盖骨架屏。
     ///
     /// **规则来自 `ReviewState.showsSkeleton`，这里只做直通** —— 不在 UI 侧重写一遍。
@@ -129,6 +146,14 @@ public struct ReviewViewModel: Equatable, Sendable {
         dualColumn: [ReviewComparisonRow] = [],
         refineCards: [ReviewRefineCardRow] = [],
         discardedRefineCards: [ReviewRefineCardRow] = [],
+        summary: ReviewSummaryViewData? = nil,
+        goal: ReviewGoalViewData? = nil,
+        issueCountText: String? = nil,
+        suggestionCountText: String? = nil,
+        comparisonSection: ReviewComparisonSection? = nil,
+        issueSection: ReviewInsightSection? = nil,
+        suggestionSection: ReviewInsightSection? = nil,
+        pendingRefineText: String? = nil,
         showsSkeleton: Bool = false,
         refineErrorMessage: String? = nil,
         errorMessage: String? = nil
@@ -139,6 +164,14 @@ public struct ReviewViewModel: Equatable, Sendable {
         self.dualColumn = dualColumn
         self.refineCards = refineCards
         self.discardedRefineCards = discardedRefineCards
+        self.summary = summary
+        self.goal = goal
+        self.issueCountText = issueCountText
+        self.suggestionCountText = suggestionCountText
+        self.comparisonSection = comparisonSection
+        self.issueSection = issueSection
+        self.suggestionSection = suggestionSection
+        self.pendingRefineText = pendingRefineText
         self.showsSkeleton = showsSkeleton
         self.refineErrorMessage = refineErrorMessage
         self.errorMessage = errorMessage
@@ -154,6 +187,14 @@ public struct ReviewRootView: View {
     private let onRestoreRefineCard: (String) -> Void
     private let onEditRefineCard: (String, RefineCardEditField, String) -> Void
     private let onRevertRefineCardEdits: (String) -> Void
+    /// 底部两个动作（稿子 屏 04 的「再来一轮 / 完成」）。
+    private let onPracticeAgain: () -> Void
+    private let onDone: () -> Void
+    /// 显式关闭。这一屏是以全屏 cover 呈现的，没有导航栏能返回。
+    private let onClose: () -> Void
+
+    /// 哪几节摊开了（稿子的「查看全部」）。见 `moreButton` 的说明。
+    @State private var expandedSections: Set<ReviewExpandableSection> = []
 
     public init(
         model: ReviewViewModel,
@@ -163,7 +204,10 @@ public struct ReviewRootView: View {
         onDiscardRefineCard: @escaping (String) -> Void = { _ in },
         onRestoreRefineCard: @escaping (String) -> Void = { _ in },
         onEditRefineCard: @escaping (String, RefineCardEditField, String) -> Void = { _, _, _ in },
-        onRevertRefineCardEdits: @escaping (String) -> Void = { _ in }
+        onRevertRefineCardEdits: @escaping (String) -> Void = { _ in },
+        onPracticeAgain: @escaping () -> Void = {},
+        onDone: @escaping () -> Void = {},
+        onClose: @escaping () -> Void = {}
     ) {
         self.model = model
         self.onAppear = onAppear
@@ -173,14 +217,46 @@ public struct ReviewRootView: View {
         self.onRestoreRefineCard = onRestoreRefineCard
         self.onEditRefineCard = onEditRefineCard
         self.onRevertRefineCardEdits = onRevertRefineCardEdits
+        self.onPracticeAgain = onPracticeAgain
+        self.onDone = onDone
+        self.onClose = onClose
     }
 
     public var body: some View {
-        content
-            .navigationTitle("回顾")
-            .task {
-                onAppear()
+        VStack(spacing: 0) {
+            // **页头是这一屏自己的**（稿子 屏 04 的左上角写着「回顾」）。
+            // 从前它是宿主盖在内容上的一个悬浮 ✕，而悬浮件会压住第一行 ——
+            // 截图里它正好压着总结条，把「12 分钟」盖掉了。
+            pageHeader
+            content
+        }
+        .background(DesignTokens.Color.background)
+        .task {
+            onAppear()
+        }
+    }
+
+    private var pageHeader: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text("回顾")
+                .font(DesignTokens.Typography.title)
+                .foregroundStyle(DesignTokens.Color.textPrimary)
+            Spacer(minLength: DesignTokens.Spacing.s3)
+            Button(action: onClose) {
+                DesignTokens.Icon.x.image
+                    .font(.system(size: DesignTokens.Component.iconPointSize * 0.8, weight: .medium))
+                    .foregroundStyle(DesignTokens.Color.textSecondary)
+                    .frame(
+                        width: DesignTokens.Component.minHitTarget,
+                        height: DesignTokens.Component.minHitTarget,
+                        alignment: .trailing
+                    )
             }
+            .accessibilityLabel("关闭回顾")
+            .accessibilityIdentifier("review.close")
+        }
+        .padding(.horizontal, DesignTokens.Spacing.pageMargin)
+        .padding(.top, DesignTokens.Spacing.s2)
     }
 
     @ViewBuilder
@@ -216,92 +292,420 @@ public struct ReviewRootView: View {
             .padding()
 
         case .ready:
-            if let overview = model.overview {
-                List {
-                    Section("Overview") {
-                        Text(overview.note)
-                        LabeledContent("Issues", value: "\(overview.issueCount)")
-                        LabeledContent("Suggestions", value: "\(overview.suggestionCount)")
-                        LabeledContent("Comparisons", value: "\(overview.comparisonCount)")
+            if model.overview != nil || model.summary != nil {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.s6) {
+                        summaryBar
+                        countsRow
+                        comparisonBlock
+                        issueBlock
+                        suggestionBlock
+                        refineBlock
+                        transcriptBlock
                     }
-
-                    Section("Transcript") {
-                        ForEach(model.transcript) { turn in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(turn.speaker)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(turn.text)
-                            }
-                        }
-                    }
-
-                    Section("Dual Column") {
-                        ForEach(model.dualColumn) { row in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("You: \(row.user)")
-                                Text("Better: \(row.better)")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-
-                    Section("Refine Cards") {
-                        if let refineErrorMessage = model.refineErrorMessage, !refineErrorMessage.isEmpty {
-                            Text(refineErrorMessage)
-                                .foregroundStyle(.red)
-                        }
-
-                        ForEach(model.refineCards) { card in
-                            ReviewRefineCardView(
-                                card: card,
-                                onAccept: {
-                                    onAcceptRefineCard(card.id)
-                                },
-                                onDiscard: {
-                                    onDiscardRefineCard(card.id)
-                                },
-                                onEdit: { field, value in
-                                    onEditRefineCard(card.id, field, value)
-                                },
-                                onRevertEdits: {
-                                    onRevertRefineCardEdits(card.id)
-                                }
-                            )
-                        }
-                    }
-
-                    // 撤回的入口。**没有这一段，「撤回」就是一条到不了屏幕的动作** ——
-                    // 被丢掉的卡不在 `refineCards` 里，`discardedRefineCards` 是它们唯一的出处。
-                    if !model.discardedRefineCards.isEmpty {
-                        Section("已丢弃") {
-                            ForEach(model.discardedRefineCards) { card in
-                                HStack(alignment: .top, spacing: 12) {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(card.intentZH)
-                                            .font(.headline)
-                                        Text(card.expressionEN)
-                                            .foregroundStyle(.secondary)
-                                    }
-
-                                    Spacer(minLength: 12)
-
-                                    Button("撤回") {
-                                        onRestoreRefineCard(card.id)
-                                    }
-                                    .buttonStyle(.bordered)
-                                }
-                            }
-                        }
-                    }
+                    .padding(.horizontal, DesignTokens.Spacing.pageMargin)
+                    .padding(.vertical, DesignTokens.Spacing.s4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .background(DesignTokens.Color.background)
+                .safeAreaInset(edge: .bottom) { bottomBar }
             } else {
                 Text("回顾内容缺失")
-                    .foregroundStyle(.secondary)
+                    .font(DesignTokens.Typography.body)
+                    .foregroundStyle(DesignTokens.Color.textSecondary)
+                    .padding()
             }
         }
     }
 
+    // MARK: - 总结条与目标达成（先肯定后改进：这一段在最上面）
+
+    @ViewBuilder
+    private var summaryBar: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.s3) {
+            if let summary = model.summary, !summary.facts.isEmpty {
+                // 事实之间用中隔点连起来，**不做成三张卡**：它们是同一句话的三个量，
+                // 拆成卡片会让「12 分钟」看起来比「9 回合」重要。
+                Text(summary.facts.joined(separator: " · "))
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Color.textSecondary)
+                    .accessibilityIdentifier("review.summary")
+            }
+
+            if let goal = model.goal {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.s1) {
+                    HStack(spacing: DesignTokens.Spacing.s2) {
+                        DesignTokens.Icon.check.image
+                            .font(.system(size: DesignTokens.Component.iconPointSize * 0.7))
+                            .foregroundStyle(
+                                goal.isMet ? DesignTokens.Color.success : DesignTokens.Color.training
+                            )
+                        Text(goal.headline)
+                            .font(DesignTokens.Typography.cardTitle)
+                            .foregroundStyle(
+                                goal.isMet ? DesignTokens.Color.success : DesignTokens.Color.training
+                            )
+                    }
+                    if !goal.note.isEmpty {
+                        Text(goal.note)
+                            .font(DesignTokens.Typography.body)
+                            .foregroundStyle(DesignTokens.Color.textPrimary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(DesignTokens.Spacing.s3)
+                .background(
+                    DesignTokens.Color.backgroundElevated,
+                    in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
+                )
+                .accessibilityIdentifier("review.goal")
+            }
+        }
+    }
+
+    /// 「问题清单 3 条」「提高建议 2 条」。为 0 的那一项不出现（见投影里的 `countText`）。
+    @ViewBuilder
+    private var countsRow: some View {
+        if model.issueCountText != nil || model.suggestionCountText != nil {
+            HStack(spacing: DesignTokens.Spacing.s2) {
+                if let text = model.issueCountText {
+                    pill(text, color: DesignTokens.Color.improve)
+                }
+                if let text = model.suggestionCountText {
+                    pill(text, color: DesignTokens.Color.accent)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func pill(_ title: String, color: SwiftUI.Color) -> some View {
+        Text(title)
+            .font(DesignTokens.Typography.caption)
+            .foregroundStyle(color)
+            .padding(.horizontal, DesignTokens.Spacing.s3)
+            .padding(.vertical, DesignTokens.Spacing.s1)
+            .background(color.opacity(DesignTokens.Alpha.wash), in: Capsule())
+    }
+
+    // MARK: - 双栏对照（这一句最值得改）
+
+    @ViewBuilder
+    private var comparisonBlock: some View {
+        if let section = model.comparisonSection {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.s3) {
+                HStack(alignment: .firstTextBaseline) {
+                    sectionTitle("这一句最值得改")
+                    Spacer(minLength: DesignTokens.Spacing.s2)
+                    Text(section.counterText)
+                        .font(DesignTokens.Typography.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(DesignTokens.Color.textSecondary)
+                }
+
+                comparisonCard(section.top)
+
+                if let remaining = remainingRows(
+                    section.remaining,
+                    isExpanded: isExpanded(.comparison)
+                ) {
+                    ForEach(remaining) { row in
+                        comparisonCard(row)
+                    }
+                }
+
+                if let title = section.moreButtonTitle {
+                    moreButton(title, section: .comparison)
+                }
+            }
+            .accessibilityIdentifier("review.comparison")
+        }
+    }
+
+    /// 一条对照：左「你说的」/ 右「更地道的版本」，差异词**下划线**（不是红字）。
+    private func comparisonCard(_ row: ReviewComparisonViewData) -> some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.s3) {
+            labeledText("你说的", segments: row.userSegments, plain: row.userText)
+            Divider().overlay(DesignTokens.Color.separator)
+            labeledText("更地道", segments: row.betterSegments, plain: row.betterText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(DesignTokens.Spacing.s3)
+        .background(
+            DesignTokens.Color.backgroundElevated,
+            in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
+        )
+    }
+
+    private func labeledText(
+        _ label: String,
+        segments: [ReviewTextDiff.Segment],
+        plain: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.s1) {
+            Text(label)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Color.textSecondary)
+
+            // 差异词用**待改进色下划线**标注而非红字（稿子原话）。红字会被读成「错了」，
+            // 而这一屏要说的是「还可以这样说」。分段画而不是拼一整段富文本：
+            // 于是「拼回来等于原文」这件事不依赖任何富文本 API（见 `ReviewTextDiff`）。
+            segments.reduce(Text("")) { partial, segment in
+                partial + Text(segment.text).underline(
+                    segment.isChanged,
+                    color: segment.isChanged ? DesignTokens.Color.improve : nil
+                )
+            }
+            .font(DesignTokens.Typography.englishPhrase)
+            .foregroundStyle(DesignTokens.Color.textPrimary)
+            .accessibilityLabel(plain)
+        }
+    }
+
+    // MARK: - 问题清单 / 提高建议
+
+    @ViewBuilder
+    private var issueBlock: some View {
+        insightBlock(
+            title: "最值得改的一个问题",
+            section: model.issueSection,
+            key: .issues,
+            identifier: "review.issues"
+        )
+    }
+
+    @ViewBuilder
+    private var suggestionBlock: some View {
+        insightBlock(
+            title: "可以复用的一条建议",
+            section: model.suggestionSection,
+            key: .suggestions,
+            identifier: "review.suggestions"
+        )
+    }
+
+    @ViewBuilder
+    private func insightBlock(
+        title: String,
+        section: ReviewInsightSection?,
+        key: ReviewExpandableSection,
+        identifier: String
+    ) -> some View {
+        if let section {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.s3) {
+                sectionTitle(title)
+                insightCard(section.top)
+                if let remaining = remainingRows(section.remaining, isExpanded: isExpanded(key)) {
+                    ForEach(remaining) { item in
+                        insightCard(item)
+                    }
+                }
+                if let moreTitle = section.moreButtonTitle {
+                    moreButton(moreTitle, section: key)
+                }
+            }
+            .accessibilityIdentifier(identifier)
+        }
+    }
+
+    private func insightCard(_ item: ReviewInsightViewData) -> some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.s2) {
+            Text(item.title)
+                .font(DesignTokens.Typography.body)
+                .foregroundStyle(DesignTokens.Color.textPrimary)
+            if let detail = item.detail, !detail.isEmpty {
+                Text(detail)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Color.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(DesignTokens.Spacing.s3)
+        .background(
+            DesignTokens.Color.backgroundElevated,
+            in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
+        )
+    }
+
+    // MARK: - 话术块炼化
+
+    @ViewBuilder
+    private var refineBlock: some View {
+        if !model.refineCards.isEmpty || !model.discardedRefineCards.isEmpty {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.s3) {
+                HStack(alignment: .firstTextBaseline) {
+                    sectionTitle("话术块炼化")
+                    Spacer(minLength: DesignTokens.Spacing.s2)
+                    if let pending = model.pendingRefineText {
+                        Text(pending)
+                            .font(DesignTokens.Typography.caption)
+                            .monospacedDigit()
+                            .foregroundStyle(DesignTokens.Color.textSecondary)
+                    }
+                }
+
+                if let refineErrorMessage = model.refineErrorMessage, !refineErrorMessage.isEmpty {
+                    Text(refineErrorMessage)
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Color.improve)
+                }
+
+                ForEach(model.refineCards) { card in
+                    ReviewRefineCardView(
+                        card: card,
+                        onAccept: { onAcceptRefineCard(card.id) },
+                        onDiscard: { onDiscardRefineCard(card.id) },
+                        onEdit: { field, value in onEditRefineCard(card.id, field, value) },
+                        onRevertEdits: { onRevertRefineCardEdits(card.id) }
+                    )
+                }
+
+                // 撤回的入口。**没有这一段，「撤回」就是一条到不了屏幕的动作** ——
+                // 被丢掉的卡不在 `refineCards` 里，`discardedRefineCards` 是它们唯一的出处。
+                if !model.discardedRefineCards.isEmpty {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.s2) {
+                        Text("已丢弃")
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundStyle(DesignTokens.Color.textSecondary)
+                        ForEach(model.discardedRefineCards) { card in
+                            HStack(alignment: .top, spacing: DesignTokens.Spacing.s3) {
+                                VStack(alignment: .leading, spacing: DesignTokens.Spacing.s1) {
+                                    Text(card.intentZH)
+                                        .font(DesignTokens.Typography.cardTitle)
+                                        .foregroundStyle(DesignTokens.Color.textSecondary)
+                                    Text(card.expressionEN)
+                                        .font(DesignTokens.Typography.caption)
+                                        .foregroundStyle(DesignTokens.Color.textSecondary)
+                                }
+                                Spacer(minLength: DesignTokens.Spacing.s3)
+                                Button("撤回") { onRestoreRefineCard(card.id) }
+                                    .font(DesignTokens.Typography.caption)
+                            }
+                        }
+                    }
+                }
+            }
+            .accessibilityIdentifier("review.refine")
+        }
+    }
+
+    // MARK: - 转录
+
+    @ViewBuilder
+    private var transcriptBlock: some View {
+        if !model.transcript.isEmpty {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.s3) {
+                sectionTitle("对话记录")
+                ForEach(model.transcript) { turn in
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.s1) {
+                        Text(turn.speaker == "user" ? "你" : "教练")
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundStyle(DesignTokens.Color.textSecondary)
+                        Text(turn.text)
+                            .font(DesignTokens.Typography.body)
+                            .foregroundStyle(DesignTokens.Color.textPrimary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .accessibilityIdentifier("review.transcript")
+        }
+    }
+
+    // MARK: - 底部两个动作
+
+    private var bottomBar: some View {
+        HStack(spacing: DesignTokens.Spacing.s3) {
+            Button {
+                onPracticeAgain()
+            } label: {
+                Text("再来一轮")
+                    .font(DesignTokens.Typography.cardTitle)
+                    .foregroundStyle(DesignTokens.Color.textPrimary)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: DesignTokens.Component.minHitTarget)
+                    .background(
+                        DesignTokens.Color.brandStrong,
+                        in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
+                    )
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("review.practiceAgain")
+
+            Button {
+                onDone()
+            } label: {
+                Text("完成")
+                    .font(DesignTokens.Typography.cardTitle)
+                    .foregroundStyle(DesignTokens.Color.textPrimary)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: DesignTokens.Component.minHitTarget)
+                    .background(
+                        DesignTokens.Color.backgroundElevated,
+                        in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
+                    )
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("review.done")
+        }
+        .padding(.horizontal, DesignTokens.Spacing.pageMargin)
+        .padding(.vertical, DesignTokens.Spacing.s2)
+        .background(DesignTokens.Color.background)
+    }
+
+    // MARK: - 小件
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(DesignTokens.Typography.title)
+            .foregroundStyle(DesignTokens.Color.textPrimary)
+    }
+
+    private func isExpanded(_ section: ReviewExpandableSection) -> Bool {
+        expandedSections.contains(section)
+    }
+
+    /// 「查看全部 / 查看其余」——**点一下原地展开**，不跳页（稿子：其余收进「查看全部」）。
+    ///
+    /// 展开态是**视图自己的** `@State`：它是「这一屏现在摊开到哪一步」，
+    /// 与服务端给的产出无关，也没有第二个读者。
+    private func moreButton(_ title: String, section: ReviewExpandableSection) -> some View {
+        Button {
+            if expandedSections.contains(section) {
+                expandedSections.remove(section)
+            } else {
+                expandedSections.insert(section)
+            }
+        } label: {
+            HStack(spacing: DesignTokens.Spacing.s1) {
+                Text(title)
+                    .font(DesignTokens.Typography.caption)
+                Image(systemName: isExpanded(section) ? "chevron.up" : "chevron.down")
+                    .font(.caption2)
+            }
+            .foregroundStyle(DesignTokens.Color.accent)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("review.more.\(section.rawValue)")
+    }
+
+    /// 展开时给全部、收起时给空。
+    private func remainingRows<Item>(
+        _ remaining: [Item],
+        isExpanded: Bool
+    ) -> [Item]? {
+        guard !remaining.isEmpty, isExpanded else { return nil }
+        return remaining
+    }
+}
+
+/// 哪些节能摊开（稿子的「查看全部」）。
+///
+/// 三个节各自独立：看完对照想接着看问题时，不该把对照那一节又收回去。
+private enum ReviewExpandableSection: String {
+    case comparison
+    case issues
+    case suggestions
 }
 
 /// 回顾正在生成时的那一屏：**骨架块 + 一句话**，不是转圈。

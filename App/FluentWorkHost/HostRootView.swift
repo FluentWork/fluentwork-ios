@@ -250,22 +250,23 @@ struct HostRootView: View {
                 },
                 onRevertRefineCardEdits: { cardID in
                     store.dispatch(.review(.refineCardEditReverted(cardID: cardID)))
+                },
+                onPracticeAgain: {
+                    // 稿子 屏 04 的「再来一轮」：关掉回顾，回到**创建练习**弹层再选一次。
+                    // 不直接进房间 —— 那一屏存在的理由就是「今天练什么」由学员选，
+                    // 绕开它等于把上次的选择当成这次的选择。
+                    store.dispatch(.navigation(.workbench(.dismiss)))
+                    store.dispatch(
+                        .navigation(.workbench(.present(.createPractice, style: .sheet)))
+                    )
+                },
+                onDone: {
+                    dismissWorkbenchModal()
+                },
+                onClose: {
+                    dismissWorkbenchModal()
                 }
             )
-            .overlay(alignment: .topLeading) {
-                Button {
-                    dismissWorkbenchModal()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(10)
-                        .background(.ultraThinMaterial, in: Circle())
-                }
-                .padding(.leading, 16)
-                .padding(.top, 8)
-                .accessibilityLabel("关闭回顾")
-            }
         case let .dailyRead(sessionID):
             DailyReadRootView(
                 model: DailyReadViewModel.make(

@@ -30,6 +30,8 @@ public enum DebugScreenPreview {
         case corpus
         /// 语料库的空态（屏 08 的空态形态）。
         case corpusEmpty
+        /// 回顾页（屏 04），带样例产出。
+        case review
     }
 
     public static var configured: Screen? {
@@ -47,7 +49,11 @@ public enum DebugScreenPreview {
             container.corpusClient.register { PreviewCorpusClient(blocks: corpusFixture) }
         case .corpusEmpty:
             container.corpusClient.register { PreviewCorpusClient(blocks: []) }
-        case .createPractice:
+        case .createPractice, .review:
+            // 回顾页**不换数据面**，而是直接派一条「轮询回来了」——这一屏的数据面是
+            // `SpeechSessionClientProtocol`（房间那个大协议），为截图去替身它，
+            // 换来的是「截图能证明轮询路径」的错觉。轮询本身有中间件判据管着，
+            // 这里要看的是**产出到手之后那一屏长什么样**。
             break
         }
     }
@@ -64,8 +70,180 @@ public enum DebugScreenPreview {
             )
         case .corpus, .corpusEmpty:
             store.dispatch(.navigation(.selectTab(.corpus)))
+        case .review:
+            // 先让产出落地，再把人送上去 —— 顺序反过来的话，那一帧是空的。
+            if let response = reviewFixture {
+                store.dispatch(.review(.applyPoll(response)))
+            }
+            store.dispatch(
+                .navigation(
+                    .workbench(.present(.review(sessionID: reviewFixtureSessionID), style: .fullScreenCover))
+                )
+            )
+            // **本机没有后端**：进页面时 `.appear` 会去打一次 `GET /sessions/:id/review`，
+            // 而它遇到网络错误是**立刻 `.loadFailed`、不重试**（`pollReviewUntilReady`）。
+            // 那一下会把相位从 `.ready` 打成 `.failed`，屏幕上就成了「暂不可用」。
+            // 所以等它落地之后把样例产出**再种一次** —— 这一屏要看的是产出到手之后的样子。
+            for _ in 0..<8 {
+                try? await Task.sleep(for: .milliseconds(400))
+                guard let response = reviewFixture, store.state.review.phase != .ready else { continue }
+                store.dispatch(.review(.applyPoll(response)))
+            }
         }
     }
+
+    static let reviewFixtureSessionID = "preview-review-session"
+
+    /// 屏 04 的样例产出：**照稿子那张图摆**（9 回合、12 分钟、3 条问题、2 条建议、
+    /// 5 条对照里首屏只给 1 条、3 个待入库）。
+    static let reviewFixture: ReviewPollResponse? = {
+        let json = """
+            {
+              "session_id": "\(reviewFixtureSessionID)",
+              "status": "ready",
+              "review": {
+                "generator": "ark-review-refine-v1",
+                "status": "ready",
+                "duration_sec": 720,
+                "transcript": [
+                  {"seq":1,"speaker":"user","text":"I need to talk about the rate limiting plan."},
+                  {"seq":2,"speaker":"ai","text":"Sure, go ahead."},
+                  {"seq":3,"speaker":"user","text":"I will do the cache thing next week."},
+                  {"seq":4,"speaker":"ai","text":"Got it. What's the risk?"},
+                  {"seq":5,"speaker":"user","text":"There is a risk we might be late."},
+                  {"seq":6,"speaker":"ai","text":"Thanks for flagging that."},
+                  {"seq":7,"speaker":"user","text":"I think maybe we can try that."},
+                  {"seq":8,"speaker":"ai","text":"Let's note it down."},
+                  {"seq":9,"speaker":"user","text":"We need to, uh, do it later."},
+                  {"seq":10,"speaker":"user","text":"Maybe it is not a good idea."},
+                  {"seq":11,"speaker":"user","text":"I am blocked on the API review."},
+                  {"seq":12,"speaker":"user","text":"I will follow up tomorrow."}
+                ],
+                "overview": {
+                  "goal_achievement": {
+                    "met": true,
+                    "note": "讲清了限流方案的目的与当前进度，没提到预计完成时间。"
+                  },
+                  "issue_count": 3,
+                  "suggestion_count": 2,
+                  "comparison_count": 5
+                },
+                "evaluation": [],
+                "dual_column": [
+                  {
+                    "user": "I will do the cache thing next week.",
+                    "better": "I'll get the caching work wrapped up next week."
+                  },
+                  {
+                    "user": "We need to, uh, do it later.",
+                    "better": "Let's push the launch to next sprint."
+                  },
+                  {
+                    "user": "There is a risk we might be late.",
+                    "better": "There's a risk we might slip here."
+                  },
+                  {
+                    "user": "I think maybe we can try that.",
+                    "better": "I'd suggest we try that."
+                  },
+                  {
+                    "user": "I am blocked on the API review.",
+                    "better": "I'm blocked on the API review."
+                  }
+                ],
+                "refine_cards": [
+                  {
+                    "intent_zh": "需要推迟某个话题时说",
+                    "expression_en": "Let's push the launch to next sprint.",
+                    "anchor_user_said": "We need to do it later.",
+                    "scene_tag": "standup",
+                    "function_tag": "defer"
+                  },
+                  {
+                    "intent_zh": "表达「这块我来兜底」时",
+                    "expression_en": "I'll take ownership of that piece.",
+                    "anchor_user_said": "I will do this part.",
+                    "scene_tag": "standup",
+                    "function_tag": "commit"
+                  },
+                  {
+                    "intent_zh": "需要同步风险时说",
+                    "expression_en": "There's a risk we might slip here.",
+                    "anchor_user_said": "We might be late.",
+                    "scene_tag": "review",
+                    "function_tag": "report"
+                  }
+                ],
+                "review": {
+                  "goal_achievement": {
+                    "met": true,
+                    "note": "讲清了限流方案的目的与当前进度，没提到预计完成时间。"
+                  },
+                  "issues": [
+                    {
+                      "type": "vague_time",
+                      "original_quote": "I will do the cache thing next week.",
+                      "hint": "「下周」太松，给一个具体日子。"
+                    },
+                    {
+                      "type": "filler",
+                      "original_quote": "We need to, uh, do it later.",
+                      "hint": "填词 uh 让这句话听起来不确定。"
+                    },
+                    {
+                      "type": "hedging",
+                      "original_quote": "I think maybe we can try that.",
+                      "hint": "两个弱化词连用，把主张说没了。"
+                    }
+                  ],
+                  "suggestions": [
+                    {"text": "把「我下周弄」换成「我下周三之前给你」。"},
+                    {"text": "同步风险时先给结论，再给原因。"}
+                  ],
+                  "comparisons": [
+                    {
+                      "user": "I will do the cache thing next week.",
+                      "better": "I'll get the caching work wrapped up next week."
+                    }
+                  ]
+                },
+                "refine": {
+                  "blocks": [
+                    {
+                      "intent_zh": "需要推迟某个话题时说",
+                      "expression_en": "Let's push the launch to next sprint.",
+                      "anchor_user_said": "We need to do it later.",
+                      "scene_tag": "standup",
+                      "function_tag": "defer"
+                    },
+                    {
+                      "intent_zh": "表达「这块我来兜底」时",
+                      "expression_en": "I'll take ownership of that piece.",
+                      "anchor_user_said": "I will do this part.",
+                      "scene_tag": "standup",
+                      "function_tag": "commit"
+                    },
+                    {
+                      "intent_zh": "需要同步风险时说",
+                      "expression_en": "There's a risk we might slip here.",
+                      "anchor_user_said": "We might be late.",
+                      "scene_tag": "review",
+                      "function_tag": "report"
+                    },
+                    {
+                      "intent_zh": "承诺一个具体时间时",
+                      "expression_en": "I'll follow up by Wednesday.",
+                      "anchor_user_said": "I will follow up tomorrow.",
+                      "scene_tag": "standup",
+                      "function_tag": "commit"
+                    }
+                  ]
+                }
+              }
+            }
+            """
+        return try? JSONDecoder().decode(ReviewPollResponse.self, from: Data(json.utf8))
+    }()
 
     /// 样例话术块：形状照着 09-26 稿 屏 08 那张图 —— 三态各一个、其中一个已自动化并真的用过。
     /// 文案是**稿子里的**那几句（演示数据在稿子里本来就是占位符）。
