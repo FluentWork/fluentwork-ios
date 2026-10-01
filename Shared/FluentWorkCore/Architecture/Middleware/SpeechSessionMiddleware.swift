@@ -498,7 +498,7 @@ private func audioEventPump(
                         await dispatchBox.dispatch(.speakingRoom(.session(.vadSpeechStart)))
                     } catch {
                         speechCaptureGate.abort()
-                        await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
+                        await dispatchBox.dispatch(.speakingRoom(.session(.failed(speechSessionErrorMessage(error)))))
                     }
     
                 case .speechEnded:
@@ -555,7 +555,7 @@ private func audioEventPump(
                         await dispatchBox.dispatch(.speakingRoom(.userTurnStarted(turnID: turnID)))
                     } catch {
                         speechCaptureGate.abort()
-                        await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
+                        await dispatchBox.dispatch(.speakingRoom(.session(.failed(speechSessionErrorMessage(error)))))
                     }
     
                 case let .pcmChunk(data):
@@ -569,7 +569,7 @@ private func audioEventPump(
                         try await speechClient.sendAudioPCM(data)
                     } catch {
                         speechCaptureGate.abort()
-                        await dispatchBox.dispatch(.speakingRoom(.session(.failed(error.localizedDescription))))
+                        await dispatchBox.dispatch(.speakingRoom(.session(.failed(speechSessionErrorMessage(error)))))
                     }
     
                 case .interruptedBySystem:
@@ -1332,9 +1332,9 @@ private func interpretSpeechSessionSideEffect(
                     // （格式、会话遥测、系统的 domain+code），以前只有前两个 case 被记录，
                     // 于是「认领失败」在 tracker 里是空的 —— 而它恰恰是真机上最常见的那条。
                     timings.mark(event: "audio_engine_failed", properties: ["detail": error.telemetryDetail])
-                    return .speakingRoom(.session(.failed(error.localizedDescription)))
+                    return .speakingRoom(.session(.failed(speechSessionErrorMessage(error))))
                 } catch {
-                    return .speakingRoom(.session(.failed(error.localizedDescription)))
+                    return .speakingRoom(.session(.failed(speechSessionErrorMessage(error))))
                 }
                 return nil
             }
@@ -1353,7 +1353,7 @@ private func interpretSpeechSessionSideEffect(
                 try await speechClient.sendTurnAbort(turnID: turnID, outcome: outcome)
             } catch {
                 await dispatchBox.dispatch(
-                    .speakingRoom(.session(.failed(error.localizedDescription)))
+                    .speakingRoom(.session(.failed(speechSessionErrorMessage(error))))
                 )
             }
         }
@@ -1486,7 +1486,7 @@ private func interpretSpeechSessionSideEffect(
                 _ = try await speechClient.sendDegradedTextMessage("")
                 return nil
             } catch {
-                return .speakingRoom(.session(.failed(error.localizedDescription)))
+                return .speakingRoom(.session(.failed(speechSessionErrorMessage(error))))
             }
         }
 
@@ -1830,3 +1830,39 @@ internal final class MainActorActionBox: @unchecked Sendable {
         await dispatch(action)
     }
 }
+
+/// 失败说人话。**不把 `localizedDescription` 端上去**。
+///
+/// ## 为什么这里认 `AudioEngineError` 自带的文案
+///
+/// 它是本仓唯一一个「**错误类型自己承载用户文案**」的类型 —— 而这件事由**那个类型**声明
+/// （`userFacingMessage`，与 `telemetryDetail` 成对，见 `LiveAudioEngineSupport.swift`），
+/// 不是在这里假设「凡是 `LocalizedError` 都能直接端」。这条区别是有代价换来的：
+/// `appBootstrapErrorMessage` 就假设过一次，`ClientASRError` 的
+/// "Client ASR engine error: …" 立刻把它推翻了。
+///
+/// 其余类型没有这个声明，一律走兜底。
+func speechSessionErrorMessage(_ error: Error) -> String {
+    if let engineError = error as? AudioEngineError {
+        return engineError.userFacingMessage
+    }
+    if let apiError = error as? APIError {
+        switch apiError {
+        case .network:
+            return "网络没连上，这一轮没能继续。检查网络后可以重试。"
+        case let .backend(_, message) where !message.isEmpty:
+            // 服务端自己给的话原样转达（与 `accountAuthErrorMessage` 同一条规矩）。
+            return message
+        default:
+            break
+        }
+    }
+    return roomFailureFallbackMessage
+}
+
+/// 房间失败态的兜底句。
+///
+/// ⚠️ 与 `SpeakingRoomView` 里 `.failed` 那条 `failureReason ?? "会话启动失败，请重试。"`
+/// 是**同一件事**。两处都在说「没有更具体的话时显示什么」；这里现在是主路径（中间件总会给
+/// 一句），视图那条 `??` 成了够不着的分支 —— 收掉它是独立的一票（要动投影的类型）。
+private let roomFailureFallbackMessage = "会话启动失败，请重试。"

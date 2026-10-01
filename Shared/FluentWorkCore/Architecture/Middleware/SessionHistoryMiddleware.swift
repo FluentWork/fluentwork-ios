@@ -124,7 +124,7 @@ private func loadDetail(
         return nil
     } catch {
         guard !Task.isCancelled else { return nil }
-        return .sessionHistory(.detailFailed(error.localizedDescription))
+        return .sessionHistory(.detailFailed(sessionHistoryErrorMessage(error)))
     }
 }
 
@@ -167,6 +167,28 @@ private func loadSessions(
         return nil
     } catch {
         guard !Task.isCancelled else { return nil }
-        return .sessionHistory(.loadFailed(error.localizedDescription))
+        return .sessionHistory(.loadFailed(sessionHistoryErrorMessage(error)))
     }
+}
+
+/// 失败说人话。**不把 `localizedDescription` 端上去**：那串东西里通常是 URLSession 的
+/// domain + code，学员读不出「我该做什么」。与 `drillErrorMessage` 同一套写法。
+///
+/// 列表与详情**共用一句**：学员看到的都是「练习记录」这一件事，分成两句只会让同一屏的
+/// 两种失败读起来像两个功能坏了。
+func sessionHistoryErrorMessage(_ error: Error) -> String {
+    if let apiError = error as? APIError {
+        switch apiError {
+        case .network:
+            return "网络没连上，练习记录暂时读不出来，请稍后重试。"
+        case .decoding:
+            return "练习记录这次没能读出来，请稍后再试。"
+        case let .backend(_, message) where !message.isEmpty:
+            // 服务端自己给的话原样转达（与 `accountAuthErrorMessage` 同一条规矩）。
+            return message
+        default:
+            break
+        }
+    }
+    return "练习记录这次没能读出来，请稍后再试。"
 }

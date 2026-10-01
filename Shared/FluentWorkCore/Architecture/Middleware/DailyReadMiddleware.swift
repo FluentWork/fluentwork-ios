@@ -75,7 +75,7 @@ public func dailyReadMiddleware(container: Container) -> Middleware<AppState, Ap
             return .dailyRead(.audioPlaybackStarted)
           } catch {
             guard !Task.isCancelled else { return nil }
-            return .dailyRead(.audioFailed(error.localizedDescription))
+            return .dailyRead(.audioFailed(dailyReadErrorMessage(error)))
           }
         }
       )
@@ -115,7 +115,7 @@ public func dailyReadMiddleware(container: Container) -> Middleware<AppState, Ap
             return nil
           } catch {
             guard !Task.isCancelled else { return nil }
-            return .dailyRead(.followReadFailed(error.localizedDescription))
+            return .dailyRead(.followReadFailed(dailyReadErrorMessage(error)))
           }
         }
       )
@@ -239,7 +239,7 @@ private func pollDailyReadUntilReady(
       return nil
     } catch {
       guard !Task.isCancelled else { return nil }
-      return .dailyRead(.loadFailed(error.localizedDescription))
+      return .dailyRead(.loadFailed(dailyReadErrorMessage(error)))
     }
   }
   return nil
@@ -256,4 +256,25 @@ final class DailyReadDispatchBox: @unchecked Sendable {
   func dispatch(_ action: AppAction) async {
     await dispatch(action)
   }
+}
+
+/// 失败说人话。**不把 `localizedDescription` 端上去**。
+///
+/// 加载 / 播放 / 跟读提交三个失败点**共用一句**：具体是哪一步没说清由屏幕的相位去说
+/// （它本来就在说），这句话要负责的是「学员能做什么」。
+func dailyReadErrorMessage(_ error: Error) -> String {
+  if let apiError = error as? APIError {
+    switch apiError {
+    case .network:
+      return "网络没连上，每日一读暂时用不了，请稍后重试。"
+    case .decoding:
+      return "每日一读这次没能完成，请稍后再试。"
+    case let .backend(_, message) where !message.isEmpty:
+      // 服务端自己给的话原样转达（与 `accountAuthErrorMessage` 同一条规矩）。
+      return message
+    default:
+      break
+    }
+  }
+  return "每日一读这次没能完成，请稍后再试。"
 }

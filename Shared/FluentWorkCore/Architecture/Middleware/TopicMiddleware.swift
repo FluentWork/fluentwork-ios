@@ -62,7 +62,7 @@ public func topicMiddleware(container: Container) -> Middleware<AppState, AppAct
                     } catch {
                         guard !Task.isCancelled else { return nil }
                         return .topic(
-                            .checkinFailed(cardID: cardID, message: error.localizedDescription)
+                            .checkinFailed(cardID: cardID, message: topicErrorMessage(error))
                         )
                     }
                 }
@@ -87,7 +87,7 @@ public func topicMiddleware(container: Container) -> Middleware<AppState, AppAct
                     } catch {
                         guard !Task.isCancelled else { return nil }
                         return .topic(
-                            .dismissFailed(cardID: cardID, message: error.localizedDescription)
+                            .dismissFailed(cardID: cardID, message: topicErrorMessage(error))
                         )
                     }
                 }
@@ -114,7 +114,7 @@ private func loadCards(client: TopicClient) -> Effect<AppAction> {
             return nil
         } catch {
             guard !Task.isCancelled else { return nil }
-            return .topic(.cardsFailed(error.localizedDescription))
+            return .topic(.cardsFailed(topicErrorMessage(error)))
         }
     }
 }
@@ -131,4 +131,25 @@ private func loadStats(client: TopicClient) -> Effect<AppAction> {
             return nil
         }
     }
+}
+
+/// 失败说人话。**不把 `localizedDescription` 端上去**。
+///
+/// 今天的卡 / 打卡 / 忽略三个失败点共用一句：对学员来说「打卡没成」与「忽略没成」是
+/// 同一件事（这一下没成，再试一次），分成两句反而会把一件事说成两件。
+func topicErrorMessage(_ error: Error) -> String {
+    if let apiError = error as? APIError {
+        switch apiError {
+        case .network:
+            return "网络没连上，请稍后重试。"
+        case .decoding:
+            return "这次没能完成，请稍后再试。"
+        case let .backend(_, message) where !message.isEmpty:
+            // 服务端自己给的话原样转达（与 `accountAuthErrorMessage` 同一条规矩）。
+            return message
+        default:
+            break
+        }
+    }
+    return "这次没能完成，请稍后再试。"
 }

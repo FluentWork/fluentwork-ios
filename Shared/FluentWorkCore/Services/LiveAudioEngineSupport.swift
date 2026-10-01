@@ -118,6 +118,17 @@ extension AudioEngineError: LocalizedError {
         }
     }
 
+    /// 学员看到的那一份。与 `telemetryDetail` **成对**：一个说「给日志的现场」，
+    /// 一个说「给人的那句话」。
+    ///
+    /// 这个类型是本仓唯一一个自己承载用户文案的错误类型，所以「哪一份给谁」必须写在这里 ——
+    /// 否则每个调用方都要自己判断 `localizedDescription` 到底是不是人话，而那正是
+    /// `appBootstrapErrorMessage` 曾经判错的地方（它假设「只要是 `LocalizedError` 就是人话」，
+    /// `ClientASRError` 立刻推翻了这条假设）。
+    var userFacingMessage: String {
+        errorDescription ?? "音频没能启动，请重试。"
+    }
+
     /// 进日志的那一份（学员看不到）。判据用它钉住「细节没丢」。
     var telemetryDetail: String {
         switch self {

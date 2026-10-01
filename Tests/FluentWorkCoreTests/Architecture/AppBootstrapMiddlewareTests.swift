@@ -115,7 +115,16 @@ private func makeIsolatedContainer(
     try await waitForBootstrap(store)
 
     #expect(store.state.bootstrapStatus == .failed)
-    #expect(store.state.lastErrorMessage == "bootstrap failed for test")
+
+    let message = try #require(store.state.lastErrorMessage)
+    #expect(!message.isEmpty, "失败态没有带着消息 —— 屏幕只能显示「出错了」")
+    // ⚠️ 2026-10-02 改：这条判据此前钉的是「消息 == `errorDescription`」。
+    // 那正是**错的那一半** —— `FailingBootstrapClient.Failure` 是个裸 `LocalizedError`，
+    // 而「是 `LocalizedError`」并不等于「那句话是给学员看的」：那个假设被
+    // `ClientASRError`（"Client ASR engine error: …"）当场推翻过，
+    // `appBootstrapErrorMessage` 曾经就是照着它写的。
+    // 所以现在钉反面：**不能**是那个开发字符串（与 `DrillFeatureTests` 同一条形状）。
+    #expect(message != "bootstrap failed for test", "把错误自己的描述端到屏幕上了")
 }
 
 @MainActor

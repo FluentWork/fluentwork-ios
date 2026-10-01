@@ -185,14 +185,66 @@ private final class MainActorDispatchBox: @unchecked Sendable {
     }
 }
 
-private func appBootstrapErrorMessage(_ error: any Error) -> String {
-    if let localized = error as? any LocalizedError,
-       let description = localized.errorDescription,
-       !description.isEmpty {
-        return description
+/// 启动失败时对学员说的话。
+///
+/// ⚠️ 这里此前是「只要是 `LocalizedError` 就把它的 `errorDescription` 端上去，否则回一句英文」。
+/// 两处都不对：`LocalizedError` **不保证那句话是给学员看的**（`ClientASRError` 的
+/// `errorDescription` 是 "Client ASR engine error: …"），而英文兜底在这一屏没人读得懂。
+/// 与另外几个 seam 同一套写法：**分类由 `APIError` 决定，句子由这里给**。
+///
+/// `AudioEngineError` 是唯一的例外，它自己承载用户文案（见 `LiveAudioEngineSupport.swift`），
+/// 所以由 `speechSessionErrorMessage` 单独放行 —— 不是在这里松口。
+func appBootstrapErrorMessage(_ error: Error) -> String {
+    if let apiError = error as? APIError {
+        switch apiError {
+        case .network:
+            return "网络没连上，暂时进不去，请稍后重试。"
+        case .decoding:
+            return "这次没能启动，请稍后再试。"
+        case let .backend(_, message) where !message.isEmpty:
+            // 服务端自己给的话**原样转达**：它比这里猜的准（`accountAuthErrorMessage` 同一条规矩）。
+            return message
+        default:
+            break
+        }
     }
+    return "这次没能启动，请稍后再试。"
+}
 
-    return "Bootstrap failed. Please try again."
+/// 回顾页（屏 04）的失败文案。
+func reviewErrorMessage(_ error: Error) -> String {
+    if let apiError = error as? APIError {
+        switch apiError {
+        case .network:
+            return "网络没连上，这次回顾暂时打不开，请稍后重试。"
+        case .decoding:
+            return "这次回顾没能读出来，请稍后再试。"
+        case let .backend(_, message) where !message.isEmpty:
+            // 服务端自己给的话原样转达（与 `accountAuthErrorMessage` 同一条规矩）。
+            return message
+        default:
+            break
+        }
+    }
+    return "这次回顾没能读出来，请稍后再试。"
+}
+
+/// 语料库（屏 08）的失败文案。
+func corpusErrorMessage(_ error: Error) -> String {
+    if let apiError = error as? APIError {
+        switch apiError {
+        case .network:
+            return "网络没连上，语料库暂时读不出来，请稍后重试。"
+        case .decoding:
+            return "语料库这次没能加载，请稍后再试。"
+        case let .backend(_, message) where !message.isEmpty:
+            // 服务端自己给的话原样转达（与 `accountAuthErrorMessage` 同一条规矩）。
+            return message
+        default:
+            break
+        }
+    }
+    return "语料库这次没能加载，请稍后再试。"
 }
 
 public func reviewMiddleware(container: Container) -> Middleware<AppState, AppAction> {
@@ -265,7 +317,7 @@ public func reviewMiddleware(container: Container) -> Middleware<AppState, AppAc
                         return .review(
                             .acceptRefineCardFailed(
                                 cardID: cardID,
-                                message: error.localizedDescription
+                                message: reviewErrorMessage(error)
                             )
                         )
                     }
@@ -304,7 +356,7 @@ private func pollReviewUntilReady(
             return nil
         } catch {
             guard !Task.isCancelled else { return nil }
-            return .review(.loadFailed(error.localizedDescription))
+            return .review(.loadFailed(reviewErrorMessage(error)))
         }
     }
     return nil
@@ -413,7 +465,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
                         return nil
                     } catch {
                         guard !Task.isCancelled else { return nil }
-                        return .corpus(.remoteLoadFailed(error.localizedDescription))
+                        return .corpus(.remoteLoadFailed(corpusErrorMessage(error)))
                     }
                 }
             )
@@ -464,7 +516,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
                         return nil
                     } catch {
                         guard !Task.isCancelled else { return nil }
-                        return .corpus(.remoteLoadFailed(error.localizedDescription))
+                        return .corpus(.remoteLoadFailed(corpusErrorMessage(error)))
                     }
                 }
             )
@@ -494,7 +546,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
                             )
                             return .corpus(.refreshRequested)
                         } catch {
-                            return .corpus(.outboxReplayFailed(error.localizedDescription))
+                            return .corpus(.outboxReplayFailed(corpusErrorMessage(error)))
                         }
                     }
                 )
@@ -520,7 +572,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
                     } catch is CancellationError {
                         return nil
                     } catch {
-                        return .corpus(.outboxReplayFailed(error.localizedDescription))
+                        return .corpus(.outboxReplayFailed(corpusErrorMessage(error)))
                     }
                 }
             )
@@ -542,7 +594,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
                             )
                             return .corpus(.refreshRequested)
                         } catch {
-                            return .corpus(.outboxReplayFailed(error.localizedDescription))
+                            return .corpus(.outboxReplayFailed(corpusErrorMessage(error)))
                         }
                     }
                 )
@@ -574,7 +626,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
                     } catch is CancellationError {
                         return nil
                     } catch {
-                        return .corpus(.outboxReplayFailed(error.localizedDescription))
+                        return .corpus(.outboxReplayFailed(corpusErrorMessage(error)))
                     }
                 }
             )
@@ -607,7 +659,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
                     } catch is CancellationError {
                         return nil
                     } catch {
-                        return .corpus(.outboxReplayFailed(error.localizedDescription))
+                        return .corpus(.outboxReplayFailed(corpusErrorMessage(error)))
                     }
                 }
             )
@@ -672,7 +724,7 @@ public func corpusMiddleware(container: Container) -> Middleware<AppState, AppAc
                             metadata: metadata
                         ))
                     } catch {
-                        return .corpus(.remoteLoadFailed(error.localizedDescription))
+                        return .corpus(.remoteLoadFailed(corpusErrorMessage(error)))
                     }
                 }
             )
