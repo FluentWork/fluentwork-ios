@@ -873,6 +873,16 @@ public extension Container {
         }.cached
     }
 
+    var accountAuthClient: Factory<AccountAuthClientProtocol> {
+        self {
+            DefaultAccountAuthClient(
+                api: self.accountAPIClient(),
+                merger: SessionGuestMergeAdapter(sessionAPI: self.sessionAPIClient()),
+                tokens: AuthTokenStoreAdapter(store: self.authTokenStore())
+            )
+        }.shared
+    }
+
     var accountDataClient: Factory<AccountDataClientProtocol> {
         self {
             DefaultAccountDataClient(

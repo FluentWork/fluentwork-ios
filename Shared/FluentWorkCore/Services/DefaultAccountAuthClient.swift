@@ -107,7 +107,25 @@ public final class DefaultAccountAuthClient: AccountAuthClientProtocol, @uncheck
 
 // MARK: - 生产适配
 
-extension SecureAuthTokenStore: AccountTokenPort {}
+/// 把令牌存储接成端口。
+///
+/// ⚠️ 这里必须是**适配器**而不是给 `SecureAuthTokenStore` 加一个空扩展：
+/// `any AuthTokenStoreProtocol` 这个存在类型**不会**因为具体类型满足了 `AccountTokenPort`
+/// 就跟着满足（协议的一致性不沿着存在类型传播），而容器工厂交出来的正是存在类型。
+public struct AuthTokenStoreAdapter: AccountTokenPort {
+    private let store: AuthTokenStoreProtocol
+
+    public init(store: AuthTokenStoreProtocol) {
+        self.store = store
+    }
+
+    public func deviceID() async throws -> String { try await store.deviceID() }
+    public func accessToken() async throws -> String? { try await store.accessToken() }
+    public func isGuest() async throws -> Bool { try await store.isGuest() }
+    public func save(tokens: TokenResponse, deviceID: String) async throws {
+        try await store.save(tokens: tokens, deviceID: deviceID)
+    }
+}
 
 /// 把 `SessionAPIClient` 的合并那一招接成端口。
 ///

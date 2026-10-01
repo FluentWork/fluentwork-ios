@@ -10,6 +10,10 @@ public enum AppTaskID {
     public static let networkMonitor: CancellationID = "app.networkMonitor"
     public static let reviewPoll: CancellationID = "review.poll"
     public static let accountDataDelete: CancellationID = "accountData.delete"
+    /// 账号密码登录：换身份那一次请求。
+    public static let accountAuthSubmit: CancellationID = "accountAuth.submit"
+    /// 登录成功之后把新身份交给状态机。
+    public static let accountAuthAdoptIdentity: CancellationID = "accountAuth.adopt-identity"
     public static let corpusHydrate: CancellationID = "corpus.hydrate"
     public static let corpusRefresh: CancellationID = "corpus.refresh"
     public static let corpusLoadMore: CancellationID = "corpus.load-more"
@@ -44,6 +48,7 @@ public func makeAppMiddlewares(container: Container) -> [Middleware<AppState, Ap
         topicMiddleware(container: container),
         createPracticeMiddleware(container: container),
         accountDataMiddleware(container: container),
+        accountAuthMiddleware(container: container),
         speechSessionMiddleware(container: container),
         appBootstrapMiddleware(container: container),
         appNetworkMonitorMiddleware(container: container),

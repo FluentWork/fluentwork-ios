@@ -13,12 +13,15 @@ public enum AccountAuthMode: Equatable, Sendable {
 
 /// 表单相位。
 ///
-/// `.awaitingMerge` 是**单独一档**而不是并进 `.submitting`：这两段时间屏幕上该说的话不一样 ——
-/// 前者是「正在登录」，后者是「你的记录正在并进这个账号」。而后者正是学员最怕丢东西的那一刻。
+/// ⚠️ **曾经还有一档 `.awaitingMerge`**（「你的记录正在并进这个账号」），我把它删了。
+/// 理由：那条链路的两次调用（换身份 → 搬记录）住在 `DefaultAccountAuthClient` 的**一次**调用里，
+/// 状态机拿不到那个边界 —— 也就是说那一档**没有任何代码能进入**。
+/// 而一个进不去的相位不是「留着以后用」，它是**一句假话**：读代码的人会以为这两段被分开了。
+/// 「记录会并进账号」这句话该说，但它属于**那张卡上的静态文案**（稿子就是这么画的），
+/// 不属于相位。
 public enum AccountAuthPhase: Equatable, Sendable {
     case idle
     case submitting
-    case awaitingMerge
     case signedIn
     case failed
 }
@@ -30,11 +33,11 @@ public struct AccountAuthState: Equatable, Sendable, State {
     public var password: String
     public var errorMessage: String?
 
-    /// 飞行中的两个相位都不可再提交。
+    /// 飞行中不可再提交。
     ///
     /// **这条挡的不是体验，是重复建号**：`.submitTapped` 打两次，注册那条路会跑两遍 ——
     /// 第二遍要么撞 409，要么（更糟）在两次都在飞时因为「查不到」而各建一个号。
-    public var isInFlight: Bool { phase == .submitting || phase == .awaitingMerge }
+    public var isInFlight: Bool { phase == .submitting }
 
     /// 非空即可提交。格式与强度**不由客户端裁决** —— 服务端才是权威，
     /// 而客户端抢先报「邮箱格式不对」会在服务端规则变化时变成一句假话。
@@ -63,8 +66,6 @@ public enum AccountAuthAction: Equatable, Sendable, Action {
     case passwordChanged(String)
     /// 屏幕上按下「登录」/「注册」。**只把请求排上**，真正的调用在中间件里。
     case submitTapped
-    /// 凭据过了，接下来要把本机游客的记录并进这个账号。
-    case credentialAccepted
     case succeeded
     case failed(String)
 }
@@ -103,13 +104,9 @@ public let accountAuthReducer: Reducer<AccountAuthState, AccountAuthAction> = { 
         state.phase = .submitting
         state.errorMessage = nil
 
-    case .credentialAccepted:
-        // 只有真的提交过才可能被接受。
-        guard state.phase == .submitting else { return }
-        state.phase = .awaitingMerge
-
     case .succeeded:
-        guard state.isInFlight || state.phase == .signedIn else { return }
+        // 只有真的提交过才可能成功 —— 没提交却进了 `.signedIn`，说明有人跳过了请求。
+        guard state.phase == .submitting || state.phase == .signedIn else { return }
         state.phase = .signedIn
         state.errorMessage = nil
         // **口令不留在状态里**。它是这个 state 里唯一不该被留下继续活着的东西 ——

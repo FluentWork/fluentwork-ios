@@ -113,6 +113,9 @@ struct ScreenEntryGuardTests {
                 // 屏幕派它们等于自己造一个「已经删掉了」的结果 —— 而这条链路是不可逆的，
                 // 屏幕上唯一该做的是把「确认」派出去、然后等真实回执。
                 "accountData.deleteSucceeded", "accountData.deleteFailed",
+                // 账号登录的结果由 `accountAuthMiddleware` 派（屏幕派等于自己造一个
+                // 「已经登录成功了」的结果）。`.submitTapped` 仍是屏幕派的，见下面第二组。
+                "accountAuth.succeeded", "accountAuth.failed",
                 "network.connectivityChanged",
             ]
         ),
@@ -129,13 +132,10 @@ struct ScreenEntryGuardTests {
                 "drill.retryTapped", "drill.advanceTapped", "drill.appealTapped",
                 "drill.exitTapped",
 
-                // 账号表单（屏 12 的账号链路，A3）—— **状态机与判据已就位，屏幕与中间件还没落地**：
-                // 4 条表单动作将来由登录页派，3 条结果动作将来由 `accountAuthMiddleware` 派
-                // （屏幕派 `.succeeded` 等于自己造一个「已经登录成功了」的结果）。
-                // 落在这一段时，登录页还不存在 —— 所以这一组是**下一段的清单**，不是长期状态。
+                // 账号表单（屏 15）—— **中间件已经落地，缺的是屏幕**：
+                // 这 4 条都由登录页派，而登录页还没写。屏 15 一落地它们就离开这一组。
                 "accountAuth.modeChanged", "accountAuth.emailChanged",
                 "accountAuth.passwordChanged", "accountAuth.submitTapped",
-                "accountAuth.credentialAccepted", "accountAuth.succeeded", "accountAuth.failed",
             ]
         ),
 

@@ -22,10 +22,6 @@ struct AccountAuthFeatureTests {
         var submitting = state(.submitting)
         accountAuthReducer(&submitting, .submitTapped)
         #expect(submitting.phase == .submitting)
-
-        var merging = state(.awaitingMerge)
-        accountAuthReducer(&merging, .submitTapped)
-        #expect(merging.phase == .awaitingMerge, "并数据的路上又发起了一次提交")
     }
 
     /// 空邮箱或空口令不能提交。
@@ -39,11 +35,11 @@ struct AccountAuthFeatureTests {
         #expect(noPassword.phase == .idle)
     }
 
-    /// 提交过一次之后才可能被「接受」—— 没提交却在 `.awaitingMerge`，说明有人跳过了请求。
-    @Test func 没提交过不会被接受() {
+    /// **没提交过不可能成功** —— 没请求却进了 `.signedIn`，说明有人跳过了那一步。
+    @Test func 没提交过不会成功() {
         var idle = state()
-        accountAuthReducer(&idle, .credentialAccepted)
-        #expect(idle.phase == .idle)
+        accountAuthReducer(&idle, .succeeded)
+        #expect(idle.phase == .idle, "没提交却进了已登录")
     }
 
     // MARK: - 失败不清空输入
@@ -100,7 +96,7 @@ struct AccountAuthFeatureTests {
     /// 它是这个 state 里唯一不该继续活着的东西：之后任何一次状态快照、日志、
     /// 或者别的模块顺手读一眼，都不该能拿到它。
     @Test func 成功之后清掉口令() {
-        var state = state(.awaitingMerge)
+        var state = state(.submitting)
         accountAuthReducer(&state, .succeeded)
 
         #expect(state.phase == .signedIn)
