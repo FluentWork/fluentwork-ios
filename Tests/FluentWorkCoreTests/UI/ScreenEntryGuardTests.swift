@@ -124,10 +124,13 @@ struct ScreenEntryGuardTests {
         Group(
             reason: "屏幕还没落地（④ 逐屏）—— 数据层与中间件都已接线",
             cases: [
-                // 闪测屏（E1/E2/E4 的屏幕）—— **它卡在一条不存在的采集链路上**：
-                // 这 7 条里有 5 条是屏幕能派的，而 `.answerCaptured` 要的是 ASR 文本，
-                // 客户端今天没有任何东西产出它（`ClientASRTranscriber` 是一份没接线的文档）。
-                // 见 `docs/design/ui-verification-strategy.md` 的 ④ 一节。
+                // 闪测屏（E1/E2/E4 的屏幕）—— **这 7 条今天只在测试里被派，因为屏幕还没画**。
+                //
+                // ⚠️ 2026-10-02 更正：这里此前写着「它卡在一条不存在的采集链路上」，
+                // **那句话是错的**。ASR 转写器有三个实现（`ClientASRTranscriber` /
+                // `AppleSpeechClientASRTranscriber` / `VolcengineClientASRTranscriber`），
+                // 链路是有的；缺的是**把它接到 `.answerCaptured` 上**，而那正是界面那一票的事。
+                // 把「缺接线」说成「缺能力」会让人去重新造一遍已经有的东西。
                 "drill.startTapped", "drill.answerCaptured", "drill.skipTapped",
                 "drill.retryTapped", "drill.advanceTapped", "drill.appealTapped",
                 "drill.exitTapped",

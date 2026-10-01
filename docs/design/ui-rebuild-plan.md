@@ -145,6 +145,21 @@
 （屏 01 顶栏只有问候语/统计/进度环，全稿搜 `i-gear`／`i-settings` 零命中）。
 补在工作台顶栏行尾（`i-gear` 令牌）；屏 01 那一票重排顶栏时并进去。
 
+### 闪测（屏 05/06/07）· 摸底（2026-10-02，开工前查的，别重查）
+
+| 层 | 状态 |
+|---|---|
+| **Core**（机器 ＋ 中间件 ＋ 客户端 ＋ 模型） | **齐的**：`Drill/DrillRoundMachine.swift`、`DrillRoundState.swift`、`DrillPrompt.swift`、`Architecture/Features/DrillFeature.swift`、`Middleware/DrillMiddleware.swift`、`Services/DefaultDrillClient.swift`、`API/DrillModels.swift`，且 `DrillFeatureTests` 有整套判据 |
+| **界面** | **一行都没有** —— `Shared/FluentWorkUI/` 下只有 `i-drill` 图标本身 |
+| **采集链路** | **有**：三个 ASR 转写器实现（`ClientASRTranscriber` / `AppleSpeechClientASRTranscriber` / `VolcengineClientASRTranscriber`）。缺的是**把它接到 `.answerCaptured` 上** |
+| **后端** | 契约里有 `/drill/round`、`/drill/judge`、`/drill/appeal` 三条 |
+| **动作** | `.drill.*` 7 条（startTapped / answerCaptured / skipTapped / retryTapped / advanceTapped / appealTapped / exitTapped）**今天只在测试里被派** —— 因为没有屏幕 |
+
+⚠️ **一处更正**：守卫里曾写着「闪测卡在一条**不存在**的采集链路上」。那句话是错的，
+转写器有三个实现 —— 把「缺接线」说成「缺能力」会让人去重新造已经有的东西。已改。
+
+⇒ 这一票是**纯界面 ＋ 接线**（不需要新造机器），范围比设置页那次清楚。
+
 ### 12 设置 · 摸底（2026-10-01，开工前查的，别重查）
 
 稿子 屏 12 的四组：账号 / 语音偏好（AI 语速 · 音色 · 状态提示音）/ 通知（3 项）/ 隐私与数据。
