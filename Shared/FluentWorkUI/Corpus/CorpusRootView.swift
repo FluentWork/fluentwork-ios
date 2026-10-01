@@ -147,11 +147,12 @@ public struct CorpusRootView: View {
                 }
             case .loading:
                 Section {
-                    ProgressView("加载语料库...")
+                    // 稿子 §2.4：加载态用闪光骨架块，不用转圈 —— 形状即说明。
+                    ListSkeletonPlaceholder(label: "加载语料库...")
                 }
             case .migrating:
                 Section {
-                    ProgressView("正在迁移语料...")
+                    ListSkeletonPlaceholder(label: "正在迁移语料...")
                 }
             case .failed where model.rows.isEmpty:
                 Section {

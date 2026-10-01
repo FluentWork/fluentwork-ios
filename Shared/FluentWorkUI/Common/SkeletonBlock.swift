@@ -51,3 +51,39 @@ public struct SkeletonBlock: View {
         return isDimmed ? 0.45 : 0.9
     }
 }
+
+/// 「一列东西正在加载」的骨架：一句说明（可选）+ N 个行块。
+///
+/// 三个列表页（语料库 / 练习历史 / 会话详情）的加载态形状是同一件事，所以它跟着
+/// `SkeletonBlock` 一起住在这里 —— 每个页面各写一遍「四组圆角块」，迟早就各长一个样，
+/// 而稿子 §2.4 要的正是**统一**。
+///
+/// `label` 用各页原来那句话（「加载语料库…」之类），一个字都不改：换骨架只是换**形状**，
+/// 不该顺手改文案。
+public struct ListSkeletonPlaceholder: View {
+    private let label: String?
+    private let rowCount: Int
+
+    public init(label: String? = nil, rowCount: Int = 4) {
+        self.label = label
+        self.rowCount = max(1, rowCount)
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.s3) {
+            if let label, !label.isEmpty {
+                Text(label)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Color.textSecondary)
+            }
+
+            ForEach(0..<rowCount, id: \.self) { _ in
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.s2) {
+                    SkeletonBlock(height: 16, widthRatio: 0.55)
+                    SkeletonBlock(height: 12, widthRatio: 0.9)
+                }
+            }
+        }
+        .padding(.vertical, DesignTokens.Spacing.s1)
+    }
+}

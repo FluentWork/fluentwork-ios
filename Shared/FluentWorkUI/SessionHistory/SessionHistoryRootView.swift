@@ -99,7 +99,8 @@ public struct SessionHistoryRootView: View {
             switch model.phase {
             case .idle, .loading:
                 Section {
-                    ProgressView("加载练习历史...")
+                    // 稿子 §2.4：加载态用闪光骨架块，不用转圈 —— 形状即说明。
+                    ListSkeletonPlaceholder(label: "加载练习历史...")
                 }
 
             case .empty:

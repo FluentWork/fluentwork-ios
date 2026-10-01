@@ -70,6 +70,13 @@ public struct DailyReadViewModel: Equatable, Sendable {
   public var hasFollowRead: Bool
   public var isOffline: Bool
   public var errorMessage: String?
+  /// 该给学员盖骨架屏。
+  ///
+  /// **规则来自 `DailyReadState.showsSkeleton`，这里只做直通** —— 不再按视图相位重写一份。
+  /// 它曾经是两份（Core 按状态相位、UI 按视图相位），那份等价只靠
+  /// `generating → .loading` 这一条映射撑着，而两处都在长着一副「有东西在读我」的样子：
+  /// UI 那一份**根本没人读**（视图当时直接 `case .idle, .loading` 走到了骨架屏）。
+  public var showsSkeleton: Bool
 
   public init(
     phase: DailyReadViewPhase,
@@ -82,6 +89,7 @@ public struct DailyReadViewModel: Equatable, Sendable {
     followReadPhase: FollowReadViewPhase = .idle,
     hasFollowRead: Bool = false,
     isOffline: Bool = false,
+    showsSkeleton: Bool = false,
     errorMessage: String? = nil
   ) {
     self.phase = phase
@@ -94,15 +102,12 @@ public struct DailyReadViewModel: Equatable, Sendable {
     self.followReadPhase = followReadPhase
     self.hasFollowRead = hasFollowRead
     self.isOffline = isOffline
+    self.showsSkeleton = showsSkeleton
     self.errorMessage = errorMessage
   }
 
   /// V1.1 hard constraint: never surface a score on the UI side.
   public var displayScore: Double? { nil }
-
-  public var showsSkeleton: Bool {
-    phase == .idle || phase == .loading
-  }
 }
 
 // MARK: - Root view
@@ -166,26 +171,35 @@ public struct DailyReadRootView: View {
 
   @ViewBuilder
   private var content: some View {
-    switch model.phase {
-    case .idle, .loading:
+    // **「盖不盖骨架」由 state 的规则说了算**（`DailyReadState.showsSkeleton`，经投影直通）——
+    // 不在这里按相位再判一次。以前这里是 `case .idle, .loading:`，那份判断与 Core 那条规则
+    // 是同一条规则的两种写法，靠一条判据撑着相等。
+    if model.showsSkeleton {
       DailyReadSkeletonView()
-    case .failed:
-      DailyReadFailedView(message: model.errorMessage, onRetry: onRetry)
-    case .ready:
-      if let article = model.article {
-        DailyReadReadyArticleView(
-          article: article,
-          genDate: model.genDate,
-          followReadPhase: model.followReadPhase,
-          hasFollowRead: model.hasFollowRead,
-          onFollowReadStarted: onFollowReadStarted,
-          onFollowReadSubmitted: onFollowReadSubmitted
-        )
-      } else {
+    } else {
+      switch model.phase {
+      case .failed:
+        DailyReadFailedView(message: model.errorMessage, onRetry: onRetry)
+      case .ready:
+        if let article = model.article {
+          DailyReadReadyArticleView(
+            article: article,
+            genDate: model.genDate,
+            followReadPhase: model.followReadPhase,
+            hasFollowRead: model.hasFollowRead,
+            onFollowReadStarted: onFollowReadStarted,
+            onFollowReadSubmitted: onFollowReadSubmitted
+          )
+        } else {
+          DailyReadFallbackView(text: model.fallbackBody ?? "")
+        }
+      case .fallbackPreset:
         DailyReadFallbackView(text: model.fallbackBody ?? "")
+      case .idle, .loading:
+        // 走不到：那两档必然 `showsSkeleton`。留着是因为 `switch` 必须穷举 ——
+        // 而它渲染的与上面同一件事（加载中 → 骨架），所以两支不会各说各话。
+        DailyReadSkeletonView()
       }
-    case .fallbackPreset:
-      DailyReadFallbackView(text: model.fallbackBody ?? "")
     }
   }
 
@@ -217,26 +231,23 @@ private struct DailyReadOfflineBanner: View {
 
 private struct DailyReadSkeletonView: View {
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Capsule()
-        .fill(Color.secondary.opacity(0.15))
-        .frame(height: 18)
-        .frame(maxWidth: 220)
-      Capsule()
-        .fill(Color.secondary.opacity(0.15))
-        .frame(height: 12)
-      Capsule()
-        .fill(Color.secondary.opacity(0.15))
-        .frame(height: 12)
-        .frame(maxWidth: 320)
-      Capsule()
-        .fill(Color.secondary.opacity(0.15))
-        .frame(height: 12)
-        .frame(maxWidth: 280)
+    // **用共用组件**（稿子 §2.4：语料库 / 历史 / 每日一读 / 回顾统一用闪光骨架块）。
+    // 此前是手写的 `Capsule` + `Color.secondary.opacity(0.15)`：既不会闪光，也绕过了令牌 ——
+    // 四个页面各写一遍骨架，迟早会各长一个样。
+    //
+    // 形状照着这一屏将要出现的东西摆：先是一块标题，再是正文的行。
+    VStack(alignment: .leading, spacing: DesignTokens.Spacing.s4) {
+      SkeletonBlock(height: 22, widthRatio: 0.6)
+
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.s3) {
+        SkeletonBlock(height: 14)
+        SkeletonBlock(height: 14, widthRatio: 0.92)
+        SkeletonBlock(height: 14, widthRatio: 0.78)
+      }
+
       Text("每日一读生成中...")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .padding(.top, 4)
+        .font(DesignTokens.Typography.caption)
+        .foregroundStyle(DesignTokens.Color.textSecondary)
     }
   }
 }

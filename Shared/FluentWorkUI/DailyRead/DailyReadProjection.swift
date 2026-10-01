@@ -63,6 +63,9 @@ extension DailyReadViewModel {
             followReadPhase: followReadPhase,
             hasFollowRead: state.hasFollowRead,
             isOffline: isOffline,
+            // 直通 state 的规则，不在这里按视图相位重写一遍 —— 理由见
+            // `DailyReadViewModel.showsSkeleton`。
+            showsSkeleton: state.showsSkeleton,
             errorMessage: state.lastErrorMessage
         )
     }

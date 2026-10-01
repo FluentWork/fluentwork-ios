@@ -26,19 +26,15 @@ struct DailyReadProjectionTests {
         )
     }
 
-    /// **骨架屏的判据只有一份 —— 从今天起。**
+    /// 骨架屏的规则**只有一份**：投影直通 `DailyReadState.showsSkeleton`，UI 侧不再写第二份。
     ///
-    /// `DailyReadState.showsSkeleton`（Core：`.generating || .idle`，按**状态**相位）与
-    /// `DailyReadViewModel.showsSkeleton`（UI：`.idle || .loading`，按**视图**相位）是同一条
-    /// 规则的两份写法。它们今天恰好等价，而这份等价**只靠 `generating → .loading` 这一条
-    /// 映射**撑着，没有任何东西在守：往映射里再加一个相位、或改掉其中一条，两边就会悄悄分叉，
-    /// 屏幕与 state 从此各说各话。
+    /// 这里曾经是同一条规则的两份写法（Core 按状态相位 `.generating || .idle`、UI 按视图相位
+    /// `.idle || .loading`），而 UI 那一份**根本没人读** —— 视图当时直接
+    /// `case .idle, .loading` 就走到了骨架屏。两份都长着一副「有东西在读我」的样子。
     ///
-    /// 这不是假想 —— `ReviewState.showsSkeleton` 已经是一份**没人读的死规则**（回顾页连骨架屏
-    /// 都没有），而它照样写在 Core 里，长着一副「有东西在读我」的样子。
-    ///
-    /// 所以这条判据在**整个相位域**上钉住两侧相等：加相位、改映射，它都会红。
-    @Test func 骨架屏的两份判据不许分叉() {
+    /// 现在只有 Core 那一份，视图读投影直通过来的值。判据留着，守的变成**以后**：
+    /// 谁要是在 UI 侧再按相位算一遍，两侧一旦不等它就红。
+    @Test func 骨架屏的规则只从state来() {
         let phases: [DailyReadScreenPhase] = [.idle, .generating, .ready, .fallbackPreset, .failed]
 
         for phase in phases {
@@ -48,9 +44,32 @@ struct DailyReadProjectionTests {
 
             #expect(
                 model.showsSkeleton == state.showsSkeleton,
-                "相位 \(phase) 上两份骨架屏判据不一致：视图 \(model.showsSkeleton) / 状态 \(state.showsSkeleton)"
+                "相位 \(phase) 上 UI 侧自己算了一份、且与 state 不一致：视图 \(model.showsSkeleton) / 状态 \(state.showsSkeleton)"
             )
         }
+    }
+
+    /// **有内容就不盖骨架** —— 这条和上面那条守的是两件事。
+    ///
+    /// 上一条只保证「两处相等」。若有人把规则改成「只要不是 `.ready` 就盖」，
+    /// `.fallbackPreset` 就会盖上一层骨架，而兜底那一路**是有正文的**：
+    /// 学员看到骨架，会以为内容没了。
+    @Test func 兜底内容不盖骨架() {
+        var fallback = DailyReadState()
+        fallback.phase = .fallbackPreset
+        #expect(
+            DailyReadViewModel.make(from: fallback, isOffline: false).showsSkeleton == false,
+            "兜底内容是有正文的，不是「还没好」"
+        )
+
+        var ready = DailyReadState()
+        ready.phase = .ready
+        #expect(DailyReadViewModel.make(from: ready, isOffline: false).showsSkeleton == false)
+
+        // 反向：真正在生成的时候要盖（少了这一半，「恒为 false」也能过）。
+        var generating = DailyReadState()
+        generating.phase = .generating
+        #expect(DailyReadViewModel.make(from: generating, isOffline: false).showsSkeleton)
     }
 
     /// 五个状态相位映到五个视图相位，一个不少、顺序不错。

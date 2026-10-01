@@ -206,8 +206,9 @@ public struct TopicCardsRootView: View {
     private var content: some View {
         switch model.phase {
         case .idle, .loading:
-            ProgressView("正在取今天的话题…")
-                .frame(maxWidth: .infinity)
+            // 稿子 §2.4：加载态用闪光骨架块，不用转圈 —— 形状即说明（这里是三张卡）。
+            ListSkeletonPlaceholder(label: "正在取今天的话题…", rowCount: 3)
+                .frame(maxWidth: .infinity, alignment: .leading)
         case .empty:
             // 「今天还没有话题」不是失败：服务端在生成之前就是空的。
             ContentUnavailableView(
