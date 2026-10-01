@@ -77,7 +77,9 @@ public enum DebugScreenPreview {
         case .corpus, .corpusEmpty:
             store.dispatch(.navigation(.selectTab(.corpus)))
         case .settings:
-            store.dispatch(.navigation(.selectTab(.settings)))
+            // 设置是**工作台那条栈上的一页**（按稿子：三个 tab，设置从工作台推入），
+            // 所以截图入口也是推入，不是切 tab。
+            store.dispatch(.navigation(.workbench(.push(.settings))))
         case .review:
             // 先让产出落地，再把人送上去 —— 顺序反过来的话，那一帧是空的。
             if let response = reviewFixture {

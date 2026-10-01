@@ -53,37 +53,6 @@ struct HostRootView: View {
                     }
                 )
             },
-            settingsRoot: {
-                SettingsRootView(
-                    model: SettingsViewModel.make(
-                        from: store.state.featureFlags,
-                        // 版本号是 app 层的事实：投影里读 `Bundle.main` 会在测试进程里读到
-                        // 测试 runner 的 bundle —— 恰好是你想核对版本的那一处读到错的那份。
-                        appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
-                        // 「删除我的全部素材」的那条不可逆链路（A4）。
-                        accountData: store.state.accountData
-                    ),
-                    onToggleFlag: { rawValue, isEnabled in
-                        guard let flag = AppFeatureFlag(rawValue: rawValue) else { return }
-                        store.dispatch(.featureFlags(.setLocalOverride(flag: flag, isEnabled: isEnabled)))
-                    },
-                    onClearOverrides: {
-                        store.dispatch(.featureFlags(.clearLocalOverrides))
-                    },
-                    onDeleteTapped: {
-                        // 「按下」只把确认摆出来（reducer 进 `.confirming`），**不删任何东西**。
-                        store.dispatch(.accountData(.deleteTapped))
-                    },
-                    onDeleteConfirmed: {
-                        // 「确定」才发请求 —— 而 reducer 里那条守卫要求相位已经是 `.confirming`，
-                        // 所以这里就算被误调也删不动。
-                        store.dispatch(.accountData(.confirmed))
-                    },
-                    onDeleteCancelled: {
-                        store.dispatch(.accountData(.confirmationCancelled))
-                    }
-                )
-            },
             destination: { route in
                 AnyView(routeDestination(route))
             }
@@ -113,6 +82,36 @@ struct HostRootView: View {
     @ViewBuilder
     private func routeDestination(_ route: AppRoute) -> some View {
         switch route {
+        case .settings:
+            // 屏 12：**工作台那条栈上的一页**（稿子 §03：底部导航固定 3 项；
+            // 屏 12 的顶栏是「← 返回工作台 ＋ 设置」）。返回交给导航栈自己画。
+            SettingsRootView(
+                model: SettingsViewModel.make(
+                    from: store.state.featureFlags,
+                    appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+                    accountData: store.state.accountData
+                ),
+                onToggleFlag: { rawValue, isEnabled in
+                    guard let flag = AppFeatureFlag(rawValue: rawValue) else { return }
+                    store.dispatch(.featureFlags(.setLocalOverride(flag: flag, isEnabled: isEnabled)))
+                },
+                onClearOverrides: {
+                    store.dispatch(.featureFlags(.clearLocalOverrides))
+                },
+                onDeleteTapped: {
+                    // 「按下」只把确认摆出来（reducer 进 `.confirming`），**不删任何东西**。
+                    store.dispatch(.accountData(.deleteTapped))
+                },
+                onDeleteConfirmed: {
+                    // 「确定」才发请求 —— 而 reducer 里那条守卫要求相位已经是 `.confirming`，
+                    // 所以这里就算被误调也删不动。
+                    store.dispatch(.accountData(.confirmed))
+                },
+                onDeleteCancelled: {
+                    store.dispatch(.accountData(.confirmationCancelled))
+                }
+            )
+
         case let .speakingRoom(sessionID):
             // 投影只算一次。
             //
@@ -439,6 +438,7 @@ struct HostRootView: View {
 
     private var workbenchRoot: some View {
         VStack(spacing: 0) {
+            workbenchSettingsEntry
             startPracticeEntry
             WorkbenchHomeView(
                 model: WorkbenchHomeViewModel.make(
@@ -453,6 +453,34 @@ struct HostRootView: View {
                 }
             )
         }
+    }
+
+    /// 设置的入口。
+    ///
+    /// ⚠️ **这是稿子假定存在、却没有画出来的那一处**：屏 12 的顶栏写着「← 返回工作台」，
+    /// 而 屏 01 的顶栏里**没有**任何设置入口（全稿搜 `i-gear`／`i-settings` 零命中），
+    /// tab bar 也只有三项。所以按最小的方式补位：行尾一个齿轮，用已有的 `i-gear` 令牌，
+    /// 不引新资源。屏 01 那一票落地会重排顶栏，届时把它并进稿子的顶栏里。
+    private var workbenchSettingsEntry: some View {
+        HStack {
+            Spacer()
+            Button {
+                store.dispatch(.navigation(.workbench(.push(.settings))))
+            } label: {
+                DesignTokens.Icon.gear.image
+                    .font(.system(size: DesignTokens.Component.iconPointSize * 0.8, weight: .medium))
+                    .foregroundStyle(DesignTokens.Color.textSecondary)
+                    .frame(
+                        width: DesignTokens.Component.minHitTarget,
+                        height: DesignTokens.Component.minHitTarget,
+                        alignment: .trailing
+                    )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("设置")
+            .accessibilityIdentifier("workbench.settings")
+        }
+        .padding(.horizontal, DesignTokens.Spacing.pageMargin)
     }
 
     /// 屏 11 的入口。

@@ -2,23 +2,20 @@ import Foundation
 import TGNavigationStack
 import TGReduxKit
 
-/// Bottom tabs: 工作台｜闪测｜语料库｜设置。
+/// Bottom tabs: **工作台｜闪测｜语料库**（三个）。
 ///
-/// **四个，而 09-26 稿 §03 写的是「底部导航固定 3 项」。** 这处分歧是**已知且尚未拍板**的
-/// （meta `问题总清单-PRD模块轴` 的「底部 Tab 数」一行记着它）。这一行只把代码里的事实写对 ——
-/// 它此前写着「工作台｜闪测｜语料库」，那是**撒谎**，而撒谎的注释比没有注释更难查。
+/// 这处分歧一直挂在代码里：稿子 §03 写「底部导航固定 3 项」，而实现里曾有第 4 个
+/// `settings` —— 注释与 `问题总清单-PRD模块轴` 都记着它「已知且尚未拍板」。
+/// **2026-10-01 按稿子拍板：三个 tab**，设置改成**从工作台推入的一页**
+/// （稿子 屏 12 的顶栏就是「← 返回工作台 ＋ 设置」，而它的 tab bar 只有
+/// 工作台 `i-home` / 闪测 `i-drill` / 语料库 `i-library` 三项）。
+///
+/// 设置不再是一等 tab 之后，它「刻意不受 flag 门禁」那条理由依然成立 ——
+/// 只是现在由**推入这条路由**来保证（见 `AppRoute.settings`）。
 public enum AppTab: String, CaseIterable, Codable, Hashable, Sendable {
     case workbench
     case flashTest
     case corpus
-    /// Settings.
-    ///
-    /// Deliberately **not** a `FeaturePluginDescriptor`, unlike every other
-    /// surface: plugins are filtered by their own feature flag
-    /// (`FeaturePluginRegistry.enabledPlugins(for:)`), so a flag-gated settings
-    /// page could only be reached by someone who had already turned its flag
-    /// on — and turning flags on is the one thing it exists to do.
-    case settings
 }
 
 public enum AppRoute: TGRoute, Codable {
@@ -41,6 +38,16 @@ public enum AppRoute: TGRoute, Codable {
     ///
     /// 同样不带 `sessionID`，理由同上。
     case topicCards
+
+    /// 设置（屏 12）。
+    ///
+    /// **它是推入页，不是 tab**（2026-10-01 按稿子拍板）。稿子 屏 12 的顶栏是
+    /// 「← 返回工作台 ＋ 设置」，而 tab bar 只有三项 —— 所以这一屏属于工作台那条栈。
+    ///
+    /// 它**不是** `FeaturePluginDescriptor`（也从来不是）：插件按各自的开关过滤，
+    /// 而一个被开关挡在门外的设置页，只有已经打开过那个开关的人才进得去 ——
+    /// 打开开关恰恰是它存在的理由。推入路由同样不受开关门禁。
+    case settings
 
     /// 创建练习（屏 11）。
     ///
@@ -69,6 +76,8 @@ public enum AppRoute: TGRoute, Codable {
             return "/topic-cards"
         case .createPractice:
             return "/practice/new"
+        case .settings:
+            return "/settings"
         }
     }
 
@@ -89,6 +98,8 @@ public enum AppRoute: TGRoute, Codable {
             self = .drill
         case "/topic-cards":
             self = .topicCards
+        case "/settings":
+            self = .settings
         case "/practice/new":
             self = .createPractice
         // Note what is *not* here: `/sessions/<id>`. That path exists on the
@@ -119,7 +130,7 @@ public enum AppRoute: TGRoute, Codable {
         switch self {
         case .speakingRoom, .review:
             return .workbench(.present(self, style: .fullScreenCover))
-        case .dailyRead, .sessionHistory, .sessionDetail, .topicCards:
+        case .dailyRead, .sessionHistory, .sessionDetail, .topicCards, .settings:
             return .workbench(.push(self))
         case .createPractice:
             // 弹层（稿子 §03）。`.sheet` 也是 `present` 的默认值，写出来是因为
@@ -146,20 +157,17 @@ public struct AppNavigationState: Equatable, Sendable, State {
     public var workbench: NavigationState<AppRoute>
     public var flashTest: NavigationState<AppRoute>
     public var corpus: NavigationState<AppRoute>
-    public var settings: NavigationState<AppRoute>
 
     public init(
         selectedTab: AppTab = .workbench,
         workbench: NavigationState<AppRoute> = NavigationState(),
         flashTest: NavigationState<AppRoute> = NavigationState(),
-        corpus: NavigationState<AppRoute> = NavigationState(),
-        settings: NavigationState<AppRoute> = NavigationState()
+        corpus: NavigationState<AppRoute> = NavigationState()
     ) {
         self.selectedTab = selectedTab
         self.workbench = workbench
         self.flashTest = flashTest
         self.corpus = corpus
-        self.settings = settings
     }
 
     public func stack(for tab: AppTab) -> NavigationState<AppRoute> {
@@ -167,7 +175,6 @@ public struct AppNavigationState: Equatable, Sendable, State {
         case .workbench: return workbench
         case .flashTest: return flashTest
         case .corpus: return corpus
-        case .settings: return settings
         }
     }
 }
@@ -177,7 +184,6 @@ public enum AppNavigationAction: Equatable, Sendable, Action {
     case workbench(NavigationAction<AppRoute>)
     case flashTest(NavigationAction<AppRoute>)
     case corpus(NavigationAction<AppRoute>)
-    case settings(NavigationAction<AppRoute>)
 }
 
 public let appNavigationReducer: Reducer<AppNavigationState, AppNavigationAction> = { state, action in
@@ -193,8 +199,5 @@ public let appNavigationReducer: Reducer<AppNavigationState, AppNavigationAction
 
     case let .corpus(navAction):
         navigationReducer(state: &state.corpus, action: navAction)
-
-    case let .settings(navAction):
-        navigationReducer(state: &state.settings, action: navAction)
     }
 }

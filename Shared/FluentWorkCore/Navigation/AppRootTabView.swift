@@ -1,20 +1,22 @@
 import SwiftUI
 import TGNavigationStack
 
-/// Host-facing tab shell: 3 tabs each backed by `TGNavigationStack` + Store dispatch.
+/// Host-facing tab shell: **3 tabs**（工作台 / 闪测 / 语料库），
+/// each backed by `TGNavigationStack` + Store dispatch.
+///
+/// 设置**不在这里**：它是工作台那条栈上的一页（稿子 §03「底部导航固定 3 项」，
+/// 屏 12 的顶栏是「← 返回工作台」）。见 `AppTab` 的说明。
 @MainActor
 public struct AppRootTabView<
     WorkbenchRoot: View,
     FlashRoot: View,
-    CorpusRoot: View,
-    SettingsRoot: View
+    CorpusRoot: View
 >: View {
     private let navigation: AppNavigationState
     private let dispatch: (AppAction) -> Void
     private let workbenchRoot: () -> WorkbenchRoot
     private let flashRoot: () -> FlashRoot
     private let corpusRoot: () -> CorpusRoot
-    private let settingsRoot: () -> SettingsRoot
     private let destination: (AppRoute) -> AnyView
 
     public init(
@@ -23,7 +25,6 @@ public struct AppRootTabView<
         @ViewBuilder workbenchRoot: @escaping () -> WorkbenchRoot,
         @ViewBuilder flashRoot: @escaping () -> FlashRoot,
         @ViewBuilder corpusRoot: @escaping () -> CorpusRoot,
-        @ViewBuilder settingsRoot: @escaping () -> SettingsRoot,
         destination: @escaping (AppRoute) -> AnyView
     ) {
         self.navigation = navigation
@@ -31,7 +32,6 @@ public struct AppRootTabView<
         self.workbenchRoot = workbenchRoot
         self.flashRoot = flashRoot
         self.corpusRoot = corpusRoot
-        self.settingsRoot = settingsRoot
         self.destination = destination
     }
 
@@ -54,12 +54,6 @@ public struct AppRootTabView<
                 title: "语料库",
                 systemImage: "books.vertical",
                 root: corpusRoot
-            )
-            tabStack(
-                for: .settings,
-                title: "设置",
-                systemImage: "gearshape",
-                root: settingsRoot
             )
         }
     }
@@ -88,8 +82,6 @@ public struct AppRootTabView<
                     dispatch(.navigation(.flashTest(action)))
                 case .corpus:
                     dispatch(.navigation(.corpus(action)))
-                case .settings:
-                    dispatch(.navigation(.settings(action)))
                 }
             }
         ) {
