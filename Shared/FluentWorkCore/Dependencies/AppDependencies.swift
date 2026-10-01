@@ -309,7 +309,15 @@ public protocol SpeechSessionClientProtocol: Sendable {
     /// may be read (it compares owners and answers "not found" either
     /// way). Nil starts from nothing, which is what every other caller
     /// wants.
-    func startSession(continueFromSessionID: String?) async throws
+    ///
+    /// `creation` 是创建练习弹层（屏 11）定下来的三样：素材 id、场景、时长。
+    /// `nil` ＝ 没有经过那一屏（例如从回顾页的「再来一轮」直接进房间），
+    /// 此时会话按服务端默认开局。
+    ///
+    /// **它是协议要求而不是带默认实现的便利方法**：默认实现只能「假装收下」这个参数，
+    /// 而一个漏掉了它的实现会在真机上悄悄建出一场没有素材的会话 —— 没有任何报错。
+    /// 让编译器逐个点名要改的地方，代价是机械的，收益是这件事不可能被漏掉。
+    func startSession(continueFromSessionID: String?, creation: PracticeCreation?) async throws
     /// The session id currently bound by the client (nil before start / after end).
     func activeSessionID() async -> String?
     /// Sends a `user.speech.start` or `user.speech.end` frame to the backend.
@@ -508,10 +516,20 @@ public final class PlaceholderAudioEngine: AudioEngineProtocol, Sendable {
     public func discardActiveSpeech() async {}
 }
 
+extension SpeechSessionClientProtocol {
+    /// 没有创建参数时的那条路。
+    ///
+    /// 它**显式写下 `creation: nil`**，而不是给协议要求加一个默认值 —— 读调用点时能看出
+    /// 「这一场是按服务端默认开的」，而不是看不出来。
+    public func startSession(continueFromSessionID: String?) async throws {
+        try await startSession(continueFromSessionID: continueFromSessionID, creation: nil)
+    }
+}
+
 public final class PlaceholderSpeechSessionClient: SpeechSessionClientProtocol, Sendable {
     public init() {}
 
-    public func startSession(continueFromSessionID: String?) async throws {}
+    public func startSession(continueFromSessionID: String?, creation: PracticeCreation?) async throws {}
 
     public func activeSessionID() async -> String? { nil }
 
@@ -617,6 +635,15 @@ public extension Container {
     var dailyReadAPIClient: Factory<DailyReadAPIClientProtocol> {
         self {
             DailyReadAPIClient(
+                network: self.networkClient(),
+                baseURL: self.appEnvironment().apiBaseURL
+            )
+        }.cached
+    }
+
+    var materialsAPIClient: Factory<MaterialsAPIClientProtocol> {
+        self {
+            MaterialsAPIClient(
                 network: self.networkClient(),
                 baseURL: self.appEnvironment().apiBaseURL
             )
@@ -831,6 +858,16 @@ public extension Container {
         self {
             DefaultDailyReadClient(
                 api: self.dailyReadAPIClient(),
+                sessionAPI: self.sessionAPIClient(),
+                tokens: self.authTokenStore()
+            )
+        }.shared
+    }
+
+    var materialsClient: Factory<MaterialsClientProtocol> {
+        self {
+            DefaultMaterialsClient(
+                api: self.materialsAPIClient(),
                 sessionAPI: self.sessionAPIClient(),
                 tokens: self.authTokenStore()
             )

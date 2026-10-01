@@ -206,7 +206,10 @@ public func speechSessionMiddleware(container: Container) -> Middleware<AppState
                 // `continueFromSessionID` covers the first session of a visit
                 // that was opened from the list.
                 continueFromSessionID: store.state.speakingRoom.lastSessionID
-                    ?? store.state.speakingRoom.continueFromSessionID
+                    ?? store.state.speakingRoom.continueFromSessionID,
+                // 创建练习弹层（屏 11）定下来的三样。放在**另一格**里是因为创建发生在
+                // 进房间之前 —— 房间只是它的消费者，而它要一直活到「开始说话」那一刻。
+                creation: store.state.createPractice.pendingCreation
             )
         }
         let timeoutEffects = processingTimeoutEffects(
@@ -1224,7 +1227,8 @@ private func interpretSpeechSessionSideEffect(
     ttsTrace: TTSStreamTrace,
     usesAutoVAD: Bool = false,
     voiceProcessingEnabled: Bool = false,
-    continueFromSessionID: String? = nil
+    continueFromSessionID: String? = nil,
+    creation: PracticeCreation? = nil
 ) -> Effect<AppAction> {
     let audioEngine = container.audioEngine()
     let speechClient = container.speechSessionClient()
@@ -1303,7 +1307,10 @@ private func interpretSpeechSessionSideEffect(
                 }
                 do {
                     timings.mark(event: "session_start_invoked")
-                    try await speechClient.startSession(continueFromSessionID: continueFromSessionID)
+                    try await speechClient.startSession(
+                        continueFromSessionID: continueFromSessionID,
+                        creation: creation
+                    )
                     timings.mark(event: "session_start_returned")
                     await audioEngine.setSpeechBoundaryMode(usesAutoVAD ? .autoVAD : .tapToStart)
                     // Declared before `startCapture()`, not after: voice

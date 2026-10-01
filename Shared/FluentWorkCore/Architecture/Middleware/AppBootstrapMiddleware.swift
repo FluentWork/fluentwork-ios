@@ -22,6 +22,8 @@ public enum AppTaskID {
     public static let dailyReadAudioObserver: CancellationID = "daily-read.audio-observer"
     public static let sessionHistoryHydrate: CancellationID = "session-history.hydrate"
     public static let sessionHistoryLoad: CancellationID = "session-history.load"
+    /// 创建练习的「建素材」。固定 id：同时只该有一次提交在飞，第二次点击应当取消第一次。
+    public static let createPracticeSubmit: CancellationID = "create-practice.submit"
     public static let sessionHistoryLoadMore: CancellationID = "session-history.load-more"
     public static let sessionHistoryDetail: CancellationID = "session-history.detail"
 
@@ -39,6 +41,7 @@ public func makeAppMiddlewares(container: Container) -> [Middleware<AppState, Ap
         sessionHistoryMiddleware(container: container),
         drillMiddleware(container: container),
         topicMiddleware(container: container),
+        createPracticeMiddleware(container: container),
         speechSessionMiddleware(container: container),
         appBootstrapMiddleware(container: container),
         appNetworkMonitorMiddleware(container: container),

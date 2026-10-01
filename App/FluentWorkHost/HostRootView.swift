@@ -38,6 +38,18 @@ struct HostRootView: View {
                     },
                     onFavoriteOnlyChanged: { favoriteOnly in
                         store.dispatch(.corpus(.favoriteOnlyChanged(favoriteOnly)))
+                    },
+                    onSceneFilterChanged: { scene in
+                        store.dispatch(.corpus(.sceneFilterChanged(scene)))
+                    },
+                    onFunctionFilterChanged: { function in
+                        store.dispatch(.corpus(.functionFilterChanged(function)))
+                    },
+                    onStartPractice: {
+                        // 稿子 屏 08 的空态主按钮是「去练习」。它指向的是**开始一次练习**，
+                        // 而那件事今天住在工作台（创建弹层的入口在那儿）。所以这一下是切 Tab，
+                        // 不是把弹层从这里掀起来 —— 弹层属于工作台那条栈，从语料库掀会盖在错的地方。
+                        store.dispatch(.navigation(.selectTab(.workbench)))
                     }
                 )
             },
@@ -365,6 +377,27 @@ struct HostRootView: View {
                     store.dispatch(.topic(.dismissTapped(cardID: cardID, reason: reason)))
                 }
             )
+        case .createPractice:
+            // 屏 11（底部弹层）。呈现样式由 `AppRoute.defaultWorkbenchNavigationAction` 定，
+            // 这里只是它的内容 —— 视图不决定自己是弹层还是全屏页。
+            CreatePracticeSheet(
+                model: CreatePracticeViewModel.make(from: store.state.createPractice),
+                onInputChanged: { input in
+                    store.dispatch(.createPractice(.inputChanged(input)))
+                },
+                onDraftChanged: { text in
+                    store.dispatch(.createPractice(.draftChanged(text)))
+                },
+                onLengthChanged: { length in
+                    store.dispatch(.createPractice(.lengthChanged(length)))
+                },
+                onSubmit: {
+                    store.dispatch(.createPractice(.submitTapped))
+                },
+                onClose: {
+                    store.dispatch(.navigation(.workbench(.dismiss)))
+                }
+            )
         }
     }
 
@@ -488,18 +521,67 @@ struct HostRootView: View {
     }
 
     private var workbenchRoot: some View {
-        WorkbenchHomeView(
-            model: WorkbenchHomeViewModel.make(
-                from: store.state.workspace,
-                bootstrapStatus: store.state.bootstrapStatus,
-                lastErrorMessage: store.state.lastErrorMessage,
-                isOffline: !store.state.network.isConnected
-            ),
-            onModuleTapped: openWorkbenchModule,
-            onRetryTapped: {
-                store.dispatch(.lifecycle(.appLaunched))
+        VStack(spacing: 0) {
+            startPracticeEntry
+            WorkbenchHomeView(
+                model: WorkbenchHomeViewModel.make(
+                    from: store.state.workspace,
+                    bootstrapStatus: store.state.bootstrapStatus,
+                    lastErrorMessage: store.state.lastErrorMessage,
+                    isOffline: !store.state.network.isConnected
+                ),
+                onModuleTapped: openWorkbenchModule,
+                onRetryTapped: {
+                    store.dispatch(.lifecycle(.appLaunched))
+                }
+            )
+        }
+    }
+
+    /// 屏 11 的入口。
+    ///
+    /// 稿子把它画在 **屏 01 的「今日入口卡」**里（最大卡片、品牌色底、文案动态生成，
+    /// 两个动作：开始新练习 / 继续上次）。屏 01 尚未还原，所以这里先放那张卡的**最小形态** ——
+    /// 只留「开始新练习」这一半，「继续上次」等会话标题字段到位（见 `ui-rebuild-plan.md` §2）。
+    /// 屏 01 那一票落地时，这个入口应当**被收进那张卡**，而不是在它旁边再留一个。
+    private var startPracticeEntry: some View {
+        Button {
+            store.dispatch(
+                .navigation(.workbench(.present(.createPractice, style: .sheet)))
+            )
+        } label: {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.s3) {
+                Text("今天想练什么")
+                    .font(DesignTokens.Typography.title)
+                    .foregroundStyle(DesignTokens.Color.textPrimary)
+                Text("一句话描述、粘贴素材，或用预置场景直接开始")
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Color.textPrimary.opacity(0.8))
+                    .multilineTextAlignment(.leading)
+                Text("开始新练习")
+                    .font(DesignTokens.Typography.cardTitle)
+                    .foregroundStyle(DesignTokens.Color.textPrimary)
+                    .padding(.horizontal, DesignTokens.Spacing.s4)
+                    .frame(minHeight: DesignTokens.Component.minHitTarget)
+                    .background(
+                        DesignTokens.Color.brandStrong,
+                        in: RoundedRectangle(
+                            cornerRadius: DesignTokens.Radius.card,
+                            style: .continuous
+                        )
+                    )
             }
-        )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(DesignTokens.Spacing.s4)
+            .background(
+                DesignTokens.Color.brand,
+                in: RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, DesignTokens.Spacing.pageMargin)
+        .padding(.top, DesignTokens.Spacing.s4)
+        .accessibilityIdentifier("workbench.startPractice")
     }
 
     private func openWorkbenchModule(_ module: WorkbenchHomeViewModel.Module) {

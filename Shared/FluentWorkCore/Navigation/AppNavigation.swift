@@ -42,6 +42,14 @@ public enum AppRoute: TGRoute, Codable {
     /// 同样不带 `sessionID`，理由同上。
     case topicCards
 
+    /// 创建练习（屏 11）。
+    ///
+    /// 它**不是一个页面**，是底部弹层（稿子 §03：创建练习是「底部弹层，非全屏」）——
+    /// 但它仍然是一条 `AppRoute`，因为「打开创建练习」是导航语义：
+    /// 谁都能从自己的位置请求它，而不必各自去改一份「弹层开着没有」的布尔。
+    /// 呈现样式在 `defaultWorkbenchNavigationAction` 上写明（`.sheet`）。
+    case createPractice
+
     /// Stable path shared with `FeaturePluginDescriptor.entryRoute`.
     public var entryRoute: String {
         switch self {
@@ -59,6 +67,8 @@ public enum AppRoute: TGRoute, Codable {
             return "/drill"
         case .topicCards:
             return "/topic-cards"
+        case .createPractice:
+            return "/practice/new"
         }
     }
 
@@ -79,6 +89,8 @@ public enum AppRoute: TGRoute, Codable {
             self = .drill
         case "/topic-cards":
             self = .topicCards
+        case "/practice/new":
+            self = .createPractice
         // Note what is *not* here: `/sessions/<id>`. That path exists on the
         // server, but on this side the detail is only ever reached by tapping a
         // row, which builds the route from the id it already has. Parsing it
@@ -109,6 +121,10 @@ public enum AppRoute: TGRoute, Codable {
             return .workbench(.present(self, style: .fullScreenCover))
         case .dailyRead, .sessionHistory, .sessionDetail, .topicCards:
             return .workbench(.push(self))
+        case .createPractice:
+            // 弹层（稿子 §03）。`.sheet` 也是 `present` 的默认值，写出来是因为
+            // 这一行的**全部内容**就是「它不是全屏页」——省略它会把唯一的决定藏起来。
+            return .workbench(.present(self, style: .sheet))
         case .drill:
             return .selectTab(.flashTest)
         }

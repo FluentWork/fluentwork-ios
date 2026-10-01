@@ -121,6 +121,12 @@ private let clientOperations: [ClientOperation] = [
         name: "topicDismiss",
         api: .topicDismiss(accessToken: "t", cardID: placeholderID, reason: .noTime),
         path: "/topic-cards/{id}/dismiss", method: "POST"),
+    // 屏 11 的「一句话描述」/「粘贴素材」建素材走的就是这一条。契约里一直有它
+    // （`operationId: createMaterial`），只是客户端此前从没调过。
+    ClientOperation(
+        name: "createMaterial",
+        api: .createMaterial(accessToken: "t", kind: "sentence", content: "x"),
+        path: "/materials", method: "POST"),
 ]
 
 @Test func everyClientOperationIsDeclaredInTheMirroredContract() throws {

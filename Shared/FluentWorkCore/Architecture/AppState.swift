@@ -66,6 +66,8 @@ public struct AppState: Equatable, Sendable, State {
   public var drill: DrillState
   /// 话题卡（B23 / PRD §7.8 H1–H3）。
   public var topic: TopicState
+  /// 创建练习（屏 11）：进房间之前那次「今天练什么」的选择。
+  public var createPractice: CreatePracticeState
   public var workspace: WorkspaceState
   public var badgeFeedback: BadgeFeedbackState
   public var network: NetworkConnectivityState
@@ -83,6 +85,7 @@ public struct AppState: Equatable, Sendable, State {
     sessionHistory: SessionHistoryState = SessionHistoryState(),
     drill: DrillState = DrillState(),
     topic: TopicState = TopicState(),
+    createPractice: CreatePracticeState = CreatePracticeState(),
     workspace: WorkspaceState = WorkspaceState(),
     badgeFeedback: BadgeFeedbackState = BadgeFeedbackState(),
     network: NetworkConnectivityState = NetworkConnectivityState(),
@@ -99,6 +102,7 @@ public struct AppState: Equatable, Sendable, State {
     self.sessionHistory = sessionHistory
     self.drill = drill
     self.topic = topic
+    self.createPractice = createPractice
     self.workspace = workspace
     self.badgeFeedback = badgeFeedback
     self.network = network
@@ -131,6 +135,7 @@ public enum AppAction: Equatable, Sendable, Action {
   case sessionHistory(SessionHistoryAction)
   case drill(DrillAction)
   case topic(TopicAction)
+  case createPractice(CreatePracticeAction)
   case network(NetworkConnectivityAction)
   case navigation(AppNavigationAction)
 }

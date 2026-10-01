@@ -98,7 +98,7 @@ struct TokenRefreshCoordinatorTests {
             fatalError("Not implemented")
         }
         
-        func createSession(accessToken: String, materialID: String?, sceneType: String?) async throws -> CreateSessionResponse {
+        func createSession(accessToken: String, materialID: String?, sceneType: String?, sessionLength: String?) async throws -> CreateSessionResponse {
             fatalError("Not implemented")
         }
         

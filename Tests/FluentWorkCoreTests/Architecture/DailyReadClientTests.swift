@@ -160,7 +160,8 @@ private final class StubSessionAPIClient: SessionAPIClientProtocol, @unchecked S
   func createSession(
     accessToken: String,
     materialID: String?,
-    sceneType: String?
+    sceneType: String?,
+    sessionLength: String?
   ) async throws -> CreateSessionResponse {
     throw IssueMismatch()
   }

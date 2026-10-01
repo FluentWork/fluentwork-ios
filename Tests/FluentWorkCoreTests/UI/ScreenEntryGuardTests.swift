@@ -100,6 +100,9 @@ struct ScreenEntryGuardTests {
                 "topic.cardsLoaded", "topic.cardsFailed", "topic.statsLoaded",
                 "topic.checkinSucceeded", "topic.checkinFailed", "topic.dismissSucceeded",
                 "topic.dismissFailed",
+                // 创建练习（屏 11）：素材建好 / 建失败，由 `createPracticeMiddleware` 派。
+                // 屏幕派它们等于自己造一个「素材已经建好了」的结果。
+                "createPractice.created", "createPractice.submissionFailed",
                 "network.connectivityChanged",
             ]
         ),

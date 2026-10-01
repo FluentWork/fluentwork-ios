@@ -39,6 +39,7 @@ private let boundModels: [ModelBinding] = [
     ModelBinding(swiftType: "TopicCheckinResult", source: .schema("TopicCheckinResult")),
     ModelBinding(swiftType: "TopicPracticeStats", source: .schema("TopicPracticeStats")),
     ModelBinding(swiftType: "TopicDismissResult", source: .schema("TopicDismissResult")),
+    ModelBinding(swiftType: "CreateMaterialResponse", source: .schema("CreateMaterialResponse")),
 ]
 
 private let decodedTypesWithoutRESTBinding: [String: String] = [

@@ -111,7 +111,8 @@ struct AuthenticatedNetworkClientTests {
         func createSession(
             accessToken: String,
             materialID: String?,
-            sceneType: String?
+            sceneType: String?,
+            sessionLength: String?
         ) async throws -> CreateSessionResponse {
             CreateSessionResponse(
                 sessionID: "test-session",

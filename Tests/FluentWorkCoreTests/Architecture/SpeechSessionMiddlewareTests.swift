@@ -2028,7 +2028,7 @@ private final class StubSpeechSessionClientForMiddleware: SpeechSessionClientPro
     /// elements so "started with nothing" and "never started" stay apart.
     var continueFromValues: [String?] { get async { await _continueFromValues.get() } }
 
-    func startSession(continueFromSessionID: String?) async throws {
+    func startSession(continueFromSessionID: String?, creation: PracticeCreation?) async throws {
         await _startSessionCallCount.update { $0 + 1 }
         await _continueFromValues.update { $0 + [continueFromSessionID] }
         if let error = startSessionError {

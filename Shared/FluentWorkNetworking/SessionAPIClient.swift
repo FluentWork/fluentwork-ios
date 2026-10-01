@@ -8,7 +8,8 @@ public protocol SessionAPIClientProtocol: Sendable {
     func createSession(
         accessToken: String,
         materialID: String?,
-        sceneType: String?
+        sceneType: String?,
+        sessionLength: String?
     ) async throws -> CreateSessionResponse
     func getSessionReview(sessionID: String, accessToken: String) async throws -> ReviewPollResponse
     /// Degraded-text path: `POST /sessions/{id}/messages` with `channel: text` (B7).
@@ -48,14 +49,16 @@ public final class SessionAPIClient: SessionAPIClientProtocol, Sendable {
     public func createSession(
         accessToken: String,
         materialID: String? = nil,
-        sceneType: String? = nil
+        sceneType: String? = nil,
+        sessionLength: String? = nil
     ) async throws -> CreateSessionResponse {
         try await decode(
             CreateSessionResponse.self,
             .createSession(
                 accessToken: accessToken,
                 materialID: materialID,
-                sceneType: sceneType
+                sceneType: sceneType,
+                sessionLength: sessionLength
             )
         )
     }

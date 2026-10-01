@@ -86,6 +86,15 @@ public let appReducer: Reducer<AppState, AppAction> = combineReducers(
     }
   ),
   pullback(
+    createPracticeReducer,
+    state: \.createPractice,
+    action: AppAction.createPractice,
+    extract: {
+      guard case .createPractice(let action) = $0 else { return nil }
+      return action
+    }
+  ),
+  pullback(
     networkConnectivityReducer,
     state: \.network,
     action: AppAction.network,

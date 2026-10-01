@@ -127,6 +127,25 @@ public enum ReviewPollStatus: String, Codable, Equatable, Sendable {
     case failed
 }
 
+/// `POST /api/v1/materials` 的回包（HTTP 202）。
+///
+/// `refineStatus` 说的是**提炼**的进度，不是素材本身能不能用：会话只要 `materialID`，
+/// 提炼发生在会话之前/并行都行（`internal/materials/model.go`：`queued` → `processing` → `ready`）。
+public struct CreateMaterialResponse: Codable, Equatable, Sendable {
+    public var materialID: String
+    public var refineStatus: String
+
+    public init(materialID: String, refineStatus: String) {
+        self.materialID = materialID
+        self.refineStatus = refineStatus
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case materialID = "material_id"
+        case refineStatus = "refine_status"
+    }
+}
+
 public enum JSONValue: Codable, Equatable, Sendable {
     case string(String)
     case number(Double)

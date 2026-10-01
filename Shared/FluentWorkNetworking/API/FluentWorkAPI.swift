@@ -9,8 +9,14 @@ public enum FluentWorkAPI: FluentWorkTargetType {
   case createSession(
     accessToken: String,
     materialID: String? = nil,
-    sceneType: String? = nil
+    sceneType: String? = nil,
+    sessionLength: String? = nil
   )
+  /// `POST /api/v1/materials` — 建一份素材（屏 11 的「一句话描述」/「粘贴素材」）。
+  ///
+  /// 服务端回 202 + `material_id`，提炼（refine）是**异步**的：句子被提炼成语术块发生在
+  /// 之后，而会话要的只是这个 id。
+  case createMaterial(accessToken: String, kind: String, content: String)
   case getSessionReview(sessionID: String, accessToken: String)
   case sendSessionMessage(
     sessionID: String, accessToken: String, text: String, channel: String = "text")
@@ -80,6 +86,8 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       return "/auth/refresh"
     case .createSession:
       return "/sessions"
+    case .createMaterial:
+      return "/materials"
     case .getSessionReview(let sessionID, _):
       return "/sessions/\(sessionID)/review"
     case .sendSessionMessage(let sessionID, _, _, _):
@@ -131,6 +139,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       .mergeGuestAccount,
       .refreshToken,
       .createSession,
+      .createMaterial,
       .sendSessionMessage,
       .batchAcceptCorpusBlocks,
       .favoriteCorpusBlock,
@@ -160,7 +169,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
         parameters: ["refresh_token": refreshToken],
         encoding: JSONEncoding.default
       )
-    case .createSession(_, let materialID, let sceneType):
+    case .createSession(_, let materialID, let sceneType, let sessionLength):
       var parameters: [String: Any] = [:]
       if let materialID {
         parameters["material_id"] = materialID
@@ -168,10 +177,18 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       if let sceneType {
         parameters["scene_type"] = sceneType
       }
+      if let sessionLength {
+        parameters["session_length"] = sessionLength
+      }
       if parameters.isEmpty {
         return .requestPlain
       }
       return .requestParameters(parameters: parameters, encoding: JSONEncoding.default)
+    case .createMaterial(_, let kind, let content):
+      return .requestParameters(
+        parameters: ["kind": kind, "content": content],
+        encoding: JSONEncoding.default
+      )
     case .getSessionReview, .getSessionDetail:
       return .requestPlain
     case .sendSessionMessage(_, _, let text, let channel):
@@ -290,7 +307,7 @@ public enum FluentWorkAPI: FluentWorkTargetType {
     case .issueGuest, .refreshToken:
       return nil
     case .mergeGuestAccount(_, let token),
-      .createSession(let token, _, _),
+      .createSession(let token, _, _, _),
       .getSessionReview(_, let token),
       .sendSessionMessage(_, let token, _, _),
       .listCorpusBlocks(let token, _, _, _, _, _, _, _),
@@ -308,7 +325,8 @@ public enum FluentWorkAPI: FluentWorkTargetType {
       .topicCards(let token),
       .topicCheckin(let token, _, _),
       .topicStats(let token, _),
-      .topicDismiss(let token, _, _):
+      .topicDismiss(let token, _, _),
+      .createMaterial(let token, _, _):
       return token
     }
   }

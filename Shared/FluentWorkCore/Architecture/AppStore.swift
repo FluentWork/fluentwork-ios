@@ -32,9 +32,14 @@ public enum AppStoreFactory {
     /// 调用点只有 App 入口与 SwiftUI 预览。
     @MainActor
     public static func makeShared(initialState: AppState = .initial) -> AppStore {
+        #if DEBUG
+        // 看版式用的数据面替身（`FW_SCREEN=<name>`，见 `DebugScreenPreview`）。
+        // 没设那个变量时它立刻返回，什么都不做。
+        DebugScreenPreview.installStubsIfNeeded(container: Container.shared)
+        #endif
         // 写全 `Container.shared` 而不是 `.shared`：白名单是靠文本审计的，
         // 简写会让这个「唯一入口」从 grep 里消失（这条正是被守卫逼出来的）。
-        make(container: Container.shared, initialState: initialState)
+        return make(container: Container.shared, initialState: initialState)
     }
 }
 

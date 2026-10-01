@@ -12,3 +12,6 @@ build/
 
 # .scratch/ is intentionally tracked (W3 iOS issue planning artifacts)
 .tmp-ios-issues/
+
+# 模拟器截图：人眼看版式用，产物每次都会变，不进仓
+.design-shots/

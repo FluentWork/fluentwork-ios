@@ -72,10 +72,27 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         self.heartbeatInterval = heartbeatInterval
     }
 
-    public func startSession(continueFromSessionID: String?) async throws {
+    /// 没有创建参数时用的场景。
+    ///
+    /// 这个值原来是**写死**在所有会话上的（`sceneType: "standup"`）—— 那时还没有创建练习那一屏。
+    /// 现在场景由 屏 11 决定，所以它降级成**只在未经那一屏的入口上生效的过渡值**：
+    /// 工作台那个「说的房间」模块入口、回顾页的「继续练习」都还没有场景可带，
+    /// 而屏 01 落地后这些入口都会走创建弹层（`ui-rebuild-plan.md` §4 决定 4）。
+    ///
+    /// 保留它而不是改成 `nil`（服务端默认 `demo`）的理由：那是一次**会话内容**的行为变更，
+    /// 而当前没有可跑的后端来核对新场景下的对话表现 —— 无据的改动不做。
+    static let transitionalSceneType = "standup"
+
+    public func startSession(
+        continueFromSessionID: String?,
+        creation: PracticeCreation?
+    ) async throws {
         await transitions.acquire()
         do {
-            try await performStartSession(continueFromSessionID: continueFromSessionID)
+            try await performStartSession(
+                continueFromSessionID: continueFromSessionID,
+                creation: creation
+            )
             await transitions.release()
         } catch {
             await transitions.release()
@@ -83,15 +100,19 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
         }
     }
 
-    private func performStartSession(continueFromSessionID: String?) async throws {
+    private func performStartSession(
+        continueFromSessionID: String?,
+        creation: PracticeCreation?
+    ) async throws {
         let deviceID = try await tokens.deviceID()
         let created: CreateSessionResponse
         do {
             let accessToken = try await ensureAccessToken(deviceID: deviceID)
             created = try await api.createSession(
                 accessToken: accessToken,
-                materialID: nil,
-                sceneType: "standup"
+                materialID: creation?.materialID,
+                sceneType: creation?.sceneType ?? Self.transitionalSceneType,
+                sessionLength: creation?.length.rawValue
             )
         } catch let error as APIError {
             // Cached token rejected by backend (e.g., backend JWT secret changed
@@ -106,8 +127,9 @@ public final class DefaultSpeechSessionClient: SpeechSessionClientProtocol, @unc
             let freshToken = try await ensureAccessToken(deviceID: deviceID)
             created = try await api.createSession(
                 accessToken: freshToken,
-                materialID: nil,
-                sceneType: "standup"
+                materialID: creation?.materialID,
+                sceneType: creation?.sceneType ?? Self.transitionalSceneType,
+                sessionLength: creation?.length.rawValue
             )
         }
         guard let wssURL = URL(string: created.wssURL) else {

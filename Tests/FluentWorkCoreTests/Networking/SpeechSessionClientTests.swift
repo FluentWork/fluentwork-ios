@@ -781,3 +781,63 @@ private actor SessionIDSequence {
     #expect(connects == ["s-1", "s-2"])
     #expect(disconnects == 1)
 }
+
+/// **创建练习弹层定下来的三样，必须真的送到 `POST /sessions` 上。**
+///
+/// 这条判据是屏 11 与房间之间那道**没有别的守卫**的接口：弹层把 `material_id` / `scene_type` /
+/// `session_length` 交给房间，房间再把它们拼进请求体 —— 中间任何一环写成常量或丢掉，
+/// 屏幕上都不会有任何反应，只是「这次练习没有素材」「时长选什么都没用」。
+/// 断言的落点是**发出去的 HTTP 请求**，不是中间那几层的变量。
+@MainActor
+@Test func sessionCreationCarriesMaterialSceneAndLength() async throws {
+    Container.shared.reset()
+    defer { Container.shared.reset() }
+
+    let transport = InMemorySocketTransport()
+    let storage = InMemorySecureStorage()
+    let tokenStore = SecureAuthTokenStore(
+        storage: storage,
+        idGenerator: FixedIDGenerator(value: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!)
+    )
+
+    let guestJSON = Data(
+        """
+        {"user_id":"u-1","is_guest":true,"status":"active","access_token":"access-1","refresh_token":"r","token_type":"Bearer","expires_in":3600}
+        """.utf8
+    )
+    let sessionJSON = Data(
+        """
+        {"session_id":"s-11","wss_url":"ws://127.0.0.1:9/ws","ticket":"tik","ticket_expires_in":60,"ticket_expires_at":"2026-08-26T00:00:00Z","scene_type":"standup","status":"created"}
+        """.utf8
+    )
+
+    let api = SessionAPIClient(
+        network: StubNetworkClient { target in
+            switch target.path {
+            case "/auth/guest": return guestJSON
+            case "/sessions":
+                if case let .requestParameters(parameters, _) = target.task {
+                    #expect(parameters["material_id"] as? String == "mat-9")
+                    #expect(parameters["scene_type"] as? String == "standup")
+                    #expect(parameters["session_length"] as? String == "mini")
+                } else {
+                    Issue.record("会话创建请求应当是带参数的 POST 体")
+                }
+                return sessionJSON
+            default:
+                Issue.record("unexpected \(target.path)")
+                return Data()
+            }
+        },
+        baseURL: URL(string: "http://127.0.0.1:8080/api/v1")!
+    )
+
+    let client = DefaultSpeechSessionClient(api: api, tokens: tokenStore, transport: transport)
+    try await client.startSession(
+        continueFromSessionID: nil,
+        creation: PracticeCreation(materialID: "mat-9", sceneType: "standup", length: .mini)
+    )
+
+    let connects = await transport.connectCalls
+    #expect(connects.map(\.sessionID) == ["s-11"], "会话建起来了但没连上去")
+}
