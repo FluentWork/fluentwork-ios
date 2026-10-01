@@ -26,6 +26,10 @@ public struct CorpusState: Equatable, Sendable, State {
     public var syncCursor: String?
     public var searchQuery: String
     public var favoriteOnly: Bool
+    /// 场景维度的筛选（稿子 屏 08：场景 / 功能**双维度**筛选）。`nil` ＝ 不筛。
+    public var sceneFilter: String?
+    /// 功能维度的筛选。
+    public var functionFilter: String?
     public var isRefreshing: Bool
     public var isReplayingOutbox: Bool
     public var pendingIndicators: [CorpusPendingIndicator]
@@ -42,6 +46,8 @@ public struct CorpusState: Equatable, Sendable, State {
         syncCursor: String? = nil,
         searchQuery: String = "",
         favoriteOnly: Bool = false,
+        sceneFilter: String? = nil,
+        functionFilter: String? = nil,
         isRefreshing: Bool = false,
         isReplayingOutbox: Bool = false,
         pendingIndicators: [CorpusPendingIndicator] = [],
@@ -57,6 +63,8 @@ public struct CorpusState: Equatable, Sendable, State {
         self.syncCursor = syncCursor
         self.searchQuery = searchQuery
         self.favoriteOnly = favoriteOnly
+        self.sceneFilter = sceneFilter
+        self.functionFilter = functionFilter
         self.isRefreshing = isRefreshing
         self.isReplayingOutbox = isReplayingOutbox
         self.pendingIndicators = pendingIndicators
@@ -70,6 +78,10 @@ public struct CorpusState: Equatable, Sendable, State {
     public var visibleItems: [PhraseBlock] {
         items.filter { block in
             let matchesFavorite = !favoriteOnly || block.isFavorite
+            // 两个维度各查各的，**不看搜索框**：多选一组的筛选用的是取值相等，
+            // 而不是「包含」—— 「1on1」被 `review` 包含这种事不该让筛选出岔子。
+            let matchesScene = sceneFilter == nil || block.sceneTag == sceneFilter
+            let matchesFunction = functionFilter == nil || block.functionTag == functionFilter
             let keyword = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
             let matchesQuery: Bool
             if keyword.isEmpty {
@@ -83,8 +95,17 @@ public struct CorpusState: Equatable, Sendable, State {
                     || block.sceneTag.lowercased().contains(lowered)
                     || block.functionTag.lowercased().contains(lowered)
             }
-            return matchesFavorite && matchesQuery
+            return matchesFavorite && matchesScene && matchesFunction && matchesQuery
         }
+    }
+
+    /// 屏幕上有没有在筛。空态要据此决定说哪句话：**「筛出来是空的」与「你还没有话术块」
+    /// 是两件事**，前者换一个筛选条件就有，后者要去练一次。
+    public var hasActiveFilter: Bool {
+        sceneFilter != nil
+            || functionFilter != nil
+            || favoriteOnly
+            || !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     public func isPending(blockID: String, operation: CorpusOutboxOperation) -> Bool {
@@ -114,6 +135,9 @@ public enum CorpusAction: Equatable, Sendable, Action {
     case mergeRebuildFinished
     case searchQueryChanged(String)
     case favoriteOnlyChanged(Bool)
+    /// 场景 / 功能两个维度。`nil` ＝ 取消这一维的筛选。
+    case sceneFilterChanged(String?)
+    case functionFilterChanged(String?)
     // 没有 `.reset`：换账号时整格清空这件事在 `appCrossCuttingReducer` 里做
     // （`state.corpus = CorpusState()`，那里才知道账号变了）。从前那个 action 一次都没被派发过。
 }
@@ -177,6 +201,12 @@ public let corpusReducer: Reducer<CorpusState, CorpusAction> = { state, action i
 
     case let .favoriteOnlyChanged(favoriteOnly):
         state.favoriteOnly = favoriteOnly
+
+    case let .sceneFilterChanged(scene):
+        state.sceneFilter = scene
+
+    case let .functionFilterChanged(function):
+        state.functionFilter = function
 
     case let .favoriteToggled(blockID, isFavorite, _):
         updateCorpusBlock(withID: blockID, in: &state.items) { block in
